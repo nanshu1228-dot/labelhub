@@ -341,6 +341,79 @@ export const workspaceApiKeys = pgTable(
 )
 
 // =================================================================
+// Provider connections — per-workspace credentials for upstream LLM APIs.
+//
+// Replaces the env-var pattern (ANTHROPIC_API_KEY / DOUBAO_API_KEY) for
+// scalable multi-tenant operation: each workspace can have its own keys,
+// own base URLs, own rate limits.
+//
+// The actual API key NEVER lives in this table. We store `vaultRef` — the
+// name of a Supabase Vault secret. Reading the plaintext key requires the
+// service-role connection + a query against `vault.decrypted_secrets`.
+// =================================================================
+export const providerConnections = pgTable(
+  'provider_connections',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    workspaceId: uuid('workspace_id')
+      .references(() => workspaces.id)
+      .notNull(),
+    /** 'doubao' | 'anthropic' | 'openai' | 'deepseek' | 'qwen' | 'moonshot' | ... */
+    providerKind: text('provider_kind').notNull(),
+    /** Human-readable label, unique per workspace (e.g. "Doubao production"). */
+    displayName: text('display_name').notNull(),
+    /** Optional override of the provider's default base URL. */
+    baseUrl: text('base_url'),
+    /**
+     * Reference to a Supabase Vault secret name. The plaintext key is fetched
+     * via `SELECT decrypted_secret FROM vault.decrypted_secrets WHERE name = $1`.
+     */
+    vaultRef: text('vault_ref').notNull(),
+    /** Last-4 chars of the plain key for UI display (e.g. "…3a4b"). */
+    keyDisplay: text('key_display'),
+    /** Per-connection rate limits. null = no cap. */
+    rateLimitRpm: integer('rate_limit_rpm'),
+    rateLimitTpm: integer('rate_limit_tpm'),
+    enabled: text('enabled').default('true').notNull(),
+    rotatedAt: timestamp('rotated_at'),
+    lastUsedAt: timestamp('last_used_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    createdBy: uuid('created_by').references(() => users.id),
+  },
+  (table) => ({
+    wsKindIdx: index('prov_conn_ws_kind_idx').on(
+      table.workspaceId,
+      table.providerKind,
+    ),
+    wsNameUniq: uniqueIndex('prov_conn_ws_name_uniq').on(
+      table.workspaceId,
+      table.displayName,
+    ),
+  }),
+)
+
+// =================================================================
+// Provider rate log — sliding-window bookkeeping for rate limits.
+// Each row = one upstream call. The route handler counts rows in the
+// last 60s (and sums tokensUsed for TPM) before deciding to accept the
+// next call.
+// =================================================================
+export const providerRateLog = pgTable(
+  'provider_rate_log',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    connectionId: uuid('connection_id')
+      .references(() => providerConnections.id)
+      .notNull(),
+    ts: timestamp('ts').defaultNow().notNull(),
+    tokensUsed: integer('tokens_used').default(0).notNull(),
+  },
+  (table) => ({
+    connTsIdx: index('rate_log_conn_ts_idx').on(table.connectionId, table.ts),
+  }),
+)
+
+// =================================================================
 // Tool providers — per-workspace catalog of every tool agents use.
 // Auto-created from observed traces (source='inferred'); publishers can
 // upgrade to source='declared' with full manifest later.

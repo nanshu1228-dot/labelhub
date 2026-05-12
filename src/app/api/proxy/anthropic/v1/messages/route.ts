@@ -10,6 +10,9 @@ import {
 import { AnthropicStreamAccumulator } from '@/lib/proxy/anthropic-stream-adapter'
 import { teeWithAccumulator } from '@/lib/proxy/sse-tee'
 import { persistWithStorage } from '@/lib/proxy/persist-with-storage'
+import { resolveConnection, touchConnection } from '@/lib/proxy/connections'
+import { buildUpstreamHeaders, getProviderDef } from '@/lib/proxy/provider-registry'
+import { recordCallAndCheckRpm } from '@/lib/proxy/rate-limit'
 
 /**
  * POST /api/proxy/anthropic/v1/messages
@@ -94,36 +97,41 @@ export async function POST(request: NextRequest) {
     }
     const isStream = body.stream === true
 
-    // ── Forward to Anthropic ─────────────────────────────────────────────
-    const upstreamKey = process.env.ANTHROPIC_API_KEY
-    if (!upstreamKey) {
+    // ── Resolve connection + rate-limit (same model as Doubao proxy) ─────
+    const providerDef = getProviderDef('anthropic')!
+    const conn = await resolveConnection({
+      workspaceId: auth.workspaceId,
+      providerKind: 'anthropic',
+    })
+    if (!conn) {
       throw new AppError(
         'UPSTREAM_NOT_CONFIGURED',
-        'ANTHROPIC_API_KEY is not configured on the server. Add it to .env.local.',
+        'No Anthropic provider configured. Add a connection at /workspaces/<id>/connections or set ANTHROPIC_API_KEY env.',
         502,
       )
     }
-    // `||` not `??` — env vars come back as '' when blank.
-    const baseUrl = (
-      process.env.ANTHROPIC_BASE_URL_UPSTREAM || ANTHROPIC_DEFAULT_BASE
-    ).replace(/\/$/, '')
-
-    // Required Anthropic headers. The SDK normally sets these; we set them
-    // explicitly so users can curl us without thinking about them.
-    const upstreamHeaders: Record<string, string> = {
-      'Content-Type': 'application/json',
-      'x-api-key': upstreamKey,
-      'anthropic-version':
-        request.headers.get('anthropic-version') || '2023-06-01',
+    if (conn.connectionId && conn.rateLimitRpm) {
+      const allow = await recordCallAndCheckRpm({
+        connectionId: conn.connectionId,
+        limit: conn.rateLimitRpm,
+      })
+      if (!allow.ok) {
+        throw new AppError(
+          'RATE_LIMITED',
+          `Workspace exceeded ${conn.rateLimitRpm} req/min for this Anthropic connection. Retry after ${allow.retryAfterSeconds}s.`,
+          429,
+        )
+      }
     }
-    const betaHeader = request.headers.get('anthropic-beta')
-    if (betaHeader) upstreamHeaders['anthropic-beta'] = betaHeader
+    if (conn.connectionId) {
+      void touchConnection(conn.connectionId).catch(() => {})
+    }
 
     let upstreamRes: Response
     try {
-      upstreamRes = await fetch(`${baseUrl}/v1/messages`, {
+      upstreamRes = await fetch(`${conn.baseUrl}/v1/messages`, {
         method: 'POST',
-        headers: upstreamHeaders,
+        headers: buildUpstreamHeaders(providerDef, conn.apiKey, request.headers),
         body: bodyText,
       })
     } catch (e) {

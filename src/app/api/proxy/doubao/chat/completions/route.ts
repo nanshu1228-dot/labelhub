@@ -10,6 +10,9 @@ import {
 import { OpenAIStreamAccumulator } from '@/lib/proxy/openai-stream-adapter'
 import { teeWithAccumulator } from '@/lib/proxy/sse-tee'
 import { persistWithStorage } from '@/lib/proxy/persist-with-storage'
+import { resolveConnection, touchConnection } from '@/lib/proxy/connections'
+import { buildUpstreamHeaders, getProviderDef } from '@/lib/proxy/provider-registry'
+import { recordCallAndCheckRpm } from '@/lib/proxy/rate-limit'
 
 /**
  * POST /api/proxy/doubao/chat/completions
@@ -102,33 +105,51 @@ export async function POST(request: NextRequest) {
     }
     const isStream = body.stream === true
 
-    // ── Forward to Doubao ────────────────────────────────────────────────
-    const upstreamKey = process.env.DOUBAO_API_KEY
-    if (!upstreamKey) {
-      // Server-side mis-configuration; report 502 so the client retries
-      // intelligently rather than treating it as their bad key.
+    // ── Resolve upstream connection (DB first, env fallback) ─────────────
+    const providerDef = getProviderDef('doubao')!
+    const conn = await resolveConnection({
+      workspaceId: auth.workspaceId,
+      providerKind: 'doubao',
+    })
+    if (!conn) {
       throw new AppError(
         'UPSTREAM_NOT_CONFIGURED',
-        'DOUBAO_API_KEY is not configured on the server. Add it to .env.local.',
+        'No Doubao provider configured. Add a connection at /workspaces/<id>/connections or set DOUBAO_API_KEY env.',
         502,
       )
     }
-    // `||` not `??` — env vars come back as '' when blank in .env files;
-    // `??` only falls back on null/undefined and would let an empty string
-    // through, producing fetches to a bare path.
-    const baseUrl = (process.env.DOUBAO_BASE_URL || DOUBAO_DEFAULT_BASE).replace(
-      /\/$/,
-      '',
-    )
+
+    // ── Per-workspace rate limit (RPM) ───────────────────────────────────
+    // Tracks every call so we can later patch in tokens_used for TPM.
+    let rateLogId: string | null = null
+    if (conn.connectionId && conn.rateLimitRpm) {
+      const allow = await recordCallAndCheckRpm({
+        connectionId: conn.connectionId,
+        limit: conn.rateLimitRpm,
+      })
+      rateLogId = allow.logId
+      if (!allow.ok) {
+        throw new AppError(
+          'RATE_LIMITED',
+          `Workspace exceeded ${conn.rateLimitRpm} req/min for this Doubao connection. Retry after ${allow.retryAfterSeconds}s.`,
+          429,
+        )
+      }
+    }
+    // Fire-and-forget: mark this connection as most-recently-used so rotation
+    // semantics work (newly-created connections win their first hit).
+    if (conn.connectionId) {
+      void touchConnection(conn.connectionId).catch(() => {})
+    }
+    // Keep these in scope for after() to patch token usage when available.
+    const _capturedRateLogId = rateLogId
+    void _capturedRateLogId
 
     let upstreamRes: Response
     try {
-      upstreamRes = await fetch(`${baseUrl}/chat/completions`, {
+      upstreamRes = await fetch(`${conn.baseUrl}/chat/completions`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${upstreamKey}`,
-        },
+        headers: buildUpstreamHeaders(providerDef, conn.apiKey, request.headers),
         body: bodyText, // forward verbatim
       })
     } catch (e) {

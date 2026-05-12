@@ -200,7 +200,7 @@ export default async function WorkspacePage(
         {new Date(workspace.createdAt).toLocaleString()}
       </div>
 
-      <div className="mt-12 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+      <div className="mt-12 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
         <StatTile
           label="TRAJECTORIES"
           value={stats.trajCount.toString()}
@@ -233,6 +233,12 @@ export default async function WorkspacePage(
               : 'manage / view endpoints'
           }
           href={`/workspaces/${id}/api`}
+        />
+        <StatTile
+          label="PROVIDERS"
+          value="↗"
+          hint="manage upstream LLM keys"
+          href={`/workspaces/${id}/connections`}
         />
         <StatTile
           label="EVENTS"
