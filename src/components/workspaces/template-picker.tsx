@@ -1,0 +1,217 @@
+'use client'
+import { useState, useTransition } from 'react'
+import { useRouter } from 'next/navigation'
+import { createWorkspace } from '@/lib/actions/workspaces'
+import type { TemplateMode } from '@/lib/templates/types'
+
+export type PickerTemplate = {
+  mode: TemplateMode
+  name: string
+  description: string
+}
+
+export function TemplatePicker({ templates }: { templates: PickerTemplate[] }) {
+  const [selected, setSelected] = useState<TemplateMode | null>(null)
+  const [name, setName] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [pending, startTransition] = useTransition()
+  const router = useRouter()
+
+  const canSubmit = !!selected && name.trim().length > 0 && !pending
+
+  function submit() {
+    if (!canSubmit || !selected) return
+    setError(null)
+    startTransition(async () => {
+      try {
+        const ws = await createWorkspace({ name: name.trim(), templateMode: selected })
+        router.push(`/workspaces/${ws.id}`)
+      } catch (e: unknown) {
+        setError(e instanceof Error ? e.message : 'Unknown error')
+      }
+    })
+  }
+
+  return (
+    <div className="min-h-screen flex flex-col">
+      {/* minimal header */}
+      <header
+        style={{
+          background: 'oklch(0.13 0 0 / 0.78)',
+          backdropFilter: 'blur(8px)',
+          borderBottom: '1px solid oklch(0.22 0 0)',
+        }}
+      >
+        <div className="max-w-[1280px] mx-auto px-6 h-14 flex items-center justify-between">
+          <a href="/" className="flex items-center gap-2">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden>
+              <rect x="0.5" y="0.5" width="17" height="17" rx="4" stroke="oklch(0.6 0.18 280)" />
+              <path
+                d="M5 4.5V13.5H13"
+                stroke="oklch(0.6 0.18 280)"
+                strokeWidth="1.5"
+                strokeLinecap="square"
+              />
+            </svg>
+            <span
+              className="lh-body font-medium"
+              style={{ color: 'oklch(0.92 0 0)', letterSpacing: '-0.01em' }}
+            >
+              LabelHub
+            </span>
+          </a>
+          <a href="/" className="nav-link">Cancel</a>
+        </div>
+      </header>
+
+      <main className="flex-1 max-w-[1280px] mx-auto px-6 pt-16 pb-40 w-full">
+        <div
+          className="lh-mono lh-caption mb-3"
+          style={{ color: 'oklch(0.6 0.18 280)' }}
+        >
+          §  01    GET STARTED
+        </div>
+        <h1 className="lh-h1" style={{ color: 'oklch(0.95 0 0)' }}>
+          Start a workspace.
+        </h1>
+        <p
+          className="lh-body-lg mt-4 max-w-[560px]"
+          style={{ color: 'oklch(0.62 0 0)' }}
+        >
+          Pick the shape of the teaching. One engine, many modes — you can spin up more workspaces with different templates anytime.
+        </p>
+
+        <div className="mt-12 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {templates.map((tpl, i) => {
+            const active = selected === tpl.mode
+            return (
+              <button
+                key={tpl.mode}
+                type="button"
+                onClick={() => setSelected(tpl.mode)}
+                className="text-left p-6 transition-colors"
+                style={{
+                  borderRadius: 12,
+                  border: active
+                    ? '1px solid oklch(0.6 0.18 280)'
+                    : '1px solid oklch(0.22 0 0)',
+                  background: active ? 'oklch(0.6 0.18 280 / 0.06)' : 'oklch(0.13 0 0)',
+                  cursor: 'pointer',
+                }}
+              >
+                <div className="flex items-center justify-between mb-3">
+                  <span className="mode-tag">
+                    {String(i + 1).padStart(2, '0')} · {tpl.mode.replace(/-/g, ' ')}
+                  </span>
+                  <span
+                    aria-hidden
+                    style={{
+                      width: 16,
+                      height: 16,
+                      borderRadius: '50%',
+                      border: active
+                        ? '4px solid oklch(0.6 0.18 280)'
+                        : '1px solid oklch(0.27 0 0)',
+                      background: active ? 'oklch(0.13 0 0)' : 'transparent',
+                      transition: 'all 150ms',
+                    }}
+                  />
+                </div>
+                <h3 className="lh-h4 mb-2" style={{ color: 'oklch(0.92 0 0)' }}>
+                  {tpl.name}
+                </h3>
+                <p
+                  className="lh-body-sm"
+                  style={{ color: 'oklch(0.62 0 0)' }}
+                >
+                  {tpl.description}
+                </p>
+              </button>
+            )
+          })}
+        </div>
+      </main>
+
+      {/* sticky form bar */}
+      <div
+        className="sticky bottom-0"
+        style={{
+          background: 'oklch(0.13 0 0 / 0.95)',
+          backdropFilter: 'blur(12px)',
+          borderTop: '1px solid oklch(0.22 0 0)',
+        }}
+      >
+        <div className="max-w-[1280px] mx-auto px-6 py-4">
+          {error && (
+            <div
+              className="lh-body-sm mb-3 px-3 py-2 rounded"
+              style={{
+                color: 'oklch(0.85 0 0)',
+                background: 'oklch(0.6 0.2 25 / 0.12)',
+                border: '1px solid oklch(0.6 0.2 25 / 0.4)',
+              }}
+            >
+              {error}
+            </div>
+          )}
+          <div className="flex items-center gap-4 flex-wrap">
+            <label
+              htmlFor="workspace-name"
+              className="lh-mono lh-caption"
+              style={{ color: 'oklch(0.42 0 0)', letterSpacing: '0.06em' }}
+            >
+              WORKSPACE NAME
+            </label>
+            <input
+              id="workspace-name"
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="my-workspace"
+              maxLength={100}
+              className="flex-1 min-w-[200px] px-3 py-2 outline-none"
+              style={{
+                background: 'oklch(0.155 0 0)',
+                border: '1px solid oklch(0.22 0 0)',
+                borderRadius: 8,
+                color: 'oklch(0.92 0 0)',
+                fontSize: 14,
+              }}
+            />
+            <button
+              type="button"
+              disabled={!canSubmit}
+              onClick={submit}
+              className="lh-btn lh-btn-solid"
+              style={{
+                opacity: canSubmit ? 1 : 0.4,
+                cursor: canSubmit ? 'pointer' : 'not-allowed',
+              }}
+            >
+              <span>{pending ? 'Creating…' : 'Create'}</span>
+              {!pending && (
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <path
+                    d="M3 6h6m0 0L6 3m3 3L6 9"
+                    stroke="currentColor"
+                    strokeWidth="1.4"
+                    strokeLinecap="square"
+                  />
+                </svg>
+              )}
+            </button>
+          </div>
+          <div className="mt-2 lh-caption" style={{ color: 'oklch(0.42 0 0)' }}>
+            {selected ? (
+              <>
+                Mode: <span className="lh-mono" style={{ color: 'oklch(0.78 0 0)' }}>{selected}</span> · You can switch modes per task later.
+              </>
+            ) : (
+              'Pick a template above to continue.'
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}

@@ -1,0 +1,37 @@
+# Dependencies (re-installed in container)
+node_modules
+npm-debug.log
+
+# Build outputs
+.next
+.next/dev
+out
+dist
+
+# Local secrets — NEVER bake into images
+.env
+.env.local
+.env.development
+.env.production
+
+# Editor / OS
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+*.swp
+
+# Git
+.git
+.github
+
+# Tests
+coverage
+.vitest
+
+# Docs (not needed in runtime image)
+*.md
+
+# Misc
+.eslintcache
+.turbo

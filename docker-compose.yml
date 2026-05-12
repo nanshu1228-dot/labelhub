@@ -1,0 +1,70 @@
+# Local dev stack — Postgres + LabelHub in two containers.
+#
+# Use this when you want to develop WITHOUT Supabase (fully self-contained):
+#   1. Copy .env.example → .env.local
+#   2. Set DATABASE_URL to: postgresql://labelhub:labelhub@db:5432/labelhub
+#   3. Remove SUPABASE_* values (auth won't work in this local-only mode)
+#   4. docker compose up
+#   5. In another shell: docker compose exec app npm run db:push
+#
+# For production (Supabase + Anthropic), just run `docker build` + `docker run` —
+# point env at real Supabase. See INFRASTRUCTURE.md.
+
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: labelhub-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: labelhub
+      POSTGRES_PASSWORD: labelhub
+      POSTGRES_DB: labelhub
+    ports:
+      - "5432:5432"
+    volumes:
+      - labelhub_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U labelhub -d labelhub"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: labelhub-app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://labelhub:labelhub@db:5432/labelhub
+      # Auth: in this local-only stack, Supabase isn't available.
+      # The app degrades gracefully (auth-required routes will 401).
+      # For full functionality, edit these to point at real Supabase.
+      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-https://placeholder.supabase.co}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-placeholder}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      NODE_ENV: production
+
+  # Optional: Adminer for browsing the local PG via http://localhost:8080
+  adminer:
+    image: adminer:latest
+    container_name: labelhub-adminer
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: db
+    depends_on:
+      - db
+    profiles:
+      - tools
+
+volumes:
+  labelhub_db_data:
+    driver: local
