@@ -1,7 +1,7 @@
 import 'server-only'
-import { eq } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
-import { users, workspaces } from '@/lib/db/schema'
+import { users, workspaceMembers, workspaces } from '@/lib/db/schema'
 import { getSupabaseServerClient } from '@/lib/supabase/server'
 import {
   ForbiddenError,
@@ -75,31 +75,78 @@ export async function optionalUser(): Promise<AuthUser | null> {
 }
 
 /**
- * Throws if user is not the admin of the given workspace.
- * Returns { user, workspace } for downstream use without a re-query.
+ * Throws if user is not an admin of the given workspace.
+ *
+ * Source of truth: `workspace_members.role = 'admin'`. The legacy
+ * `workspaces.admin_id` is kept ONLY for backward compat with the
+ * workspace-creator concept — every creator gets an `admin` row in
+ * workspace_members on creation, so the JOIN below is sufficient.
+ *
+ * Returns { user, workspace, role } so downstream code can branch without
+ * a re-query.
  */
 export async function requireWorkspaceAdmin(workspaceId: string) {
   const user = await requireUser()
   const db = getDb()
-  const [workspace] = await db
-    .select()
+  const rows = await db
+    .select({ workspace: workspaces, role: workspaceMembers.role })
     .from(workspaces)
+    .leftJoin(
+      workspaceMembers,
+      and(
+        eq(workspaceMembers.workspaceId, workspaces.id),
+        eq(workspaceMembers.userId, user.id),
+      ),
+    )
     .where(eq(workspaces.id, workspaceId))
     .limit(1)
 
-  if (!workspace) throw new NotFoundError('Workspace')
-  if (workspace.adminId !== user.id) throw new ForbiddenError()
+  if (rows.length === 0 || !rows[0].workspace) {
+    throw new NotFoundError('Workspace')
+  }
+  const { workspace, role } = rows[0]
+  // Legacy fallback: workspaces.admin_id is admin even if members row
+  // hasn't been backfilled. New workspaces always have the row.
+  const isAdmin = role === 'admin' || workspace.adminId === user.id
+  if (!isAdmin) throw new ForbiddenError('Workspace admin required.')
 
-  return { user, workspace }
+  return { user, workspace, role: 'admin' as const }
 }
 
 /**
- * Membership check.
+ * Membership check — any role (admin / annotator / viewer) passes.
  *
- * MVP: same as admin since there's no annotator-membership table yet.
- * When we add per-workspace roles (later), this becomes a JOIN against a
- * `workspace_members` table that returns the role too.
+ * Returns the user's role so callers can branch on it without re-querying.
  */
 export async function requireWorkspaceMember(workspaceId: string) {
-  return requireWorkspaceAdmin(workspaceId)
+  const user = await requireUser()
+  const db = getDb()
+  const rows = await db
+    .select({ workspace: workspaces, role: workspaceMembers.role })
+    .from(workspaces)
+    .leftJoin(
+      workspaceMembers,
+      and(
+        eq(workspaceMembers.workspaceId, workspaces.id),
+        eq(workspaceMembers.userId, user.id),
+      ),
+    )
+    .where(eq(workspaces.id, workspaceId))
+    .limit(1)
+
+  if (rows.length === 0 || !rows[0].workspace) {
+    throw new NotFoundError('Workspace')
+  }
+  const { workspace, role } = rows[0]
+  // Legacy fallback.
+  const effectiveRole =
+    role ?? (workspace.adminId === user.id ? 'admin' : null)
+  if (!effectiveRole) {
+    throw new ForbiddenError('Not a member of this workspace.')
+  }
+  return {
+    user,
+    workspace,
+    role: effectiveRole as 'admin' | 'annotator' | 'viewer',
+  }
 }

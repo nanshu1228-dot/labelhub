@@ -1,7 +1,7 @@
 'use server'
 import { z } from 'zod'
 import { getDb } from '@/lib/db/client'
-import { workspaces, events } from '@/lib/db/schema'
+import { workspaces, workspaceMembers, events } from '@/lib/db/schema'
 import { requireUser } from '@/lib/auth/guards'
 import { ValidationError } from '@/lib/errors'
 import { TEMPLATE_MODES, type TemplateMode } from '@/lib/templates/types'
@@ -49,6 +49,18 @@ export async function createWorkspace(input: CreateWorkspaceInput) {
       adminId: user.id,
     })
     .returning()
+
+  // Creator is also a workspace_member with role=admin. The auth guards
+  // read from `workspace_members`, so without this row the creator can't
+  // even access their own workspace post the role-aware guard refactor.
+  await db
+    .insert(workspaceMembers)
+    .values({
+      workspaceId: workspace.id,
+      userId: user.id,
+      role: 'admin',
+    })
+    .onConflictDoNothing()
 
   // Event sourcing (Pillar 2): every mutation appends an event.
   await db.insert(events).values({

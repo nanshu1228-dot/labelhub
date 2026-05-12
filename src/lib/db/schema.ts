@@ -62,12 +62,89 @@ export const workspaces = pgTable('workspaces', {
   id: uuid('id').defaultRandom().primaryKey(),
   name: text('name').notNull(),
   templateMode: text('template_mode').notNull(), // FK to in-code registry
+  /**
+   * Primary owner — keeps backward compat with code that reads `admin_id`
+   * directly. Real authorization should go through `workspace_members`
+   * (below) which supports multi-admin + finer roles.
+   */
   adminId: uuid('admin_id')
     .references(() => users.id)
     .notNull(),
   settings: jsonb('settings').default({}).notNull(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 })
+
+// =================================================================
+// Workspace members — many-to-many (user × workspace) with roles.
+// Supersedes the old single-admin model. `workspaces.admin_id` is kept
+// for backward compat but the source of truth for "can this user X?" is
+// this table.
+//
+// Roles (deliberately small set — extend cautiously):
+//   - 'admin'     — full control: invite/remove, modify settings, mint keys,
+//                   create tasks, edit guidelines, accept patches
+//   - 'annotator' — can claim topics, submit annotations, comment
+//   - 'viewer'    — read-only; can see trajectories + annotations + analytics
+//
+// Auth guards (`requireWorkspaceAdmin` etc.) check this table.
+// =================================================================
+export const workspaceMembers = pgTable(
+  'workspace_members',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    workspaceId: uuid('workspace_id')
+      .references(() => workspaces.id)
+      .notNull(),
+    userId: uuid('user_id')
+      .references(() => users.id)
+      .notNull(),
+    role: text('role').notNull(), // 'admin' | 'annotator' | 'viewer'
+    /** Who invited this user (null for the workspace creator). */
+    invitedBy: uuid('invited_by').references(() => users.id),
+    joinedAt: timestamp('joined_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    wsUserUniq: uniqueIndex('ws_members_ws_user_uniq').on(
+      table.workspaceId,
+      table.userId,
+    ),
+    userIdx: index('ws_members_user_idx').on(table.userId),
+    roleIdx: index('ws_members_role_idx').on(table.workspaceId, table.role),
+  }),
+)
+
+// =================================================================
+// Workspace invites — outstanding invites for users who haven't signed up
+// yet (matched by email at sign-in). When a user signs up with a matching
+// email, the invite is consumed and a `workspace_members` row is created.
+// =================================================================
+export const workspaceInvites = pgTable(
+  'workspace_invites',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    workspaceId: uuid('workspace_id')
+      .references(() => workspaces.id)
+      .notNull(),
+    /** Lowercased before storage. Match on insert + on sign-in lookup. */
+    email: text('email').notNull(),
+    role: text('role').notNull(),
+    invitedBy: uuid('invited_by')
+      .references(() => users.id)
+      .notNull(),
+    /** UUID token the user clicks in their email; null = link not yet generated. */
+    token: text('token').notNull(),
+    acceptedAt: timestamp('accepted_at'),
+    expiresAt: timestamp('expires_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    tokenUniq: uniqueIndex('ws_invites_token_uniq').on(table.token),
+    wsEmailIdx: index('ws_invites_ws_email_idx').on(
+      table.workspaceId,
+      table.email,
+    ),
+  }),
+)
 
 // =================================================================
 // Tasks — published units of work inside a workspace

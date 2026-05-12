@@ -21,6 +21,7 @@ import {
 } from '@/lib/db/schema'
 import { proposeGuidelinePatch } from '@/lib/ai/guideline-refiner'
 import { listTopDisputes } from '@/lib/queries/iaa'
+import { assertWithinDailyAIQuota, logAICall } from '@/lib/ai/quota'
 import { AppError, NotFoundError, ValidationError } from '@/lib/errors'
 
 const REFINER_INPUT = z.object({
@@ -159,14 +160,29 @@ export async function refineGuidelinesDemo(
     }
   })
 
-  // 4. Ask Claude for the patch
+  // 4. Quota check — refiner is the most expensive AI feature we have.
+  // Demo mode uses the seeded demo admin as the bookkeeping actor.
+  const quotaUserId = '00000000-0000-0000-0000-000000000001'
+  await assertWithinDailyAIQuota(quotaUserId)
+
+  // 5. Ask Claude for the patch
   const { proposal, usage } = await proposeGuidelinePatch({
     taskName: inboxTask.name,
     currentGuideline: latestGuideline.content,
     disputes: refinerCases,
   })
 
-  // 5. Persist the patch (status: pending)
+  // 6. Log the AI call against the quota
+  await logAICall({
+    userId: quotaUserId,
+    feature: 'guideline-refiner',
+    model: usage.model,
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    workspaceId: parsed.workspaceId,
+  })
+
+  // 7. Persist the patch (status: pending)
   const [patchRow] = await db
     .insert(guidelinePatches)
     .values({
@@ -178,7 +194,7 @@ export async function refineGuidelinesDemo(
     })
     .returning()
 
-  // 6. Audit
+  // 8. Audit
   await db.insert(events).values({
     type: 'guideline_patch.proposed',
     workspaceId: parsed.workspaceId,

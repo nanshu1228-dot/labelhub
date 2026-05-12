@@ -10,6 +10,7 @@ import {
   trajectorySteps,
   users,
 } from '@/lib/db/schema'
+import { IAA_TOLERANCE, isDispute, ratingSpread } from './iaa-math'
 
 /**
  * Inter-Annotator Agreement (IAA) — the second pillar of LabelHub.
@@ -104,15 +105,12 @@ export async function getTrajectoryIAA(
     const ratings = raters
       .filter((r) => r.kind === 'step_quality' && r.rating != null)
       .map((r) => r.rating!)
-    const spread =
-      ratings.length >= 2
-        ? Math.max(...ratings) - Math.min(...ratings)
-        : 0
+    const spread = ratingSpread(ratings)
     out.push({
       trajectoryStepId: stepId,
       trajectoryId,
       raters,
-      disputed: spread > 1, // tolerance: ±1 is agreement
+      disputed: isDispute(ratings),
       spread,
     })
   }
@@ -166,8 +164,7 @@ export async function listDisputeCountsByTrajectory(
   for (const [tid, stepMap] of byTraj) {
     let disputed = 0
     for (const arr of stepMap.values()) {
-      if (arr.length < 2) continue
-      if (Math.max(...arr) - Math.min(...arr) > 1) disputed++
+      if (isDispute(arr)) disputed++
     }
     if (disputed > 0) out.set(tid, disputed)
   }
@@ -221,7 +218,7 @@ export async function getWorkspaceIaaSummary(workspaceId: string): Promise<{
   for (const arr of byStep.values()) {
     if (arr.length >= 2) {
       multi++
-      if (Math.max(...arr) - Math.min(...arr) > 1) disputed++
+      if (isDispute(arr)) disputed++
     }
   }
   const agreementRate = multi === 0 ? null : 1 - disputed / multi
@@ -311,8 +308,8 @@ export async function listTopDisputes(opts: {
       .map((r) => r.rating)
       .filter((x): x is number => x != null)
     if (nums.length < 2) continue
-    const spread = Math.max(...nums) - Math.min(...nums)
-    if (spread <= 1) continue
+    const spread = ratingSpread(nums)
+    if (spread <= IAA_TOLERANCE) continue
     disputes.push({
       trajectoryId: b.trajectoryId,
       trajectoryStepId: stepId,
