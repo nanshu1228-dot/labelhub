@@ -16,6 +16,7 @@
     "bootstrap": "tsx scripts/bootstrap-demo.ts",
     "storage:setup": "tsx scripts/storage-setup.ts",
     "seed:connections": "tsx scripts/seed-connections.ts",
+    "seed:disputes": "tsx scripts/seed-disputes.ts",
     "mcp": "tsx mcp/server.ts",
     "test:capture": "tsx scripts/test-doubao-capture.ts"
   },

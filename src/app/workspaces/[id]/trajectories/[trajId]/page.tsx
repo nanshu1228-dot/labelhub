@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getWorkspaceById } from '@/lib/queries/workspaces'
 import { getTrajectoryWithSteps } from '@/lib/queries/trajectories'
+import { getTrajectoryIAA, type StepIAA } from '@/lib/queries/iaa'
 import { listMyStepAnnotationsDemo } from '@/lib/actions/step-annotations-demo'
 import type { stepAnnotations as stepAnnotationsTable, trajectorySteps } from '@/lib/db/schema'
 import { StepMarkWidget } from '@/components/trajectory/step-mark-widget'
@@ -31,6 +32,7 @@ export default async function TrajectoryDetailPage(
   let dbError: string | null = null
   let bundle: Awaited<ReturnType<typeof getTrajectoryWithSteps>> = null
   let myMarks: Awaited<ReturnType<typeof listMyStepAnnotationsDemo>> = {}
+  let iaaByStep = new Map<string, StepIAA>()
 
   try {
     const workspace = await getWorkspaceById(workspaceId)
@@ -38,10 +40,15 @@ export default async function TrajectoryDetailPage(
     workspaceName = workspace.name
     bundle = await getTrajectoryWithSteps(trajId)
     if (bundle) {
-      myMarks = await listMyStepAnnotationsDemo({
-        workspaceId,
-        trajectoryId: trajId,
-      })
+      const [marks, iaa] = await Promise.all([
+        listMyStepAnnotationsDemo({
+          workspaceId,
+          trajectoryId: trajId,
+        }),
+        getTrajectoryIAA(trajId),
+      ])
+      myMarks = marks
+      iaaByStep = new Map(iaa.map((s) => [s.trajectoryStepId, s]))
     }
   } catch (e) {
     dbError = e instanceof Error ? e.message : String(e)
@@ -70,6 +77,7 @@ export default async function TrajectoryDetailPage(
             providersById={bundle.providersById}
             myMarks={myMarks}
             demoMode={demoMode}
+            iaaByStep={iaaByStep}
           />
         ) : null}
       </main>
@@ -153,6 +161,7 @@ function Body({
   providersById,
   myMarks,
   demoMode,
+  iaaByStep,
 }: {
   workspaceId: string
   trajectory: NonNullable<
@@ -162,6 +171,7 @@ function Body({
   providersById: Map<string, ToolProvider>
   myMarks: Record<string, typeof stepAnnotationsTable.$inferSelect>
   demoMode: boolean
+  iaaByStep: Map<string, StepIAA>
 }) {
   const meta = (trajectory.meta ?? {}) as Record<string, unknown>
   const systemPrompt =
@@ -238,6 +248,7 @@ function Body({
                 workspaceId={workspaceId}
                 existingMark={myMarks[s.id] ?? null}
                 demoMode={demoMode}
+                iaa={iaaByStep.get(s.id) ?? null}
               />
             </li>
           ))}
@@ -671,12 +682,14 @@ function StepCard({
   workspaceId,
   existingMark,
   demoMode,
+  iaa,
 }: {
   step: StepRow
   provider: ToolProvider | null
   workspaceId: string
   existingMark: typeof stepAnnotationsTable.$inferSelect | null
   demoMode: boolean
+  iaa: StepIAA | null
 }) {
   return (
     <div
@@ -709,6 +722,10 @@ function StepCard({
       <div className="p-4">
         <StepBody step={step} />
       </div>
+      {iaa && iaa.disputed && <DisputePanel iaa={iaa} />}
+      {iaa && !iaa.disputed && iaa.raters.length >= 2 && (
+        <ConsensusPanel iaa={iaa} />
+      )}
       {demoMode && (
         <div
           className="px-4 py-3"
@@ -732,6 +749,89 @@ function StepCard({
           />
         </div>
       )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IAA panels (per step)
+
+function ratingLabel(r: number | null): { text: string; color: string } {
+  if (r === 5) return { text: '✓ correct', color: 'var(--success)' }
+  if (r === 3) return { text: '⚠ suspicious', color: 'var(--warn)' }
+  if (r === 1) return { text: '✗ wrong', color: 'var(--danger)' }
+  return { text: '?', color: 'var(--mute)' }
+}
+
+function DisputePanel({ iaa }: { iaa: StepIAA }) {
+  return (
+    <div
+      className="px-4 py-3"
+      style={{
+        borderTop: '1px solid oklch(0.6 0.2 25 / 0.4)',
+        background: 'oklch(0.6 0.2 25 / 0.06)',
+      }}
+    >
+      <div
+        className="ts-12 mono mb-2 flex items-center gap-2"
+        style={{ color: 'var(--danger)', letterSpacing: '0.04em' }}
+      >
+        ⚡ ANNOTATORS DISAGREE
+        <span style={{ color: 'var(--mute)' }}>
+          (rating spread = {iaa.spread})
+        </span>
+      </div>
+      <ul className="flex flex-col gap-1.5">
+        {iaa.raters.map((r) => {
+          const lab = ratingLabel(r.rating)
+          return (
+            <li
+              key={r.userId}
+              className="ts-13 flex items-start gap-2"
+            >
+              <span
+                className="mono"
+                style={{
+                  color: 'var(--mute2)',
+                  minWidth: 110,
+                  flexShrink: 0,
+                }}
+              >
+                {r.displayName ?? r.userId.slice(0, 8)}
+              </span>
+              <span
+                className="mono"
+                style={{
+                  color: lab.color,
+                  fontWeight: 600,
+                  minWidth: 110,
+                  flexShrink: 0,
+                }}
+              >
+                {lab.text}
+              </span>
+              <span style={{ color: 'var(--text)' }}>{r.reasoning}</span>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+}
+
+function ConsensusPanel({ iaa }: { iaa: StepIAA }) {
+  return (
+    <div
+      className="px-4 py-2 ts-12 mono flex items-center gap-2"
+      style={{
+        borderTop: '1px solid var(--line)',
+        background: 'var(--success-soft)',
+        color: 'var(--success)',
+        letterSpacing: '0.04em',
+      }}
+    >
+      ✓ {iaa.raters.length} raters in agreement
+      <span style={{ color: 'var(--mute)' }}>(spread ≤ 1)</span>
     </div>
   )
 }

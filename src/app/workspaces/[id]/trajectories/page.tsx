@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getWorkspaceById } from '@/lib/queries/workspaces'
 import { listTrajectoriesWithStepStats } from '@/lib/queries/trajectories'
+import { listDisputeCountsByTrajectory } from '@/lib/queries/iaa'
 import { TRAJECTORY_SOURCES, type TrajectorySource } from '@/lib/trajectories/schema'
 
 export const metadata: Metadata = {
@@ -42,6 +43,7 @@ export default async function TrajectoriesListPage(
   let dbError: string | null = null
   let rows: Awaited<ReturnType<typeof listTrajectoriesWithStepStats>> = []
   let totalBeforeFilters = 0
+  let disputeCounts: Map<string, number> = new Map()
 
   try {
     const workspace = await getWorkspaceById(workspaceId)
@@ -55,6 +57,11 @@ export default async function TrajectoriesListPage(
         return false
       return true
     })
+    // Pull dispute counts for the visible page in one query.
+    disputeCounts = await listDisputeCountsByTrajectory(
+      workspaceId,
+      rows.map((r) => r.id),
+    )
   } catch (e) {
     dbError = e instanceof Error ? e.message : String(e)
   }
@@ -106,7 +113,11 @@ export default async function TrajectoriesListPage(
           <ul className="flex flex-col gap-3">
             {rows.map((row) => (
               <li key={row.id}>
-                <TrajectoryRow workspaceId={workspaceId} row={row} />
+                <TrajectoryRow
+                  workspaceId={workspaceId}
+                  row={row}
+                  disputeCount={disputeCounts.get(row.id) ?? 0}
+                />
               </li>
             ))}
           </ul>
@@ -181,9 +192,11 @@ function Logo() {
 function TrajectoryRow({
   workspaceId,
   row,
+  disputeCount,
 }: {
   workspaceId: string
   row: Awaited<ReturnType<typeof listTrajectoriesWithStepStats>>[number]
+  disputeCount: number
 }) {
   const created = new Date(row.createdAt)
   const finalPreview = row.finalResponse
@@ -214,6 +227,7 @@ function TrajectoryRow({
           <div className="flex items-center gap-2 mb-1.5 flex-wrap">
             <SourceBadge source={row.source} />
             {qcReasons.length > 0 && <QcChip reasons={qcReasons} />}
+            {disputeCount > 0 && <DisputeChip count={disputeCount} />}
             <span
               className="ts-13 mono truncate-1"
               style={{ color: 'var(--hi)', minWidth: 0 }}
@@ -260,6 +274,23 @@ function TrajectoryRow({
         </div>
       </div>
     </Link>
+  )
+}
+
+function DisputeChip({ count }: { count: number }) {
+  // Inter-annotator dispute — the signal feeding the Guideline Refiner.
+  return (
+    <span
+      className="badge"
+      style={{
+        color: 'var(--danger)',
+        borderColor: 'oklch(0.6 0.2 25 / 0.4)',
+        background: 'var(--danger-soft)',
+      }}
+      title={`${count} step${count === 1 ? '' : 's'} disputed across raters (spread > 1)`}
+    >
+      ⚡ {count} disputed
+    </span>
   )
 }
 
