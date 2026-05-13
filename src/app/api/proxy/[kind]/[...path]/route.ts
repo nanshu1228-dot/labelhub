@@ -26,6 +26,8 @@ import {
   type ProviderDef,
 } from '@/lib/proxy/provider-registry'
 import { recordCallAndCheckRpm } from '@/lib/proxy/rate-limit'
+import { injectScopeForFamily } from '@/lib/proxy/inject-scope'
+import { resolveTopicScope } from '@/lib/queries/topic-scope'
 
 /**
  * Catch-all proxy route — `POST /api/proxy/<kind>/<...path>`
@@ -162,6 +164,45 @@ export async function POST(
       void touchConnection(conn.connectionId).catch(() => {})
     }
 
+    // ── 5b. Topic-scope injection (Layer A guardrail) ────────────────
+    // Auto-derived from the workspace's primary task by Haiku; cached in
+    // task_topic_scopes. Prepended to the upstream system prompt as
+    // non-negotiable platform policy so a leaked API key can't be
+    // repurposed as a generic chatbot.
+    //
+    // Fail-open: if no scope is configured for this workspace, skip
+    // injection silently. Admins generate one via the regenerate action.
+    // We rebuild the outbound body when injection actually happens; this is
+    // the bytes that hit the upstream provider. Trajectory capture deliberately
+    // continues to record the ORIGINAL `bodyJson` (publisher intent) — the
+    // policy block isn't part of the publisher's data and including it would
+    // bloat every capture identically. The model's RESPONSE captured below
+    // will already reflect the policy's effect.
+    let outboundBodyText = bodyText
+    try {
+      const scope = await resolveTopicScope({
+        workspaceId: auth.workspaceId,
+      })
+      if (scope) {
+        const result = injectScopeForFamily(
+          providerDef.family,
+          bodyJson,
+          scope.scope.suffix,
+        )
+        if (result.injected) {
+          outboundBodyText = JSON.stringify(result.body)
+        }
+      }
+    } catch (e) {
+      // Don't let a topic-scope read failure block the request — the
+      // proxy's job is to forward. Log and pass through with the raw body.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `${providerDef.kind} proxy: topic-scope read failed, passing through:`,
+        e instanceof Error ? e.message : e,
+      )
+    }
+
     // ── 6. Forward to upstream ───────────────────────────────────────
     const upstreamUrl = `${conn.baseUrl}/${path.join('/')}`
     const upstreamHeaders = buildUpstreamHeaders(
@@ -174,7 +215,7 @@ export async function POST(
       upstreamRes = await fetch(upstreamUrl, {
         method: 'POST',
         headers: upstreamHeaders,
-        body: bodyText,
+        body: outboundBodyText,
       })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
