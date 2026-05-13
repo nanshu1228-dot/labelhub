@@ -152,6 +152,29 @@ const OPENAI_COMPAT_BASE: Record<Exclude<ProviderKind, 'anthropic'>, string> = {
   openai: 'https://api.openai.com/v1',
 }
 
+/**
+ * Which OpenAI-compat providers support `response_format: {type:'json_object'}`.
+ *
+ * Doubao's `seed-lite` model rejects it with `InvalidParameter` —
+ * BadRequest 400. Their newer Pro models DO support it. For now we
+ * blanket-disable for Doubao; when callers move to Pro they can flip
+ * the entry below (or add a per-model check).
+ *
+ * Our prompts ALREADY say "Output ONLY the JSON object" so dropping the
+ * `response_format` parameter is safe — we get the same behavior.
+ *
+ * Verified-supports list maintained by hand. When in doubt, default false:
+ * worst case is a model returns markdown-fenced JSON which the caller's
+ * `stripCodeFences` already handles.
+ */
+const SUPPORTS_JSON_MODE: Record<Exclude<ProviderKind, 'anthropic'>, boolean> = {
+  doubao: false,
+  deepseek: true,
+  moonshot: true,
+  qwen: true,
+  openai: true,
+}
+
 // ─── Provider resolution ────────────────────────────────────────────────
 
 /**
@@ -294,8 +317,11 @@ async function chatOpenAICompat(
   const baseUrl =
     process.env[baseOverrideKey]?.trim() || OPENAI_COMPAT_BASE[provider]
 
-  // OpenAI-compatible body. JSON mode is opt-in via responseFormat='json_object'.
-  // Doubao + DeepSeek + Moonshot + Qwen + OpenAI all accept the same shape.
+  // OpenAI-compatible body. JSON mode is opt-in via responseFormat='json_object',
+  // BUT some providers (Doubao seed-lite) reject the parameter even though they
+  // speak OpenAI-compat otherwise. We gate the parameter on a per-provider
+  // capability flag and rely on the prompt's "Output ONLY JSON" instruction
+  // when the provider doesn't natively support the mode.
   const body: Record<string, unknown> = {
     model,
     max_tokens: req.maxTokens,
@@ -304,7 +330,7 @@ async function chatOpenAICompat(
       ...req.messages,
     ],
   }
-  if (req.responseFormat === 'json_object') {
+  if (req.responseFormat === 'json_object' && SUPPORTS_JSON_MODE[provider]) {
     body.response_format = { type: 'json_object' }
   }
 

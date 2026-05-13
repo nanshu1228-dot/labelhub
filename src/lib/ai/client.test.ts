@@ -173,7 +173,33 @@ describe('openai-compat request shape', () => {
     fetchSpy.mockRestore()
   })
 
-  it('passes json_object response_format when requested', async () => {
+  it('drops response_format for Doubao (model rejects json_object) — prompt-only enforcement', async () => {
+    const { chat } = await import('./client')
+    const fetchSpy = vi
+      .spyOn(global, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: '{}' } }],
+            usage: { prompt_tokens: 1, completion_tokens: 1 },
+          }),
+          { status: 200 },
+        ),
+      )
+    await chat({
+      system: 'json please',
+      messages: [{ role: 'user', content: 'x' }],
+      maxTokens: 50,
+      responseFormat: 'json_object',
+    })
+    const body = JSON.parse(String(fetchSpy.mock.calls[0]![1]!.body))
+    expect('response_format' in body).toBe(false)
+    fetchSpy.mockRestore()
+  })
+
+  it('passes response_format through for providers that DO support json mode (DeepSeek)', async () => {
+    process.env.AI_DEFAULT_PROVIDER = 'deepseek'
+    process.env.DEEPSEEK_API_KEY = 'sk-ds-fake'
     const { chat } = await import('./client')
     const fetchSpy = vi
       .spyOn(global, 'fetch')
