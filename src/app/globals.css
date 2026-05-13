@@ -297,12 +297,15 @@ html[data-lang="zh"] .lh-h4 { letter-spacing: 0.005em; }
   --hi2: oklch(0.08 0 0);
   --accent: oklch(0.6 0.18 280);
   --accent-soft: oklch(0.6 0.18 280 / 0.08);
+  --accent-soft2: oklch(0.6 0.18 280 / 0.14);
   --accent-line: oklch(0.6 0.18 280 / 0.30);
   --success: oklch(0.5 0.13 150);
   --success-soft: oklch(0.5 0.13 150 / 0.08);
   --warn: oklch(0.6 0.14 75);
+  --warn-soft: oklch(0.6 0.14 75 / 0.12);
   --danger: oklch(0.55 0.2 25);
   --danger-soft: oklch(0.55 0.2 25 / 0.08);
+  --line3: oklch(0.78 0 0);
   /* dark code-panel exception — for tool_call args / tool_result JSON / code blocks */
   --code-bg: oklch(0.18 0 0);
   --code-bg2: oklch(0.22 0 0);

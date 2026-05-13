@@ -1,0 +1,650 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   Annotation UI — design tokens.
+
+   All selectors are scoped under `.app-light` so they only activate where
+   the trajectory annotator is mounted. Keep this file the single source of
+   truth for annotate-specific styles — globals.css owns the broader app.
+
+   Color/border values reference the same `--bg`, `--panel`, `--accent`,
+   etc. tokens declared in globals.css under `.app-light :root`.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.app-light .kind-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--line);
+  color: var(--mute);
+  white-space: nowrap;
+}
+.app-light .kind-pill .kdot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+.app-light .kind-pill.thinking {
+  color: var(--mute);
+}
+.app-light .kind-pill.thinking .kdot {
+  background: var(--mute);
+}
+.app-light .kind-pill.tool {
+  color: var(--accent);
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+.app-light .kind-pill.tool .kdot {
+  background: var(--accent);
+}
+.app-light .kind-pill.result {
+  color: var(--success);
+  border-color: oklch(0.5 0.13 150 / 0.35);
+  background: var(--success-soft);
+}
+.app-light .kind-pill.result .kdot {
+  background: var(--success);
+}
+.app-light .kind-pill.final {
+  color: var(--hi);
+  border-color: var(--line2);
+  background: oklch(0.94 0 0);
+}
+.app-light .kind-pill.final .kdot {
+  background: var(--hi);
+}
+.app-light .kind-pill.error {
+  color: var(--danger);
+  border-color: oklch(0.55 0.2 25 / 0.35);
+  background: var(--danger-soft);
+}
+.app-light .kind-pill.error .kdot {
+  background: var(--danger);
+}
+
+/* ── Segmented control (mode switcher) ── */
+.app-light .seg {
+  display: inline-flex;
+  padding: 2px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+.app-light .seg-btn {
+  font-size: 12px;
+  padding: 0 10px;
+  height: 24px;
+  border-radius: 5px;
+  color: var(--mute);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: color 120ms, background 120ms;
+  cursor: pointer;
+  white-space: nowrap;
+  font-weight: 500;
+  background: transparent;
+  border: 0;
+}
+.app-light .seg-btn:hover {
+  color: var(--hi);
+}
+.app-light .seg-btn.on {
+  color: var(--hi);
+  background: oklch(0.94 0 0);
+}
+.app-light .seg-btn .kbd {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9.5px;
+  padding: 0 3px;
+  border: 1px solid var(--line2);
+  border-radius: 3px;
+  color: var(--mute2);
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+}
+.app-light .seg-btn.on .kbd {
+  border-color: var(--line3);
+  color: var(--mute);
+}
+
+/* ── Icon button ── */
+.app-light .icon-btn {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: var(--mute);
+  border: 1px solid transparent;
+  background: transparent;
+  transition: color 120ms, border-color 120ms, background 120ms;
+  cursor: pointer;
+}
+.app-light .icon-btn:hover {
+  color: var(--hi);
+  background: var(--panel2);
+}
+.app-light .icon-btn.on {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+}
+
+/* ── Scroll containers ── */
+.app-light .scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+}
+.app-light .scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.app-light .scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.app-light .scroll::-webkit-scrollbar-thumb {
+  background: oklch(0.88 0 0);
+  border-radius: 4px;
+}
+.app-light .scroll::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.78 0 0);
+}
+
+/* ── Dark code panel ── */
+.app-light .code {
+  background: oklch(0.18 0 0);
+  border: 1px solid oklch(0.27 0 0);
+  border-radius: 8px;
+  overflow: hidden;
+  color: oklch(0.82 0 0);
+}
+.app-light .code .code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid oklch(0.27 0 0);
+  background: oklch(0.22 0 0);
+}
+.app-light .code .code-body {
+  padding: 10px 12px;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 11.5px;
+  line-height: 1.55;
+  white-space: pre;
+  overflow-x: auto;
+}
+.app-light .code .code-body .k {
+  color: oklch(0.78 0.08 250);
+}
+.app-light .code .code-body .s {
+  color: oklch(0.78 0.13 145);
+}
+.app-light .code .code-body .n {
+  color: oklch(0.78 0.14 70);
+}
+.app-light .code .code-body .p {
+  color: oklch(0.55 0 0);
+}
+.app-light .code .code-head .name {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 11.5px;
+  color: var(--accent);
+}
+.app-light .code .code-head .meta {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10.5px;
+  color: oklch(0.55 0 0);
+}
+
+/* ── Step list row (in the virtualized list) ── */
+.app-light .step-row {
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  align-items: center;
+  column-gap: 8px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 80ms, border-color 80ms;
+  /* height set inline via virtualizer estimateSize for absolute positioning */
+}
+.app-light .step-row:hover {
+  background: var(--panel2);
+}
+.app-light .step-row.selected {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+}
+.app-light .step-row .idx {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10.5px;
+  color: var(--mute2);
+  text-align: right;
+}
+.app-light .step-row.selected .idx {
+  color: var(--accent);
+}
+.app-light .step-row .preview {
+  font-size: 12px;
+  color: var(--mute);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app-light .step-row .row-trail {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.app-light .completion-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: transparent;
+  border: 1.5px solid var(--line2);
+  box-sizing: border-box;
+}
+.app-light .completion-dot.partial {
+  background: var(--accent-soft2);
+  border-color: var(--accent-line);
+}
+.app-light .completion-dot.full {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ── Heat-map strip ── */
+.app-light .heatmap {
+  display: flex;
+  gap: 1px;
+  height: 18px;
+  align-items: stretch;
+  flex: 1;
+}
+.app-light .heat-seg {
+  flex: 1;
+  background: var(--line);
+  border-radius: 1px;
+  cursor: pointer;
+  transition: transform 100ms;
+  min-width: 3px;
+  position: relative;
+  border: 0;
+  padding: 0;
+}
+.app-light .heat-seg:hover {
+  transform: scaleY(1.15);
+}
+.app-light .heat-seg.agreed {
+  background: var(--success);
+  opacity: 0.55;
+}
+.app-light .heat-seg.partial {
+  background: var(--accent);
+  opacity: 0.55;
+}
+.app-light .heat-seg.disputed {
+  background: var(--danger);
+  opacity: 0.8;
+}
+.app-light .heat-seg.unrated {
+  background: oklch(0.9 0 0);
+}
+.app-light .heat-seg.now {
+  box-shadow: 0 0 0 1.5px var(--hi);
+  transform: scaleY(1.3);
+  z-index: 2;
+  opacity: 1;
+}
+
+.app-light .heatmap-card {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.app-light .heatmap-card .legend {
+  display: flex;
+  gap: 8px;
+}
+.app-light .heatmap-card .legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10.5px;
+  color: var(--mute);
+}
+.app-light .heatmap-card .leg-sw {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: 0 0 8px;
+  min-width: 8px;
+  cursor: default;
+}
+.app-light .heatmap-card .leg-sw:hover {
+  transform: none;
+}
+
+/* ── Rubric row + inputs ── */
+.app-light .rubric-row {
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.app-light .rubric-row:first-of-type {
+  border-top: 0;
+}
+.app-light .rubric-row .rub-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.app-light .rubric-row .rub-name {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--hi);
+}
+.app-light .rubric-row .rub-meta {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10.5px;
+  color: var(--mute2);
+}
+.app-light .rubric-row .reason {
+  width: 100%;
+  margin-top: 7px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 9px;
+  font-family: var(--font-geist-sans), sans-serif;
+  font-size: 12px;
+  color: var(--text);
+  resize: vertical;
+  outline: none;
+  transition: border-color 120ms, box-shadow 120ms;
+  min-height: 32px;
+}
+.app-light .rubric-row .reason:focus {
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.app-light .rubric-row .reason::placeholder {
+  color: var(--mute2);
+}
+.app-light .rubric-row .reason.required {
+  border-color: oklch(0.6 0.14 75 / 0.6);
+}
+
+.app-light .likert {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+}
+.app-light .likert .lk {
+  height: 34px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  border-radius: 6px;
+  color: var(--mute);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  cursor: pointer;
+  transition: border-color 120ms, background 120ms, color 120ms;
+  position: relative;
+}
+.app-light .likert .lk:hover {
+  border-color: var(--line2);
+  color: var(--hi);
+}
+.app-light .likert .lk .glyph {
+  font-size: 13px;
+}
+.app-light .likert .lk.on.l1 {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.app-light .likert .lk.on.l3 {
+  background: var(--warn-soft);
+  border-color: var(--warn);
+  color: var(--warn);
+}
+.app-light .likert .lk.on.l5 {
+  background: var(--success-soft);
+  border-color: var(--success);
+  color: var(--success);
+}
+.app-light .likert .lk .kbd {
+  background: transparent;
+  border-color: var(--line);
+  color: var(--mute2);
+}
+
+.app-light .toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+.app-light .toggle .track {
+  width: 28px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--line);
+  position: relative;
+  transition: background 120ms;
+  display: inline-block;
+}
+.app-light .toggle .knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--bg);
+  box-shadow: 0 1px 2px oklch(0 0 0 / 0.18);
+  transition: left 120ms;
+}
+.app-light .toggle.on .track {
+  background: var(--accent);
+}
+.app-light .toggle.on .knob {
+  left: 14px;
+}
+
+.app-light .enum-set {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.app-light .enum-pill {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--mute);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 120ms, background 120ms, color 120ms;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.app-light .enum-pill:hover {
+  border-color: var(--line2);
+  color: var(--hi);
+}
+.app-light .enum-pill.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.app-light .enum-pill.on.good {
+  border-color: var(--success);
+  background: var(--success-soft);
+  color: var(--success);
+}
+.app-light .enum-pill.on.warn {
+  border-color: var(--warn);
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.app-light .enum-pill.on.bad {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* ── Reason-required nudge dot ── */
+.app-light .req-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--warn);
+  display: inline-block;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+/* ── Claude hint card ── */
+.app-light .claude-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px dashed var(--line2);
+  border-radius: 6px;
+  background: var(--panel2);
+  font-size: 12px;
+  color: var(--mute);
+  line-height: 1.5;
+  margin-top: 7px;
+}
+.app-light .claude-hint .who {
+  color: var(--accent);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10.5px;
+}
+.app-light .claude-hint .act {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 11px;
+  color: var(--mute);
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+.app-light .claude-hint .act:hover {
+  color: var(--accent);
+}
+
+/* ── Drawer ── */
+.app-light .drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: oklch(0 0 0 / 0.18);
+  z-index: 40;
+}
+.app-light .drawer {
+  position: fixed;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 480px;
+  background: var(--bg);
+  border-left: 1px solid var(--line);
+  box-shadow: -20px 0 40px oklch(0 0 0 / 0.06);
+  z-index: 41;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Big Likert for Focus mode ── */
+.app-light .likert-big {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  max-width: 720px;
+  margin: 0 auto;
+}
+.app-light .likert-big .lkb {
+  height: 96px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: transform 120ms, border-color 120ms, background 120ms;
+}
+.app-light .likert-big .lkb:hover {
+  transform: translateY(-1px);
+  border-color: var(--line2);
+}
+.app-light .likert-big .lkb .g {
+  font-size: 22px;
+}
+.app-light .likert-big .lkb .nm {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 11.5px;
+  color: var(--mute);
+  letter-spacing: 0.03em;
+}
+.app-light .likert-big .lkb .ks {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 11px;
+  color: var(--mute2);
+}
+.app-light .likert-big .lkb.on.l1 {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+}
+.app-light .likert-big .lkb.on.l3 {
+  background: var(--warn-soft);
+  border-color: var(--warn);
+}
+.app-light .likert-big .lkb.on.l5 {
+  background: var(--success-soft);
+  border-color: var(--success);
+}
+.app-light .likert-big .lkb.on .nm {
+  color: var(--hi);
+}
+
+/* ── Truncate utility (already provided by globals.css in some places, kept
+       here for self-contained encapsulation) ── */
+.app-light .trunc-1 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

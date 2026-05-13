@@ -1,4 +1,6 @@
 import { z } from 'zod'
+import type { RubricSpec } from './rubric'
+import { rubricSpecSchema } from './rubric'
 
 /**
  * Template Engine — Pillar 4.
@@ -92,6 +94,19 @@ export interface PlatformTemplate {
   /** Shape of one annotator response (what they submit) */
   responseSchema: z.ZodTypeAny
 
+  /**
+   * Rubric — per-step and per-trajectory questions the annotator answers.
+   *
+   * Optional because not every template is trajectory-shaped. Trace-eval and
+   * pair-annotation use it; classic-survey uses `itemSchema` instead because
+   * its items aren't sequences.
+   *
+   * When present, the annotation UI is driven entirely off this spec — no
+   * hardcoded question lists anywhere in React. Adding a new question is a
+   * one-line edit to the template, no UI change needed.
+   */
+  rubric?: RubricSpec
+
   workflow: readonly WorkflowStage[]
   perfBudget: PerfBudget
   economy: EconomyConfig
@@ -122,6 +137,36 @@ export function validateTemplate(
     errors.push(
       `[${t.name}] maxItemsPerCell=${t.perfBudget.maxItemsPerCell} requires atomicStateRequired=true (>100 rows).`,
     )
+  }
+
+  // Rubric structural validation — surface bad rubric items at template-registration
+  // time instead of letting a malformed enum/missing-options sneak through to the UI.
+  if (t.rubric) {
+    const parsed = rubricSpecSchema.safeParse(t.rubric)
+    if (!parsed.success) {
+      errors.push(
+        `[${t.name}] rubric failed validation: ${parsed.error.issues
+          .map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`)
+          .join(' | ')}`,
+      )
+    } else {
+      // Unique-id check — duplicate IDs would silently overwrite mark storage.
+      const allIds = [...t.rubric.perStep, ...t.rubric.perTrajectory].map(
+        (r) => r.id,
+      )
+      const seen = new Set<string>()
+      const dupes = new Set<string>()
+      for (const id of allIds) {
+        if (seen.has(id)) dupes.add(id)
+        seen.add(id)
+      }
+      if (dupes.size) {
+        errors.push(
+          `[${t.name}] rubric has duplicate item ids: ${[...dupes].join(', ')}. ` +
+            `Per-step and per-trajectory IDs share a namespace because both land in step_annotations.payload.`,
+        )
+      }
+    }
   }
 
   return errors.length ? { ok: false, errors } : { ok: true }

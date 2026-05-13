@@ -64,6 +64,7 @@ export default async function TrajectoryDetailPage(
         workspaceId={workspaceId}
         workspaceName={workspaceName}
         agentName={bundle?.trajectory.agentName ?? 'trajectory'}
+        trajectoryId={trajId}
       />
 
       <main className="mx-auto max-w-[1200px] px-6 py-8">
@@ -92,10 +93,12 @@ function Header({
   workspaceId,
   workspaceName,
   agentName,
+  trajectoryId,
 }: {
   workspaceId: string
   workspaceName: string
   agentName: string
+  trajectoryId: string
 }) {
   return (
     <header
@@ -130,14 +133,35 @@ function Header({
             {agentName}
           </span>
         </nav>
-        <Link
-          href="/"
-          className="ts-13 mono"
-          style={{ color: 'var(--hi)' }}
-          aria-label="LabelHub"
-        >
-          <span style={{ color: 'var(--accent)' }}>§</span> labelhub
-        </Link>
+        <div className="flex items-center gap-3">
+          <Link
+            href={`/workspaces/${workspaceId}/trajectories/${trajectoryId}/annotate`}
+            className="lh-btn lh-btn-accent lh-btn-sm"
+            style={{
+              background: 'var(--accent)',
+              color: 'white',
+              border: '1px solid var(--accent)',
+              borderRadius: 6,
+              padding: '0 10px',
+              height: 28,
+              display: 'inline-flex',
+              alignItems: 'center',
+              fontSize: 12,
+              fontWeight: 500,
+              gap: 6,
+            }}
+          >
+            <span>§</span> Open annotator
+          </Link>
+          <Link
+            href="/"
+            className="ts-13 mono"
+            style={{ color: 'var(--hi)' }}
+            aria-label="LabelHub"
+          >
+            <span style={{ color: 'var(--accent)' }}>§</span> labelhub
+          </Link>
+        </div>
       </div>
     </header>
   )
