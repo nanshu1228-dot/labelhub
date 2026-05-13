@@ -549,6 +549,16 @@ export const trajectories = pgTable(
     createdAt: timestamp('created_at').defaultNow().notNull(),
     /** Soft-delete timestamp — null means active. Queries filter on this unless includeDeleted=true. */
     deletedAt: timestamp('deleted_at'),
+    /**
+     * Cached Claude pre-annotation hints, keyed by step id. Computed lazily
+     * via `reviewTrajectoryAndCache` and consumed by the annotator UI.
+     * Shape: Array<{ stepId, rubricId, value, reason }>.
+     * Null means "no review yet" — the /annotate page schedules an after()
+     * job to populate this on first visit, so subsequent visits are instant.
+     */
+    claudeHints: jsonb('claude_hints'),
+    claudeHintsAt: timestamp('claude_hints_at'),
+    claudeHintsModel: text('claude_hints_model'),
   },
   (table) => ({
     wsIdx: index('trajectories_ws_idx').on(table.workspaceId),

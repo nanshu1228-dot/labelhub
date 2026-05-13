@@ -1,9 +1,11 @@
 import type { Metadata } from 'next'
+import { after } from 'next/server'
 import { notFound } from 'next/navigation'
 import { getWorkspaceById } from '@/lib/queries/workspaces'
 import { getTrajectoryWithSteps } from '@/lib/queries/trajectories'
 import { getTrajectoryIAA } from '@/lib/queries/iaa'
 import { readMyAnnotatorMarks } from '@/lib/actions/annotate-marks'
+import { scheduleHintsIfMissing, type CachedClaudeHint } from '@/lib/actions/trajectory-hints'
 import { getTemplate } from '@/lib/templates/registry'
 import '@/lib/templates/init'
 import {
@@ -72,8 +74,27 @@ export default async function TrajectoryAnnotatePage(
     bundle.providersById,
   )
   const peerMarksByStep = peerMarksFromIaa(iaa, /* myUserId */ null)
-  // TODO: Claude hints — wire to trajectory-reviewer.ts output. For now empty.
-  const claudeHintsByStep = claudeHintsByStepFromList([])
+
+  // Claude pre-annotation hints — read cached list off the trajectory row.
+  // If absent, schedule a background compute via after() so this page's
+  // response isn't blocked on a 10s Sonnet call. Next visit will have hints.
+  const cachedHints = Array.isArray(bundle.trajectory.claudeHints)
+    ? (bundle.trajectory.claudeHints as CachedClaudeHint[])
+    : []
+  const claudeHintsByStep = claudeHintsByStepFromList(cachedHints)
+  if (cachedHints.length === 0) {
+    after(async () => {
+      try {
+        await scheduleHintsIfMissing({ trajectoryId: trajId })
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `Claude-hint background fill failed for ${trajId}:`,
+          e instanceof Error ? e.message : e,
+        )
+      }
+    })
+  }
 
   return (
     <TrajectoryAnnotator

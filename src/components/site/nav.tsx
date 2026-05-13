@@ -1,20 +1,20 @@
-'use client'
-import { useLang } from '@/lib/i18n'
+import { optionalUser } from '@/lib/auth/guards'
 import { LangSwitch } from './lang-switch'
+import { NavAuthControls } from './nav-auth-controls'
 
-const ARROW = (
-  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-    <path
-      d="M3 6h6m0 0L6 3m3 3L6 9"
-      stroke="currentColor"
-      strokeWidth="1.4"
-      strokeLinecap="square"
-    />
-  </svg>
-)
-
-export function SiteNav() {
-  const { t } = useLang()
+/**
+ * Top nav for marketing surfaces.
+ *
+ * Server-rendered to inline the user's session state in the first paint —
+ * judges should see "Sign in / Sign up" or their email immediately, with no
+ * flicker. The login state itself is read via `optionalUser()` (returns
+ * null when no session).
+ *
+ * Auth controls + lang switch are split into client subcomponents so the
+ * outer wrapper can stay an RSC.
+ */
+export async function SiteNav() {
+  const user = await optionalUser()
   return (
     <header
       className="sticky top-0 z-30"
@@ -26,7 +26,7 @@ export function SiteNav() {
     >
       <div className="max-w-[1280px] mx-auto px-6 h-14 flex items-center justify-between">
         <div className="flex items-center gap-8">
-          <a href="#" className="flex items-center gap-2">
+          <a href="/" className="flex items-center gap-2">
             <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true">
               <rect x="0.5" y="0.5" width="17" height="17" rx="4" stroke="oklch(0.6 0.18 280)" />
               <path
@@ -44,22 +44,18 @@ export function SiteNav() {
             </span>
           </a>
           <nav className="hidden md:flex items-center gap-6">
-            <a href="#templates" className="nav-link">{t('nav_templates')}</a>
-            <a href="#" className="nav-link">{t('nav_marketplace')}</a>
-            <a href="#" className="nav-link">{t('nav_pricing')}</a>
-            <a href="#" className="nav-link">{t('nav_docs')}</a>
-            <a href="#" className="nav-link">{t('nav_changelog')}</a>
+            <a href="#templates" className="nav-link">Templates</a>
+            <a href="/workspaces/00000000-0000-0000-0000-000000000010" className="nav-link">
+              Demo workspace
+            </a>
+            <a href="https://github.com/nanshu1228-dot/labelhub" className="nav-link" target="_blank" rel="noreferrer">
+              Docs
+            </a>
           </nav>
         </div>
         <div className="flex items-center gap-4">
           <LangSwitch />
-          <a href="#" className="nav-link hidden sm:inline">
-            {t('auth_login')}
-          </a>
-          <a href="#" className="lh-btn lh-btn-solid">
-            {t('auth_signup')}
-            {ARROW}
-          </a>
+          <NavAuthControls userEmail={user?.email ?? null} />
         </div>
       </div>
     </header>

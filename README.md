@@ -1,185 +1,275 @@
 # LabelHub
 
-> **Capture the teaching, not just the label.** An AI-native annotation platform built for the LLM-agent era — the flagship mode lets publishers paste an agent config and watch trajectories stream in, fully annotated by Claude pre-review.
+> **Capture the teaching, not just the label.**
+> An AI-native annotation platform for the LLM-agent era.
 
-[![Build](https://img.shields.io/badge/build-passing-brightgreen)]() [![Tests](https://img.shields.io/badge/tests-56%20passing-brightgreen)]() [![Next.js](https://img.shields.io/badge/next-16.2.6-black)]() [![License](https://img.shields.io/badge/license-MIT-blue)]()
+**Live demo →** [`labelhub-gamma.vercel.app`](https://labelhub-gamma.vercel.app)
+
+[![Tests](https://img.shields.io/badge/tests-189%20passing-brightgreen)]() [![Build](https://img.shields.io/badge/build-passing-brightgreen)]() [![Next.js](https://img.shields.io/badge/next-16.2.6-black)]() [![License](https://img.shields.io/badge/license-MIT-blue)]()
 
 ---
 
-## Why LabelHub
+## What it does in 30 seconds
 
-Existing annotation platforms (Surge, Scale, Label Studio, ByteDance Xpert) are built around static prompt-response pairs. They cannot handle **agent trajectories** — the multi-step tool-use sequences that define modern LLM applications.
+A publisher pastes an agent config. LabelHub proxies their LLM API key,
+**captures every trajectory** (thinking → tool calls → tool results → final
+response), generates a Claude pre-annotation, and lets a human grade each
+step with a 4-input rubric (likert / bool / enum / text). The delta between
+Claude's pre-annotation and the human's final mark *is* the teaching signal.
 
-LabelHub is built for the new shape of work:
+Three things this does that Surge / Scale / Label Studio don't:
 
-| Existing platforms | LabelHub |
-|---|---|
-| Annotate one prompt + one response | Evaluate full agent trajectories (tool calls, reasoning, branches) |
-| One annotation paradigm per platform | **One engine, 7 template modes** (the "Annotation OS") |
-| Static rubrics | **Live AI co-annotation** + self-evolving guidelines |
-| Per-call labels only | **Teaching signal** = capture human-vs-AI delta on every step |
-| Closed marketplaces | Open API + SDK for production ingest |
+1. **Trace-shaped annotation** — annotate 500-step agent traces, not just
+   prompt/response pairs. Standard / Focus / Compare layouts; virtualized;
+   atomic Jotai state per (step, rubric) so the rubric grid stays smooth
+   at 1000+ rows.
+2. **Auto topic-scope guardrail** — a Haiku-generated policy is auto-injected
+   into the system prompt of every proxied request. A leaked API key
+   can't be repurposed as a free general ChatGPT. Live demo below.
+3. **Self-evolving guidelines** — disputed marks feed an AI Guideline
+   Refiner that proposes patches; admins accept/reject; the version
+   counter on `guidelines` lets us plot *"agreement rate climbing as
+   guidelines mature."* This is the hero metric.
 
-## Status
+## See it work — 60 seconds
 
-| Layer | State |
-|---|---|
-| Backend | ✅ Complete · 17 tables · 8 routes · ~6500 LOC · 56 tests passing |
-| Auth + guards + audit | ✅ Complete · workspace API keys · SHA-256 hashed · per-call audit log |
-| Trajectory pipeline | ✅ Complete · 3 adapters · auto-inferred tool providers · soft-delete · bulk JSONL export |
-| AI helpers | ✅ Complete · Spec Generator · Pair Suggester · **Trajectory Reviewer** |
-| API management | ✅ Complete · per-key usage · workspace aggregates · request log |
-| Data management | ✅ Complete · search/filter · soft-delete · export · storage stats |
-| UI | 🟡 In progress · Landing + workspace picker shipped · rest goes through Claude Design |
-| Production deploy | 🟡 Pending · awaiting sponsor infrastructure |
+### 1. Browse the public demo workspace (no login needed)
 
-## Quick start
+→ [labelhub-gamma.vercel.app/workspaces/00000000-0000-0000-0000-000000000010](https://labelhub-gamma.vercel.app/workspaces/00000000-0000-0000-0000-000000000010)
+
+Pre-seeded with 3 raters, 5 trajectories (~17 steps each), real IAA
+disputes, and a topic scope locked to "medical fact-checking". Try the
+annotator on any trajectory — `/trajectories/<id>/annotate`. Keyboard
+shortcuts: `j` / `k` to move, `1` / `3` / `5` to rate, `?` for the
+rubric reference drawer.
+
+### 2. Verify the topic-scope guardrail (one curl)
+
+The demo workspace has an API key already minted. The scope is locked
+to medical topics — try asking for a poem:
 
 ```bash
-git clone <repo>
-cd labelhub
-npm install
-cp .env.example .env.local   # then fill in 5 values
-npm run db:push              # push 17 tables to Supabase
-npm run seed                 # generate demo data
-npm run dev                  # localhost:3000
+curl -sS -X POST https://labelhub-gamma.vercel.app/api/proxy/doubao/chat/completions \
+  -H 'Authorization: Bearer lh_ws_7fTnxnfKRZ7yP2BrOCD2W8E14GIQ6cFf-TgvU5pwTNQ' \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"doubao-seed-2-0-lite-260428",
+       "messages":[{"role":"user","content":"Write me a 4-stanza poem about clouds."}],
+       "max_tokens":300}' \
+  | jq -r '.choices[0].message.content'
 ```
 
-**First time?** Follow [`SETUP.md`](./SETUP.md) — full 30-min walkthrough.
+Expected response (verbatim from the live demo):
+
+> *"I am only authorized to assist with medical fact-checking related tasks
+> including drug interactions, common diagnoses, dosage calculations,
+> citation quality, and patient-safety edge cases…"*
+
+The model self-classified the request as out-of-scope. **No extra API
+call, no classifier, no latency hit** — just a system-prompt prefix
+generated once by Haiku and cached in the DB.
+
+Now ask a medical question through the same key and see it answer normally:
+
+```bash
+curl -sS -X POST https://labelhub-gamma.vercel.app/api/proxy/doubao/chat/completions \
+  -H 'Authorization: Bearer lh_ws_7fTnxnfKRZ7yP2BrOCD2W8E14GIQ6cFf-TgvU5pwTNQ' \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"doubao-seed-2-0-lite-260428",
+       "messages":[{"role":"user","content":"What are common side effects of metformin?"}],
+       "max_tokens":300}' \
+  | jq -r '.choices[0].message.content'
+```
+
+### 3. Watch a trajectory get captured
+
+Every successful call through the proxy is captured asynchronously
+(via Next 16's `after()` API — zero latency penalty for the caller).
+After running step 2 above, refresh the workspace's
+[trajectories list](https://labelhub-gamma.vercel.app/workspaces/00000000-0000-0000-0000-000000000010/trajectories) —
+your call appears with the full reasoning trace, both turns side by
+side.
 
 ## Architecture
 
-### Five Pillars
+### Five pillars (from `AGENTS.md`)
 
-1. **Local-First** — every write hits IndexedDB first, sync to server async
-2. **Event-Sourced** — append-only `events` table; state derives from projections
-3. **Optimistic Locking** — `version` columns on hot tables, no CRDT bloat
-4. **Schema-Driven Templates** — annotation paradigms are declarative configs with enforced PerfBudget
-5. **Resource-Aware Assets** — virtualized lists past 30 rows; `next/image` for media
+1. **Local-First** — writes hit IndexedDB first (Dexie), sync to server async
+2. **Event-Sourced** — append-only `events` table; state is a projection
+3. **Optimistic locking** — `version` columns on hot tables (not CRDT)
+4. **Schema-driven templates** — annotation modes are declarative configs
+   with a `PerfBudget` the registry enforces statically
+5. **Resource-aware** — virtualized lists past 30 rows; `next/image` for media
 
-See [`INFRASTRUCTURE.md`](./INFRASTRUCTURE.md) for provider portability + migration recipes.
-
-### Hero feature: Eval-Run
-
-```
-Publisher → POST /api/eval-runs
-              { agent: { systemPrompt, tools }, inputs: ["...", "..."] }
-                                              ▼
-                Claude runs the agent loop with SIMULATED tools
-                                              ▼
-                Canonical trajectories persisted + topics auto-created
-                                              ▼
-                Annotators claim → AI pre-review each step → submit
-                                              ▼
-                "Watch Your Model Learn" curve climbs in real time
-```
-
-**Zero publisher infrastructure required** — tools are simulated by a Haiku-4.5 sub-prompt, never call publisher endpoints.
-
-### Three ingest channels, one canonical schema
+### Hero feature pipeline
 
 ```
-  Eval-Run endpoint   →    persistTrajectory()    ← SDK + REST ingest
-  (managed, demo)            ▲                    (production)
-                             │
-                       Upload JSON
-                       (historical)
+Publisher API call
+  │
+  ▼
+/api/proxy/{kind}/{...path}             ← 6 providers, 2 families
+  │
+  ├─ authenticateApiKey()                 (SHA-256 hashed keys)
+  ├─ rateLimit(connection, rpm)
+  ├─ resolveTopicScope(workspace)         ← Layer A guardrail
+  ├─ injectScopeForFamily(body, suffix)   ← system-prompt prefix
+  ├─ fetch(upstream, injectedBody)
+  └─ after(persistTrajectory)             ← non-blocking capture
+                                              ▼
+                                     trajectory + steps + tool_providers
+                                              ▼
+                                     /workspaces/[id]/trajectories/[id]/annotate
+                                       ├─ TanStack-virtualized step list
+                                       ├─ Jotai atomFamily per (step, rubric)
+                                       ├─ blur-only autosave (no keystroke writes)
+                                       └─ Claude pre-annotations + peer marks
 ```
 
-All three flow through the same adapter layer + canonical schema.
-
-## Tech stack
+### Tech stack
 
 | Layer | Choice | Why |
 |---|---|---|
-| Framework | Next.js 16 (App Router) | Server Actions, async cookies, Turbopack default |
-| DB | Postgres (Supabase by default) | Any provider via `DATABASE_URL` |
+| Framework | Next.js 16 (App Router, Turbopack) | Server Actions, `after()` API, async cookies |
+| Database | Postgres (Supabase) | Vault for encrypted secrets; any provider via `DATABASE_URL` |
 | ORM | Drizzle | Type-safe, parameterized, provider-agnostic |
-| Auth | Supabase Auth | Cookies-friendly; swappable via 3 files (see INFRASTRUCTURE.md) |
-| AI | Anthropic Claude (Sonnet 4.6 / Haiku 4.5) | Tool use, prompt caching; swappable to OpenAI/Gemini |
-| State (client) | Jotai · TanStack Query | Atomic state for perf-critical lists |
-| Local DB (client) | Dexie | Local-first + offline-safe writes |
-| Test | Vitest | Pure-function unit tests; 56 passing |
-| Type validation | Zod | Every Server Action input + every external payload |
+| Auth | Supabase Auth (`@supabase/ssr`) | Cookie-based; provider-agnostic via swap of 3 files |
+| Storage | Supabase Storage | Content-addressable (hash + size); range-request safe |
+| AI | Anthropic Claude (Haiku-4.5, Sonnet-4.6, Opus-4.7) | Tool use, prompt caching; daily quota tracking |
+| Client state | Jotai (`atomFamily`) + TanStack Query | Atomic per-row state for editable grids |
+| Virtualization | `@tanstack/react-virtual` | Mandatory past 30 rows (perfBudget rule) |
+| Local DB | Dexie (IndexedDB) | Local-first, offline-safe queue |
+| Tests | Vitest | **189 tests passing** |
+| Validation | Zod | Every Server Action input + every external payload |
 
-## Folder map
+### Repository map
 
 ```
-labelhub/
-├── src/
-│   ├── app/                        # Next.js App Router (pages + API routes)
-│   ├── components/                 # React components (some from Claude Design)
-│   ├── lib/
-│   │   ├── actions/                # Server Actions (mutations)
-│   │   ├── queries/                # Read-side data accessors
-│   │   ├── ai/                     # Claude wrappers (spec-gen, pair, trajectory-review)
-│   │   ├── auth/                   # guards + api-key + provider interface
-│   │   ├── db/                     # Drizzle schema + lazy client
-│   │   ├── events/                 # event types + projections (Pillar 2)
-│   │   ├── trajectories/           # canonical schema + adapters + ingest
-│   │   ├── templates/              # 7 modes + registry + perfBudget validator
-│   │   ├── supabase/               # Auth client (swappable provider)
-│   │   ├── api/                    # request audit logger
-│   │   └── env.ts                  # type-safe env access
-│   └── sdk/labelhub-trace.ts       # 120-line zero-dep client SDK
-├── scripts/seed-demo.ts            # `npm run seed` — idempotent demo data
-├── drizzle/                        # generated migrations
-├── proxy.ts                        # Next 16 renamed middleware (session refresh)
-├── vitest.config.ts                # test runner config
-├── SETUP.md                        # 30-min setup walkthrough
-├── INFRASTRUCTURE.md               # portability + migration recipes
-├── AGENTS.md                       # rules for AI coding agents
-└── CLAUDE.md                       # imports AGENTS.md
+src/
+  app/
+    page.tsx                            ← landing
+    signin/, signup/, signout/          ← auth flow (Supabase password)
+    workspaces/
+      new/                              ← template picker (auth-gated)
+      [id]/
+        page.tsx                        ← dashboard
+        api/                            ← API key management
+        connections/                    ← provider connections (Vault-encrypted)
+        disputes/                       ← IAA disputes + AI patch suggestions
+        eval-runs/new/
+        trajectories/
+          page.tsx                      ← list (search + filter + virtualized)
+          [trajId]/
+            page.tsx                    ← read-only inspector
+            annotate/page.tsx           ← interactive annotator (Jotai-powered)
+    api/
+      proxy/[kind]/[...path]/route.ts   ← 6-provider catch-all + capture + guardrail
+      ingest/trajectories/              ← SDK ingest channel
+      export/trajectories/              ← JSONL bulk download
+      trajectories/                     ← list + read REST
+      eval-runs/                        ← simulated-tool eval
+
+  components/
+    trajectory/annotate/                ← Jotai-powered annotator (Standard/Focus/Compare)
+    auth/                               ← signin/signup form
+    site/                               ← landing surfaces
+
+  lib/
+    actions/                            ← Server Actions (auth, marks, scope, etc.)
+    queries/                            ← read-side data accessors
+    ai/
+      anthropic.ts                      ← shared Claude client
+      topic-scope.ts                    ← scope generator (Haiku → JSON envelope)
+      trajectory-reviewer.ts            ← per-step Claude pre-annotation
+      guideline-refiner.ts              ← turns disputes into guideline patches
+      spec-generator.ts                 ← "30-second task spec" hero feature
+    proxy/
+      provider-registry.ts              ← single source of truth for 6 providers
+      inject-scope.ts                   ← system-prompt suffix injector (15 tests)
+      sse-tee.ts                        ← streaming tee + accumulator
+      persist-with-storage.ts           ← async capture via after()
+    templates/
+      rubric.ts                         ← RubricSpec / RubricItem / Mark types (21 tests)
+      registry.ts                       ← perfBudget validator (rejects unsafe configs)
+      modes/agent-trace-eval.ts         ← flagship template with full rubric
+    db/schema.ts                        ← 20 tables + relations
+    events/                             ← Pillar 2 event types + projector
+
+drizzle/                                ← generated migrations
+scripts/                                ← seed + bootstrap
+AGENTS.md                               ← rules for AI coding agents (read first)
 ```
 
-## Routes
+## Quick start (local dev)
 
-| Path | Method | Purpose |
-|---|---|---|
-| `/` | GET | Landing page |
-| `/workspaces/new` | GET | Template picker |
-| `/workspaces/[id]` | GET | Workspace dashboard |
-| `/api/eval-runs` | POST | **Hero**: run agent with simulated tools |
-| `/api/ingest/trajectories` | POST | SDK production ingest (API key auth) |
-| `/api/export/trajectories` | GET | JSONL bulk download (admin only) |
+```bash
+git clone https://github.com/nanshu1228-dot/labelhub
+cd labelhub
+npm install
+cp .env.example .env.local              # then fill in 5 values
+npx tsx scripts/bootstrap-demo.ts       # mints demo workspace + API key
+npm run dev                             # http://localhost:3000
+```
 
-## Memory docs (architectural decisions)
+Required env:
 
-This project preserves design decisions across AI sessions:
+```
+DATABASE_URL=postgres://...
+NEXT_PUBLIC_SUPABASE_URL=https://....supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJh...
+SUPABASE_SERVICE_ROLE_KEY=eyJh...
+ANTHROPIC_API_KEY=sk-ant-...
+LABELHUB_DEMO_MODE=true                 # opens demo-only Server Actions
+```
 
-- `project_labelhub.md` — top-level scope + thesis
-- `project_security_model.md` — 14-point security controls
-- `project_trajectory_architecture.md` — flagship pillar design
-- `project_perf_requirements.md` — virtualization + atomic state mandates
-- `project_nextjs16_quirks.md` — async params + proxy + Turbopack notes
-- `project_design_brief.md` — Linear × Anthropic × Vercel aesthetic
-- `feedback_innovation_over_copy.md` — don't reverse-engineer competitors
+Then:
+
+1. Visit `/signup` and create a real account, or
+2. Go straight to `/workspaces/00000000-0000-0000-0000-000000000010` to
+   tour the bootstrapped demo (read-only without sign-in, full-edit
+   with the demo mode env above).
 
 ## Scripts
 
 ```bash
 npm run dev            # dev server on :3000 (Turbopack default)
-npm run build          # production build
-npm run start          # start built app
-npm run lint           # ESLint
-npm test               # vitest run (56 tests)
-npm run test:watch     # vitest watch
+npm run build          # production build (typecheck + bundle)
+npm run start          # serve built app
+npm test               # vitest run (189 tests)
 npm run db:generate    # generate migration from schema diff
 npm run db:push        # apply schema directly to DB
-npm run db:studio      # open Drizzle Studio
-npm run seed           # populate demo data (requires DATABASE_URL)
 ```
 
-## Contributing / extending
+## Adding a new LLM provider
 
-When adding features, the project rules in `AGENTS.md` matter:
+3 lines in `src/lib/proxy/provider-registry.ts` — the catch-all route
+auto-exposes it at `/api/proxy/<kind>/...`, the connection-management UI
+auto-lists it, capture works for free if it speaks openai-compat or
+anthropic.
 
-1. **Read `node_modules/next/dist/docs/`** before writing Next.js code — Next 16 has breaking changes from training data
-2. **Every mutation = Zod parse → guard → DB write → emit event**
-3. **Lists past 30 rows = virtualization mandatory** (perfBudget enforces)
-4. **AI prompts wrap user content in XML tags** (prompt-injection defense)
-5. **Server-only modules import `'server-only'`** — keeps secrets out of client bundles
+## Adding a new annotation paradigm
+
+1. Write `src/lib/templates/modes/<name>.ts` declaring `itemSchema`,
+   `responseSchema`, `rubric`, `perfBudget`.
+2. Add the side-effect import in `src/lib/templates/init.ts`.
+3. The registry validates the `perfBudget` at registration time and
+   refuses anything that would jank past 50 rows.
+
+The annotator UI consumes `template.rubric` and produces the correct
+inputs (likert / bool / enum / text) automatically — no React code
+change needed for a new template mode.
+
+## Security
+
+See `project_security_model.md` (in `~/.claude/projects/D--Challenge/memory/`
+for the local dev) for the 14-point control list. Highlights:
+
+- API keys SHA-256-hashed at rest; prefix-only display
+- Provider keys encrypted via Supabase Vault (pgsodium) — never in plaintext
+- Workspace API keys gate every `/api/proxy/*` call; per-connection RPM limit
+- Every mutation = Zod parse → guard → DB write → event emit
+- AI prompts wrap user content in XML tags (prompt-injection defense)
+- Topic-scope policy injection on every proxied request (this README's curl demo)
+- `server-only` import on every module that touches secrets
 
 ## License
 
-MIT
+MIT.
