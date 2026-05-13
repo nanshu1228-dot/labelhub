@@ -31,6 +31,7 @@ import { trajectories, trajectorySteps, events } from '@/lib/db/schema'
 import { NotFoundError } from '@/lib/errors'
 import { reviewTrajectory, type TrajectoryReview } from '@/lib/ai/trajectory-reviewer'
 import { logAICall } from '@/lib/ai/quota'
+import { uuidLike } from '@/lib/validators/uuid'
 
 /**
  * Flattened hint shape — exactly what the annotator UI expects.
@@ -48,7 +49,7 @@ export interface CachedClaudeHint {
 }
 
 const inputSchema = z.object({
-  trajectoryId: z.string().uuid(),
+  trajectoryId: uuidLike,
 })
 
 /**

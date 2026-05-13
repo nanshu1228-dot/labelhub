@@ -22,6 +22,7 @@ import { getDb } from '@/lib/db/client'
 import { events, taskTopicScopes } from '@/lib/db/schema'
 import { AppError } from '@/lib/errors'
 import { requireWorkspaceAdmin } from '@/lib/auth/guards'
+import { uuidLike } from '@/lib/validators/uuid'
 import {
   generateTopicScope,
   topicScopeSchema,
@@ -36,7 +37,7 @@ import { findPrimaryTaskForScope } from '@/lib/queries/topic-scope'
 // ─── Regenerate (admin-triggered) ────────────────────────────────────────
 
 const regenerateInputSchema = z.object({
-  workspaceId: z.string().uuid(),
+  workspaceId: uuidLike,
 })
 
 export async function regenerateWorkspaceScope(
@@ -99,7 +100,7 @@ export async function regenerateWorkspaceScope(
 // ─── Manual edit (admin override) ───────────────────────────────────────
 
 const editScopeSchema = z.object({
-  workspaceId: z.string().uuid(),
+  workspaceId: uuidLike,
   scope: topicScopeSchema,
 })
 

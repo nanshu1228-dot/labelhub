@@ -38,6 +38,7 @@ import {
   ForbiddenError,
   NotFoundError,
 } from '@/lib/errors'
+import { uuidLike } from '@/lib/validators/uuid'
 import { openTrajectoryForAnnotation } from './inbox'
 
 const DEMO_USER_ID = '00000000-0000-0000-0000-000000000001'
@@ -86,8 +87,8 @@ type MarkLike = z.infer<typeof markSchema>
 // ─── Step-mark write ──────────────────────────────────────────────────────
 
 const commitStepMarkSchema = z.object({
-  workspaceId: z.string().uuid(),
-  trajectoryStepId: z.string().uuid(),
+  workspaceId: uuidLike,
+  trajectoryStepId: uuidLike,
   rubricId: z.string().min(1).max(64).regex(/^[a-z][a-z0-9_]*$/),
   mark: markSchema,
 })
@@ -229,8 +230,8 @@ export async function commitStepMark(input: CommitStepMarkInput) {
 // ─── Trajectory-level mark write ──────────────────────────────────────────
 
 const commitTrajectoryMarkSchema = z.object({
-  workspaceId: z.string().uuid(),
-  trajectoryId: z.string().uuid(),
+  workspaceId: uuidLike,
+  trajectoryId: uuidLike,
   rubricId: z.string().min(1).max(64).regex(/^[a-z][a-z0-9_]*$/),
   mark: markSchema,
 })
