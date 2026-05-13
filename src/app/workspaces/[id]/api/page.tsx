@@ -10,6 +10,10 @@ import {
   getWorkspaceApiUsage,
 } from '@/lib/queries/api-keys'
 import { ExampleTabs } from '@/components/api/example-tabs'
+import {
+  listProviders,
+  type ProviderDef,
+} from '@/lib/proxy/provider-registry'
 
 export const metadata: Metadata = {
   title: 'API — LabelHub',
@@ -155,115 +159,153 @@ interface EndpointSpec {
   examples: Record<string, string>
 }
 
-function buildEndpoints(workspaceId: string): EndpointSpec[] {
-  const KEY_PLACEHOLDER = 'lh_ws_…'
-  const base = 'http://localhost:3000'
-  return [
-    {
-      method: 'POST',
-      path: '/api/proxy/anthropic/v1/messages',
-      title: 'Anthropic transparent proxy (Claude Code drop-in)',
-      blurb:
-        "Forward Anthropic Messages API calls to api.anthropic.com while capturing the full conversation as a trajectory. Claude Code, the Anthropic SDK, and any harness that respects ANTHROPIC_BASE_URL works out of the box — swap your ANTHROPIC_API_KEY for a workspace key and you're done.",
-      auth: 'bearer-workspace-key',
-      examples: {
-        'Claude Code': `# Two env vars. Then start Claude Code as usual.
-export ANTHROPIC_BASE_URL=${base}/api/proxy/anthropic
-export ANTHROPIC_API_KEY=${KEY_PLACEHOLDER}
+// Sensible "hello world" model + sample prompt per provider for code examples.
+// Not the source of truth (registry is) — just demo affordances.
+const PROVIDER_DEMO: Record<
+  string,
+  { exampleModel: string; samplePrompt: string }
+> = {
+  doubao: {
+    exampleModel: 'doubao-seed-2-0-lite-260428',
+    samplePrompt: '用一句话介绍你自己。',
+  },
+  anthropic: {
+    exampleModel: 'claude-sonnet-4-6',
+    samplePrompt: 'What is 2+2?',
+  },
+  openai: { exampleModel: 'gpt-4o-mini', samplePrompt: 'What is 2+2?' },
+  deepseek: { exampleModel: 'deepseek-chat', samplePrompt: 'What is 2+2?' },
+  qwen: { exampleModel: 'qwen-plus', samplePrompt: 'What is 2+2?' },
+  moonshot: { exampleModel: 'moonshot-v1-8k', samplePrompt: 'What is 2+2?' },
+}
+
+/** Build the Examples block for one provider, branching on its family. */
+function buildProviderExamples(
+  p: ProviderDef,
+  base: string,
+  key: string,
+): Record<string, string> {
+  const demo = PROVIDER_DEMO[p.kind] ?? {
+    exampleModel: 'MODEL_NAME',
+    samplePrompt: 'Hello',
+  }
+  const proxyBase = `${base}/api/proxy/${p.kind}`
+  const fullUrl = `${proxyBase}${p.upstreamPath}`
+
+  if (p.family === 'anthropic') {
+    return {
+      'Claude Code': `# Two env vars. Then start Claude Code as usual.
+export ANTHROPIC_BASE_URL=${proxyBase}
+export ANTHROPIC_API_KEY=${key}
 
 claude   # every messages.create() call is now captured`,
-        'Python SDK': `from anthropic import Anthropic
+      'Python SDK': `from anthropic import Anthropic
 
 client = Anthropic(
-    base_url="${base}/api/proxy/anthropic",
-    api_key="${KEY_PLACEHOLDER}",  # workspace key, NOT sk-ant-...
+    base_url="${proxyBase}",
+    api_key="${key}",  # workspace key, NOT sk-ant-...
 )
-
 resp = client.messages.create(
-    model="claude-sonnet-4-6",
+    model="${demo.exampleModel}",
     max_tokens=1024,
-    messages=[{"role": "user", "content": "What is 2+2?"}],
+    messages=[{"role": "user", "content": "${demo.samplePrompt}"}],
 )
 print(resp.content[0].text)`,
-        'TypeScript SDK': `import Anthropic from '@anthropic-ai/sdk'
+      'TypeScript SDK': `import Anthropic from '@anthropic-ai/sdk'
 
 const client = new Anthropic({
-  baseURL: '${base}/api/proxy/anthropic',
-  apiKey: '${KEY_PLACEHOLDER}',  // workspace key
+  baseURL: '${proxyBase}',
+  apiKey: '${key}',  // workspace key
 })
-
 const resp = await client.messages.create({
-  model: 'claude-sonnet-4-6',
+  model: '${demo.exampleModel}',
   max_tokens: 1024,
-  messages: [{ role: 'user', content: 'What is 2+2?' }],
+  messages: [{ role: 'user', content: '${demo.samplePrompt}' }],
 })
 console.log(resp.content[0])`,
-        curl: `curl -sS -X POST ${base}/api/proxy/anthropic/v1/messages \\
-  -H 'x-api-key: ${KEY_PLACEHOLDER}' \\
+      curl: `curl -sS -X POST ${fullUrl} \\
+  -H 'x-api-key: ${key}' \\
   -H 'anthropic-version: 2023-06-01' \\
   -H 'Content-Type: application/json' \\
   -d '{
-    "model": "claude-sonnet-4-6",
+    "model": "${demo.exampleModel}",
     "max_tokens": 1024,
     "messages": [
-      {"role": "user", "content": "What is 2+2?"}
+      {"role": "user", "content": "${demo.samplePrompt}"}
     ]
   }'`,
-      },
-    },
-    {
-      method: 'POST',
-      path: '/api/proxy/doubao/chat/completions',
-      title: 'Doubao transparent proxy (OpenAI-compatible)',
-      blurb:
-        "Forward OpenAI-compatible chat completions to ByteDance Doubao while capturing the full conversation as a trajectory. Drop-in for any OpenAI client (LangChain, LlamaIndex, OpenAI SDK with custom baseURL). Auto-captures the reasoning_content field that Doubao's R-line models emit as a separate `thinking` step.",
-      auth: 'bearer-workspace-key',
-      examples: {
-        'Python SDK': `from openai import OpenAI
+    }
+  }
+
+  // openai-compat default
+  return {
+    'Python SDK': `from openai import OpenAI
 
 client = OpenAI(
-    base_url="${base}/api/proxy/doubao",
-    api_key="${KEY_PLACEHOLDER}",  # workspace key, NOT ark-...
+    base_url="${proxyBase}",
+    api_key="${key}",  # workspace key (NOT the upstream provider key)
 )
-
 resp = client.chat.completions.create(
-    model="doubao-seed-2-0-lite-260428",
-    messages=[{"role": "user", "content": "用一句话介绍你自己。"}],
+    model="${demo.exampleModel}",
+    messages=[{"role": "user", "content": "${demo.samplePrompt}"}],
 )
 print(resp.choices[0].message.content)`,
-        'TypeScript SDK': `import OpenAI from 'openai'
+    'TypeScript SDK': `import OpenAI from 'openai'
 
 const client = new OpenAI({
-  baseURL: '${base}/api/proxy/doubao',
-  apiKey: '${KEY_PLACEHOLDER}',  // workspace key
+  baseURL: '${proxyBase}',
+  apiKey: '${key}',  // workspace key
 })
-
 const resp = await client.chat.completions.create({
-  model: 'doubao-seed-2-0-lite-260428',
-  messages: [{ role: 'user', content: '用一句话介绍你自己。' }],
+  model: '${demo.exampleModel}',
+  messages: [{ role: 'user', content: '${demo.samplePrompt}' }],
 })
 console.log(resp.choices[0].message.content)`,
-        LangChain: `# pip install langchain-openai
+    LangChain: `# pip install langchain-openai
 from langchain_openai import ChatOpenAI
 
 llm = ChatOpenAI(
-    model="doubao-seed-2-0-lite-260428",
-    openai_api_base="${base}/api/proxy/doubao",
-    openai_api_key="${KEY_PLACEHOLDER}",
+    model="${demo.exampleModel}",
+    openai_api_base="${proxyBase}",
+    openai_api_key="${key}",
 )
-resp = llm.invoke([{"role": "user", "content": "用一句话介绍你自己。"}])
-print(resp.content)`,
-        curl: `curl -sS -X POST ${base}/api/proxy/doubao/chat/completions \\
-  -H 'Authorization: Bearer ${KEY_PLACEHOLDER}' \\
+print(llm.invoke([{"role": "user", "content": "${demo.samplePrompt}"}]).content)`,
+    curl: `curl -sS -X POST ${fullUrl} \\
+  -H 'Authorization: Bearer ${key}' \\
   -H 'Content-Type: application/json' \\
   -d '{
-    "model": "doubao-seed-2-0-lite-260428",
+    "model": "${demo.exampleModel}",
     "messages": [
-      {"role": "user", "content": "用一句话介绍你自己。"}
+      {"role": "user", "content": "${demo.samplePrompt}"}
     ]
   }'`,
-      },
-    },
+  }
+}
+
+function buildEndpoints(workspaceId: string): EndpointSpec[] {
+  const KEY_PLACEHOLDER = 'lh_ws_…'
+  const base = 'http://localhost:3000'
+
+  // Auto-generate one proxy endpoint per registered provider. Adding a new
+  // upstream LLM provider = 3 lines in `provider-registry.ts` and it shows
+  // up here automatically.
+  const proxyEndpoints: EndpointSpec[] = listProviders().map((p) => ({
+    method: 'POST',
+    path: `/api/proxy/${p.kind}${p.upstreamPath}`,
+    title:
+      p.family === 'anthropic'
+        ? `${p.label} transparent proxy (Claude Code drop-in)`
+        : `${p.label} transparent proxy (OpenAI-compatible)`,
+    blurb:
+      p.family === 'anthropic'
+        ? `Forward Anthropic Messages API calls to ${p.defaultBaseUrl} while capturing the full conversation. Claude Code, the Anthropic SDK, and any harness that respects ANTHROPIC_BASE_URL works out of the box.`
+        : `Forward OpenAI-compatible chat completions to ${p.defaultBaseUrl} while capturing the full conversation. Drop-in for OpenAI / LangChain / LlamaIndex / any client with a custom baseURL. Reasoning models' \`reasoning_content\` is captured as a separate thinking step.`,
+    auth: 'bearer-workspace-key',
+    examples: buildProviderExamples(p, base, KEY_PLACEHOLDER),
+  }))
+
+  return [
+    ...proxyEndpoints,
     {
       method: 'POST',
       path: '/api/ingest/trajectories',
