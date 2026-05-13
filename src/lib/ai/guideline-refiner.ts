@@ -1,6 +1,6 @@
 import 'server-only'
 import { z } from 'zod'
-import { getAnthropic, MODELS } from './anthropic'
+import { chat } from './client'
 import { escapeForPrompt } from './escape'
 
 /**
@@ -149,22 +149,19 @@ export async function proposeGuidelinePatch(
   }
   const userPrompt = buildUserPrompt(input)
 
-  const client = getAnthropic()
-  const resp = await client.messages.create({
-    model: MODELS.default,
-    max_tokens: 2048,
+  const resp = await chat({
     system: SYSTEM_PROMPT,
     messages: [{ role: 'user', content: userPrompt }],
+    maxTokens: 2048,
+    tier: 'default',
+    responseFormat: 'json_object',
+    feature: 'guideline-refiner',
   })
 
-  // Concat all text blocks (Anthropic sometimes splits).
-  const text = resp.content
-    .map((b) => ('text' in b ? b.text : ''))
-    .join('')
-  const raw = tryParseJson(text)
+  const raw = tryParseJson(resp.text)
   if (!raw) {
     throw new Error(
-      `Refiner returned non-JSON output. First 200 chars: ${text.slice(0, 200)}`,
+      `Refiner returned non-JSON output. First 200 chars: ${resp.text.slice(0, 200)}`,
     )
   }
   const parsed = refinementProposalSchema.safeParse(raw)
@@ -179,9 +176,9 @@ export async function proposeGuidelinePatch(
   return {
     proposal: parsed.data,
     usage: {
-      model: resp.model,
-      inputTokens: resp.usage.input_tokens,
-      outputTokens: resp.usage.output_tokens,
+      model: resp.usage.model,
+      inputTokens: resp.usage.inputTokens,
+      outputTokens: resp.usage.outputTokens,
     },
   }
 }

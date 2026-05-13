@@ -1,6 +1,6 @@
 import 'server-only'
 import { z } from 'zod'
-import { getAnthropic, MODELS } from './anthropic'
+import { chat } from './client'
 import { escapeForPrompt } from './escape'
 import type { AIUsage } from './spec-generator'
 
@@ -70,41 +70,32 @@ export async function generatePairSuggestion(input: {
       : '') +
     `\n\nProduce your proposal as JSON.`
 
-  const client = getAnthropic()
-  const response = await client.messages.create({
-    model: MODELS.default,
-    max_tokens: 1500,
-    system: [
-      {
-        type: 'text',
-        text: SYSTEM_PROMPT,
-        cache_control: { type: 'ephemeral' },
-      },
-    ],
+  const response = await chat({
+    system: SYSTEM_PROMPT,
     messages: [{ role: 'user', content: userMessage }],
+    maxTokens: 1500,
+    tier: 'default',
+    responseFormat: 'json_object',
+    cacheSystem: true,
+    feature: 'pair-suggester',
   })
 
-  const textBlock = response.content.find((b) => b.type === 'text')
-  if (!textBlock || textBlock.type !== 'text') {
-    throw new Error('Pair Suggester: no text content in Claude response')
-  }
-
-  const raw = stripCodeFences(textBlock.text)
+  const raw = stripCodeFences(response.text)
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)
   } catch {
     throw new Error(
-      `Pair Suggester: Claude returned non-JSON output:\n${raw.slice(0, 400)}`,
+      `Pair Suggester: model returned non-JSON output:\n${raw.slice(0, 400)}`,
     )
   }
 
   return {
     suggestion: pairSuggestionSchema.parse(parsed),
     usage: {
-      model: MODELS.default,
-      inputTokens: response.usage.input_tokens,
-      outputTokens: response.usage.output_tokens,
+      model: response.usage.model,
+      inputTokens: response.usage.inputTokens,
+      outputTokens: response.usage.outputTokens,
     },
   }
 }

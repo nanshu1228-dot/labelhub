@@ -1,6 +1,6 @@
 import 'server-only'
 import { z } from 'zod'
-import { getAnthropic, MODELS } from './anthropic'
+import { chat } from './client'
 import { escapeForPrompt } from './escape'
 
 /**
@@ -108,46 +108,37 @@ export async function generateTopicScope(
   const safeName = escapeForPrompt(name)
   const safeDesc = escapeForPrompt(desc)
 
-  const client = getAnthropic()
-  const response = await client.messages.create({
-    model: MODELS.fast,
-    max_tokens: 1500,
-    system: [
-      {
-        type: 'text',
-        text: SYSTEM_PROMPT,
-        cache_control: { type: 'ephemeral' },
-      },
-    ],
+  const response = await chat({
+    system: SYSTEM_PROMPT,
     messages: [
       {
         role: 'user',
         content: `<task>\nname: ${safeName}\n\ndescription:\n${safeDesc}\n</task>\n\nProduce the topic-scope JSON now.`,
       },
     ],
+    maxTokens: 1500,
+    tier: 'fast',
+    responseFormat: 'json_object',
+    cacheSystem: true,
+    feature: 'topic-scope',
   })
 
-  const textBlock = response.content.find((b) => b.type === 'text')
-  if (!textBlock || textBlock.type !== 'text') {
-    throw new Error('topic-scope: no text content in Claude response')
-  }
-
-  const raw = stripCodeFences(textBlock.text)
+  const raw = stripCodeFences(response.text)
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)
   } catch {
     throw new Error(
-      `topic-scope: Claude returned non-JSON output:\n${raw.slice(0, 400)}`,
+      `topic-scope: model returned non-JSON output:\n${raw.slice(0, 400)}`,
     )
   }
 
   return {
     scope: topicScopeSchema.parse(parsed),
     usage: {
-      model: MODELS.fast,
-      inputTokens: response.usage.input_tokens,
-      outputTokens: response.usage.output_tokens,
+      model: response.usage.model,
+      inputTokens: response.usage.inputTokens,
+      outputTokens: response.usage.outputTokens,
     },
   }
 }

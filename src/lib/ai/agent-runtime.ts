@@ -19,6 +19,15 @@ import type { CanonicalStep, CanonicalTrajectory } from '@/lib/trajectories/sche
  *
  * Cost shape: primary loop uses caller-chosen model (default Sonnet). Tool
  * simulator always uses cheap fast model (Haiku) to keep eval-run affordable.
+ *
+ * Provider note: this module deliberately stays bound to the Anthropic SDK
+ * (NOT the provider-agnostic `chat()` in client.ts) because the tool-use
+ * loop relies on Anthropic's `tool_use` / `tool_result` block shapes that
+ * don't map 1:1 to OpenAI-compat function-calling. Porting requires a
+ * dedicated tool-call translation layer; deferred until eval-run becomes
+ * critical-path. Other AI features (spec-gen, trajectory-review,
+ * topic-scope, guideline-refiner, pair-suggester) all go through chat()
+ * and work on any provider.
  */
 
 const MAX_AGENT_STEPS = 20

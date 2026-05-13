@@ -1,6 +1,6 @@
 import 'server-only'
 import { z } from 'zod'
-import { getAnthropic, MODELS } from './anthropic'
+import { chat } from './client'
 import { escapeForPrompt } from './escape'
 
 /**
@@ -81,46 +81,37 @@ export async function generateTaskSpec(
   if (!intent.trim()) throw new Error('intent must not be empty')
 
   const safeIntent = escapeForPrompt(intent)
-  const client = getAnthropic()
-  const response = await client.messages.create({
-    model: MODELS.default,
-    max_tokens: 4096,
-    system: [
-      {
-        type: 'text',
-        text: SYSTEM_PROMPT,
-        cache_control: { type: 'ephemeral' },
-      },
-    ],
+  const response = await chat({
+    system: SYSTEM_PROMPT,
     messages: [
       {
         role: 'user',
         content: `<intent>\n${safeIntent}\n</intent>\n\nProduce the JSON task package now.`,
       },
     ],
+    maxTokens: 4096,
+    tier: 'default',
+    responseFormat: 'json_object',
+    cacheSystem: true,
+    feature: 'spec-generator',
   })
 
-  const textBlock = response.content.find((b) => b.type === 'text')
-  if (!textBlock || textBlock.type !== 'text') {
-    throw new Error('Spec Generator: no text content in Claude response')
-  }
-
-  const raw = stripCodeFences(textBlock.text)
+  const raw = stripCodeFences(response.text)
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)
   } catch {
     throw new Error(
-      `Spec Generator: Claude returned non-JSON output:\n${raw.slice(0, 400)}`,
+      `Spec Generator: model returned non-JSON output:\n${raw.slice(0, 400)}`,
     )
   }
 
   return {
     spec: generatedSpecSchema.parse(parsed),
     usage: {
-      model: MODELS.default,
-      inputTokens: response.usage.input_tokens,
-      outputTokens: response.usage.output_tokens,
+      model: response.usage.model,
+      inputTokens: response.usage.inputTokens,
+      outputTokens: response.usage.outputTokens,
     },
   }
 }

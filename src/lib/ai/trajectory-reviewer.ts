@@ -1,6 +1,6 @@
 import 'server-only'
 import { z } from 'zod'
-import { getAnthropic, MODELS } from './anthropic'
+import { chat } from './client'
 import { escapeForPrompt } from './escape'
 import type { AIUsage } from './spec-generator'
 
@@ -131,41 +131,32 @@ export async function reviewTrajectory(
     `<steps>\n${renderStepsXml(input.steps)}\n</steps>\n\n` +
     `Produce your review as JSON now.`
 
-  const client = getAnthropic()
-  const response = await client.messages.create({
-    model: MODELS.default,
-    max_tokens: 4096,
-    system: [
-      {
-        type: 'text',
-        text: SYSTEM_PROMPT,
-        cache_control: { type: 'ephemeral' },
-      },
-    ],
+  const response = await chat({
+    system: SYSTEM_PROMPT,
     messages: [{ role: 'user', content: userMessage }],
+    maxTokens: 4096,
+    tier: 'default',
+    responseFormat: 'json_object',
+    cacheSystem: true,
+    feature: 'trajectory-reviewer',
   })
 
-  const textBlock = response.content.find((b) => b.type === 'text')
-  if (!textBlock || textBlock.type !== 'text') {
-    throw new Error('Trajectory Reviewer: no text content in Claude response')
-  }
-
-  const raw = stripCodeFences(textBlock.text)
+  const raw = stripCodeFences(response.text)
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)
   } catch {
     throw new Error(
-      `Trajectory Reviewer: Claude returned non-JSON output:\n${raw.slice(0, 400)}`,
+      `Trajectory Reviewer: model returned non-JSON output:\n${raw.slice(0, 400)}`,
     )
   }
 
   return {
     review: trajectoryReviewSchema.parse(parsed),
     usage: {
-      model: MODELS.default,
-      inputTokens: response.usage.input_tokens,
-      outputTokens: response.usage.output_tokens,
+      model: response.usage.model,
+      inputTokens: response.usage.inputTokens,
+      outputTokens: response.usage.outputTokens,
     },
   }
 }
