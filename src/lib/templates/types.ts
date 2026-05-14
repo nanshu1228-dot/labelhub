@@ -78,6 +78,20 @@ export const economyConfigSchema = z.object({
   baseAmountMinor: z.number().int().nonnegative().optional(),
   qualityMultiplierMin: z.number().positive().optional(),
   qualityMultiplierMax: z.number().positive().optional(),
+  /**
+   * Soft per-item time cap (seconds). When an annotation takes longer than
+   * this, admin UI surfaces a "took NNm — over cap" indicator. Currently
+   * informational only — we don't truncate payouts, since cash-per-item
+   * mode already pays a fixed amount regardless of time spent. The signal
+   * is for catching speed-skip (annotation < ~minCap seconds, low quality)
+   * and time-fraud (annotation idle for hours).
+   */
+  maxBillableSeconds: z.number().int().positive().optional(),
+  /**
+   * Soft "looks too fast" floor (seconds). Annotations submitted under this
+   * threshold are flagged for review — likely speed-skipping without reading.
+   */
+  minExpectedSeconds: z.number().int().positive().optional(),
 })
 export type EconomyConfig = z.infer<typeof economyConfigSchema>
 

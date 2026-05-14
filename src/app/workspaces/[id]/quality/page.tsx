@@ -13,6 +13,15 @@ import {
   type UserCalibration,
   type GoldStandardRow,
 } from '@/lib/queries/gold-standards'
+import {
+  listWorkspaceCriticalViolations,
+  type CriticalViolation,
+} from '@/lib/queries/critical-violations'
+import {
+  listWorkspaceAnnotationTimes,
+  formatElapsed,
+  type AnnotationTimeRow,
+} from '@/lib/queries/annotation-time'
 import { TrustBadge } from '@/components/quality/trust-badge'
 import { GoldBadge } from '@/components/quality/gold-badge'
 
@@ -144,16 +153,27 @@ function NonAdminFallback() {
  * Server component — fans out the three sections' data fetches in parallel.
  */
 async function QualityContent({ workspaceId }: { workspaceId: string }) {
-  const [golds, calibration, trust] = await Promise.all([
+  const [golds, calibration, trust, violations, times] = await Promise.all([
     listWorkspaceGoldStandards(workspaceId).catch(
       () => [] as GoldStandardRow[],
     ),
     getWorkspaceCalibration(workspaceId).catch(() => [] as UserCalibration[]),
     getWorkspaceTrust(workspaceId).catch(() => [] as UserTrust[]),
+    listWorkspaceCriticalViolations(workspaceId).catch(
+      () => [] as CriticalViolation[],
+    ),
+    listWorkspaceAnnotationTimes(workspaceId).catch(
+      () => [] as AnnotationTimeRow[],
+    ),
   ])
 
   return (
     <div className="space-y-10">
+      <CriticalViolationsSection
+        workspaceId={workspaceId}
+        violations={violations}
+      />
+      <ElapsedTimesSection workspaceId={workspaceId} times={times} />
       <GoldStandardsSection workspaceId={workspaceId} golds={golds} />
       <CalibrationLeaderboard
         workspaceId={workspaceId}
@@ -162,6 +182,274 @@ async function QualityContent({ workspaceId }: { workspaceId: string }) {
       />
       <TrustLeaderboard rows={trust} />
     </div>
+  )
+}
+
+// ─── Elapsed times ───────────────────────────────────────────────────────
+
+function ElapsedTimesSection({
+  workspaceId,
+  times,
+}: {
+  workspaceId: string
+  times: AnnotationTimeRow[]
+}) {
+  const flagged = times.filter((t) => t.flag === 'fast' || t.flag === 'slow')
+  const shown = flagged.length > 0 ? flagged : times.slice(0, 8)
+  return (
+    <section>
+      <SectionHeader
+        title="ANNOTATION TIME"
+        hint={
+          times.length === 0
+            ? 'no submitted annotations yet'
+            : flagged.length > 0
+              ? `${flagged.length} flagged · ${times.length} total`
+              : `${times.length} submitted · no flags`
+        }
+      />
+      {times.length === 0 ? (
+        <EmptyLeaderboardCard message="No annotations have been submitted yet — once they are, wall-clock time will appear here." />
+      ) : (
+        <div
+          className="rounded-xl overflow-hidden"
+          style={{
+            background: 'var(--panel)',
+            border: '1px solid var(--line)',
+          }}
+        >
+          <table className="w-full ts-13">
+            <thead
+              style={{
+                color: 'var(--mute2)',
+                borderBottom: '1px solid var(--line)',
+                fontSize: 11,
+                fontFamily: 'var(--font-geist-mono), monospace',
+                letterSpacing: '0.04em',
+                textTransform: 'uppercase',
+              }}
+            >
+              <tr>
+                <th className="text-left p-3">rater</th>
+                <th className="text-left p-3">trajectory</th>
+                <th className="text-left p-3">elapsed</th>
+                <th className="text-left p-3">flag</th>
+              </tr>
+            </thead>
+            <tbody>
+              {shown.map((t, idx) => (
+                <tr
+                  key={t.annotationId}
+                  style={{
+                    borderTop: idx === 0 ? 'none' : '1px solid var(--line)',
+                  }}
+                >
+                  <td className="p-3" style={{ color: 'var(--hi)' }}>
+                    {t.raterDisplayName ?? t.raterId.slice(0, 8)}
+                  </td>
+                  <td className="p-3">
+                    {t.trajectoryId ? (
+                      <Link
+                        href={`/workspaces/${workspaceId}/trajectories/${t.trajectoryId}`}
+                        className="ts-12 mono hover:underline"
+                        style={{ color: 'var(--accent)' }}
+                      >
+                        {t.trajectoryAgentName ?? t.trajectoryId.slice(0, 8)}
+                      </Link>
+                    ) : (
+                      <span className="ts-12 mono" style={{ color: 'var(--mute2)' }}>
+                        —
+                      </span>
+                    )}
+                  </td>
+                  <td className="p-3 mono" style={{ color: 'var(--text)' }}>
+                    {formatElapsed(t.elapsedSeconds)}
+                  </td>
+                  <td className="p-3">
+                    <TimeFlag flag={t.flag} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {flagged.length === 0 && times.length > shown.length && (
+            <div
+              className="p-3 ts-11 mono text-center"
+              style={{
+                color: 'var(--mute2)',
+                borderTop: '1px solid var(--line)',
+              }}
+            >
+              + {times.length - shown.length} more · no flags raised on the rest
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function TimeFlag({ flag }: { flag: 'fast' | 'slow' | 'ok' | null }) {
+  if (!flag || flag === 'ok') {
+    return (
+      <span
+        className="mono ts-11"
+        style={{ color: 'var(--mute2)' }}
+        title="No threshold set on this task, or within bounds."
+      >
+        —
+      </span>
+    )
+  }
+  const palette =
+    flag === 'fast'
+      ? {
+          bg: 'oklch(0.7 0.14 75 / 0.08)',
+          fg: 'var(--warn)',
+          bord: 'oklch(0.7 0.14 75 / 0.4)',
+          label: '⚡ fast',
+          title:
+            'Annotation submitted faster than the task\'s minExpectedSeconds — possible speed-skip without reading.',
+        }
+      : {
+          bg: 'var(--danger-soft)',
+          fg: 'var(--danger)',
+          bord: 'oklch(0.55 0.2 25 / 0.4)',
+          label: '⏱ over',
+          title:
+            'Annotation exceeded the task\'s maxBillableSeconds — possible idle time or stuck rater.',
+        }
+  return (
+    <span
+      className="mono ts-11"
+      title={palette.title}
+      style={{
+        background: palette.bg,
+        color: palette.fg,
+        border: `1px solid ${palette.bord}`,
+        borderRadius: 4,
+        padding: '1px 8px',
+        fontWeight: 600,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {palette.label}
+    </span>
+  )
+}
+
+// ─── Critical violations ─────────────────────────────────────────────────
+
+function CriticalViolationsSection({
+  workspaceId,
+  violations,
+}: {
+  workspaceId: string
+  violations: CriticalViolation[]
+}) {
+  return (
+    <section>
+      <SectionHeader
+        title="CRITICAL VIOLATIONS"
+        hint={
+          violations.length === 0
+            ? 'no critical-rubric flags raised yet'
+            : `${violations.length} flag${violations.length === 1 ? '' : 's'} — one bad rating on a critical rubric vetoes a trajectory's quality`
+        }
+      />
+      {violations.length === 0 ? (
+        <div
+          className="rounded-xl p-5"
+          style={{
+            background: 'var(--panel)',
+            border: '1px dashed var(--line2)',
+          }}
+        >
+          <p className="ts-13" style={{ color: 'var(--mute)' }}>
+            No critical-rubric flags. A rubric marked{' '}
+            <strong style={{ color: 'var(--danger)' }}>severity: critical</strong>{' '}
+            (e.g. <em>Safety</em>) raises a flag when a rater scores it the
+            worst possible value — likert 1, bool false, or the last enum
+            option. This is the closest LabelHub gets to a one-veto override.
+          </p>
+        </div>
+      ) : (
+        <ul
+          className="rounded-xl overflow-hidden"
+          style={{
+            background: 'var(--panel)',
+            border: '1px solid oklch(0.55 0.2 25 / 0.4)',
+          }}
+        >
+          {violations.slice(0, 12).map((v, idx) => (
+            <li
+              key={`${v.trajectoryId}-${v.rubricId}-${v.raterId}-${idx}`}
+              className="flex items-center justify-between gap-3 p-3"
+              style={{
+                borderTop: idx === 0 ? 'none' : '1px solid var(--line)',
+              }}
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <span
+                  className="mono shrink-0"
+                  style={{
+                    background: 'var(--danger-soft)',
+                    color: 'var(--danger)',
+                    border: '1px solid oklch(0.55 0.2 25 / 0.4)',
+                    borderRadius: 4,
+                    padding: '1px 6px',
+                    fontSize: 10,
+                    fontWeight: 700,
+                  }}
+                >
+                  🔥 {v.rubricName}
+                </span>
+                <div className="min-w-0">
+                  <Link
+                    href={`/workspaces/${workspaceId}/trajectories/${v.trajectoryId}`}
+                    className="ts-13 hover:underline trunc-1"
+                    style={{ color: 'var(--hi)' }}
+                  >
+                    {v.trajectoryAgentName}
+                  </Link>
+                  <div
+                    className="mono ts-11 mt-0.5"
+                    style={{ color: 'var(--mute2)' }}
+                  >
+                    flagged by{' '}
+                    {v.raterDisplayName ?? v.raterId.slice(0, 8)} ·{' '}
+                    {v.level === 'step'
+                      ? `on step ${v.stepId?.slice(0, 8) ?? ''}…`
+                      : 'trajectory-level'}
+                  </div>
+                </div>
+              </div>
+              <Link
+                href={`/workspaces/${workspaceId}/trajectories/${v.trajectoryId}`}
+                className="ts-12 mono shrink-0"
+                style={{
+                  color: 'var(--danger)',
+                  textDecoration: 'none',
+                }}
+              >
+                inspect →
+              </Link>
+            </li>
+          ))}
+          {violations.length > 12 && (
+            <li
+              className="p-3 ts-11 mono text-center"
+              style={{
+                color: 'var(--mute2)',
+                borderTop: '1px solid var(--line)',
+              }}
+            >
+              + {violations.length - 12} more
+            </li>
+          )}
+        </ul>
+      )}
+    </section>
   )
 }
 

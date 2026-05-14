@@ -69,6 +69,24 @@ export type StepKindMatcher =
  */
 export type RubricScale = 'likert' | 'bool' | 'enum' | 'text'
 
+/**
+ * Severity ladder borrowed from Xpert's "雷区 / 一级误区 / 重要 / 必要 / 附加"
+ * but collapsed to a 3-tier scale we can render compactly:
+ *
+ *   - `critical` — a single bad rating on this rubric **vetoes the entire
+ *                  annotation**. Used for safety / policy / compliance flags.
+ *                  Renders with a red 🔥 badge.
+ *   - `major`    — a low rating drags the trajectory's quality score down
+ *                  significantly (5x weight in calibration). Renders with
+ *                  a violet ★ badge.
+ *   - `minor`    — default. Treated as informational signal.
+ *
+ * When omitted, the rubric defaults to `minor`. Aggregation behavior lives
+ * in `src/lib/quality/calibrate.ts`; the UI's job is to make severity
+ * visible so annotators don't blow past a critical flag by accident.
+ */
+export type RubricSeverity = 'critical' | 'major' | 'minor'
+
 export interface RubricItem {
   /** Stable machine ID — used as the storage key in `step_annotations.payload`
    *  and as the IAA aggregation key. Never rename without a migration. */
@@ -86,6 +104,12 @@ export interface RubricItem {
   /** When true, the UI marks the reason field amber if a rating is recorded
    *  but the reason is empty ("Deep Dive" mode in the design). */
   requiresReason?: boolean
+  /**
+   * Quality-impact tier. Defaults to 'minor' when omitted. See `RubricSeverity`.
+   * Critical rubrics are visually flagged in the annotator and can veto
+   * the trajectory's overall quality score on aggregation.
+   */
+  severity?: RubricSeverity
 }
 
 export interface RubricSpec {
@@ -105,6 +129,7 @@ const stepKindMatcherSchema = z.union([
 ])
 
 const rubricScaleSchema = z.enum(['likert', 'bool', 'enum', 'text'])
+const rubricSeveritySchema = z.enum(['critical', 'major', 'minor'])
 
 export const rubricItemSchema = z
   .object({
@@ -118,6 +143,7 @@ export const rubricItemSchema = z
     options: z.array(z.string().min(1).max(40)).min(2).max(8).optional(),
     appliesTo: stepKindMatcherSchema.optional(),
     requiresReason: z.boolean().optional(),
+    severity: rubricSeveritySchema.optional(),
   })
   .superRefine((item, ctx) => {
     if (item.scale === 'enum' && !item.options?.length) {

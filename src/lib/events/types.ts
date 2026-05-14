@@ -29,6 +29,7 @@ export type LabelHubEventType =
   | 'annotation.revised'
   | 'annotation.approved'
   | 'annotation.rejected'
+  | 'annotation.review_replied'
   | 'guideline.proposed'
   | 'guideline.merged'
   | 'trust.recomputed'

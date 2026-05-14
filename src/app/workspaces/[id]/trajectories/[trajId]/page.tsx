@@ -5,6 +5,11 @@ import { getWorkspaceById } from '@/lib/queries/workspaces'
 import { getTrajectoryWithSteps } from '@/lib/queries/trajectories'
 import { getTrajectoryIAA, type StepIAA } from '@/lib/queries/iaa'
 import { getGoldForTrajectory } from '@/lib/queries/gold-standards'
+import {
+  findUserAnnotationForTrajectory,
+  getReviewThread,
+  type ReviewThreadMessage,
+} from '@/lib/queries/review-thread'
 import { optionalUser, requireWorkspaceMember } from '@/lib/auth/guards'
 import { getDb } from '@/lib/db/client'
 import { users as usersTable } from '@/lib/db/schema'
@@ -13,6 +18,7 @@ import { listMyStepAnnotationsDemo } from '@/lib/actions/step-annotations-demo'
 import type { stepAnnotations as stepAnnotationsTable, trajectorySteps } from '@/lib/db/schema'
 import { StepMarkWidget } from '@/components/trajectory/step-mark-widget'
 import { GoldPromoteClient } from '@/components/quality/gold-promote-client'
+import { ReviewThread } from '@/components/quality/review-thread'
 
 export const metadata: Metadata = {
   title: 'Trajectory — LabelHub',
@@ -47,6 +53,9 @@ export default async function TrajectoryDetailPage(
     explanation: string | null
     markCount: number
   } | null = null
+  let reviewThread: ReviewThreadMessage[] = []
+  let reviewAnnotationId: string | null = null
+  let viewerIsSubmitter = false
 
   try {
     const workspace = await getWorkspaceById(workspaceId)
@@ -60,6 +69,21 @@ export default async function TrajectoryDetailPage(
         isAdmin = role === 'admin' || workspace.adminId === me.id
       } catch {
         /* not a member — leave isAdmin = false */
+      }
+
+      // Surface the review thread when the viewer is the submitter
+      // (they need to see + reply) OR an admin (they need to monitor).
+      const annId = await findUserAnnotationForTrajectory({
+        workspaceId,
+        trajectoryId: trajId,
+        userId: me.id,
+      }).catch(() => null)
+      if (annId) {
+        reviewAnnotationId = annId
+        viewerIsSubmitter = true
+        reviewThread = await getReviewThread({ annotationId: annId }).catch(
+          () => [],
+        )
       }
     }
 
@@ -132,6 +156,15 @@ export default async function TrajectoryDetailPage(
                   trajectoryId={trajId}
                   isAdmin={isAdmin}
                   gold={goldBlock}
+                />
+              </div>
+            )}
+            {reviewThread.length > 0 && reviewAnnotationId && (
+              <div className="mb-6">
+                <ReviewThread
+                  annotationId={reviewAnnotationId}
+                  messages={reviewThread}
+                  canReply={viewerIsSubmitter}
                 />
               </div>
             )}

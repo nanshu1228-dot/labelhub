@@ -53,11 +53,23 @@ export const RubricRow = memo(function RubricRow({
 }: RubricRowProps) {
   const reasonRequired =
     (item.requiresReason || deepDive) && isMarkMissingReason(item, mark)
+  const severity = item.severity ?? 'minor'
 
   return (
-    <div className="rubric-row">
+    <div
+      className="rubric-row"
+      data-severity={severity}
+      style={
+        severity === 'critical'
+          ? { borderLeft: '3px solid var(--danger)', paddingLeft: 8 }
+          : severity === 'major'
+            ? { borderLeft: '3px solid var(--accent)', paddingLeft: 8 }
+            : undefined
+      }
+    >
       <div className="rub-head">
         <div className="flex items-center gap-2 min-w-0">
+          {severity !== 'minor' && <SeverityBadge severity={severity} />}
           <span className="rub-name trunc-1">{item.name}</span>
           {item.description && (
             <span
@@ -395,5 +407,56 @@ function TextareaUncontrolled({
         if (next !== defaultValue) onCommit(next)
       }}
     />
+  )
+}
+
+/**
+ * Inline severity flag shown next to a rubric's name. Critical = red 🔥 vetoes,
+ * major = violet ★, minor is hidden entirely (default behavior).
+ */
+function SeverityBadge({
+  severity,
+}: {
+  severity: 'critical' | 'major'
+}) {
+  if (severity === 'critical') {
+    return (
+      <span
+        title="Critical rubric — a bad rating here vetoes the trajectory's overall quality score."
+        className="mono shrink-0"
+        style={{
+          background: 'var(--danger-soft)',
+          color: 'var(--danger)',
+          border: '1px solid oklch(0.55 0.2 25 / 0.4)',
+          borderRadius: 4,
+          padding: '1px 6px',
+          fontSize: 10,
+          fontWeight: 700,
+          letterSpacing: '0.04em',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        🔥 CRITICAL
+      </span>
+    )
+  }
+  return (
+    <span
+      title="Major rubric — weighted 5× when computing the trajectory's quality score."
+      className="mono shrink-0"
+      style={{
+        background: 'var(--accent-soft)',
+        color: 'var(--accent)',
+        border: '1px solid var(--accent-line)',
+        borderRadius: 4,
+        padding: '1px 6px',
+        fontSize: 10,
+        fontWeight: 600,
+        letterSpacing: '0.04em',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      ★ MAJOR
+    </span>
   )
 }

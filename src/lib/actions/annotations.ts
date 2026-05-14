@@ -321,3 +321,79 @@ export async function reviewAnnotation(input: z.infer<typeof reviewSchema>) {
 
   return { ok: true as const }
 }
+
+// ─── Review thread — submitter replies to a reviewer's feedback ───────────
+
+const respondToReviewSchema = z.object({
+  annotationId: z.string().uuid(),
+  message: z.string().min(1).max(4000),
+})
+
+/**
+ * The annotator (submitter) replies to a reviewer's feedback note. Writes
+ * an `annotation.review_replied` event so the thread is reconstructable
+ * via the event log — same pattern as the verdict events themselves.
+ *
+ * Authorization: only the original submitter may reply. We resolve
+ * topic → task → workspace defensively to ensure the message lands in
+ * the right workspace event log.
+ *
+ * Idempotency: not enforced — successive replies stack up as separate
+ * events, which is the desired behavior for a chat-style thread.
+ */
+export async function respondToReview(
+  input: z.infer<typeof respondToReviewSchema>,
+): Promise<{ ok: true; eventId: string }> {
+  const parsed = respondToReviewSchema.parse(input)
+  const trimmed = parsed.message.trim()
+  if (trimmed.length === 0) {
+    throw new ValidationError('Reply cannot be blank.')
+  }
+
+  const db = getDb()
+  const [annotation] = await db
+    .select()
+    .from(annotations)
+    .where(eq(annotations.id, parsed.annotationId))
+    .limit(1)
+  if (!annotation) throw new NotFoundError('Annotation')
+
+  const me = await requireUser()
+  if (annotation.userId !== me.id) {
+    throw new ForbiddenError(
+      'Only the original submitter can reply to a review.',
+    )
+  }
+
+  const [topic] = await db
+    .select()
+    .from(topics)
+    .where(eq(topics.id, annotation.topicId))
+    .limit(1)
+  if (!topic) throw new NotFoundError('Topic')
+
+  const [task] = await db
+    .select()
+    .from(tasks)
+    .where(eq(tasks.id, topic.taskId))
+    .limit(1)
+  if (!task) throw new NotFoundError('Task')
+
+  const [evt] = await db
+    .insert(events)
+    .values({
+      type: 'annotation.review_replied',
+      workspaceId: task.workspaceId,
+      actorId: me.id,
+      payload: {
+        annotationId: parsed.annotationId,
+        topicId: topic.id,
+        taskId: task.id,
+        submitterUserId: me.id,
+        message: trimmed,
+      },
+    })
+    .returning({ id: events.id })
+
+  return { ok: true as const, eventId: evt.id }
+}
