@@ -40,7 +40,7 @@ import {
   ValidationError,
 } from '@/lib/errors'
 import { uuidLike } from '@/lib/validators/uuid'
-import { getEmailSender } from '@/lib/email/sender'
+import { sendSupabaseMagicInvite } from '@/lib/email/supabase-magic-link'
 
 const ROLE = z.enum(['admin', 'annotator', 'viewer'])
 type Role = z.infer<typeof ROLE>
@@ -60,15 +60,15 @@ export async function inviteToWorkspace(
 ): Promise<{
   ok: true
   mode: 'member-created' | 'invite-pending'
-  /** When the invitee doesn't have an account yet, surface the link so the
-   *  caller can hand it off via email (out-of-band if needed). */
+  /** Always surfaced so admin can hand-deliver or relay alongside the email. */
   inviteUrl?: string
-  /** True when the configured EmailSender confirmed delivery. False on the
-   *  Console fallback (no real email infra) or on a provider error. */
+  /** True when Supabase confirmed the magic-link email was queued. */
   emailSent?: boolean
-  /** True when the sender was the Console fallback — UI should surface
-   *  "copy invite link" since the invitee won't actually see an email. */
-  emailFallback?: boolean
+  /** True when Supabase rate-limited (free tier ~4/hour per recipient).
+   *  UI should suggest copy-link fallback for this attempt. */
+  emailRateLimited?: boolean
+  /** Surfaced Supabase / network error string, if any. */
+  emailError?: string
 }> {
   const parsed = InviteInput.parse(input)
   const { user, workspace } = await requireWorkspaceAdmin(parsed.workspaceId)
@@ -145,34 +145,43 @@ export async function inviteToWorkspace(
   const base = process.env.PUBLIC_BASE_URL ?? 'http://localhost:3000'
   const inviteUrl = `${base}/invites/${token}`
 
-  // Try to send the invite email. Failure is non-fatal — the action still
-  // succeeds and surfaces `inviteUrl` so admin can copy-paste it out-of-
-  // band (Slack / WeChat / etc). When RESEND_API_KEY isn't set, the
-  // ConsoleSender returns ok=true with fallback=true and logs the URL.
-  const sender = getEmailSender()
-  let emailResult: Awaited<ReturnType<typeof sender.sendInvite>> | null = null
+  // Trigger Supabase to send the magic-link email. The email lands in the
+  // invitee's inbox with a one-time-use link that signs them in (creating
+  // their account if needed) and bounces through our /auth/callback to
+  // /invites/[token] where they pick the "Accept" button.
+  //
+  // Fail-soft: if Supabase rate-limits (~4/hour per recipient on free tier)
+  // or otherwise errors, the action still returns successfully and the UI
+  // surfaces the copy-link fallback. The invite row was already written;
+  // anyone with the link can use it.
+  //
+  // Workspace name is unused at this layer — the email template lives in
+  // Supabase Dashboard → Auth → Email Templates and renders independently.
+  void workspace
+  let emailSent = false
+  let emailRateLimited = false
+  let emailError: string | undefined
   try {
-    emailResult = await sender.sendInvite({
-      to: email,
-      workspaceName: workspace.name,
-      inviterDisplayName: user.email,
-      inviteUrl,
-      role: parsed.role,
+    const r = await sendSupabaseMagicInvite({
+      email,
+      postSignInPath: `/invites/${token}`,
     })
+    emailSent = r.ok
+    emailRateLimited = r.rateLimited ?? false
+    emailError = r.error
   } catch (e) {
+    emailError = e instanceof Error ? e.message : 'unknown email error'
     // eslint-disable-next-line no-console
-    console.warn(
-      'invite email send failed (URL still available for copy):',
-      e instanceof Error ? e.message : e,
-    )
+    console.warn('invite magic-link send failed:', emailError)
   }
 
   return {
     ok: true,
     mode: 'invite-pending',
     inviteUrl,
-    emailSent: emailResult?.ok ?? false,
-    emailFallback: emailResult?.fallback ?? false,
+    emailSent,
+    emailRateLimited,
+    emailError,
   }
 }
 
@@ -232,7 +241,13 @@ const ResendInviteInput = z.object({ inviteId: uuidLike })
 
 export async function resendInvite(
   input: z.infer<typeof ResendInviteInput>,
-): Promise<{ ok: true; inviteUrl: string; emailSent: boolean; emailFallback: boolean }> {
+): Promise<{
+  ok: true
+  inviteUrl: string
+  emailSent: boolean
+  emailRateLimited: boolean
+  emailError?: string
+}> {
   const parsed = ResendInviteInput.parse(input)
   const db = getDb()
   const [invite] = await db
@@ -244,23 +259,24 @@ export async function resendInvite(
   if (invite.acceptedAt) {
     throw new ConflictError('Invite has already been accepted.')
   }
-  const { user, workspace } = await requireWorkspaceAdmin(invite.workspaceId)
+  await requireWorkspaceAdmin(invite.workspaceId)
 
   const base = process.env.PUBLIC_BASE_URL ?? 'http://localhost:3000'
   const inviteUrl = `${base}/invites/${invite.token}`
-  const sender = getEmailSender()
-  const result = await sender.sendInvite({
-    to: invite.email,
-    workspaceName: workspace.name,
-    inviterDisplayName: user.email,
-    inviteUrl,
-    role: invite.role as Role,
+
+  // Same Supabase magic-link path as the initial send. Free-tier rate
+  // limit may bite if the admin spams resend — UI handles that case.
+  const r = await sendSupabaseMagicInvite({
+    email: invite.email,
+    postSignInPath: `/invites/${invite.token}`,
   })
+
   return {
     ok: true,
     inviteUrl,
-    emailSent: result.ok,
-    emailFallback: result.fallback ?? false,
+    emailSent: r.ok,
+    emailRateLimited: r.rateLimited ?? false,
+    emailError: r.error,
   }
 }
 

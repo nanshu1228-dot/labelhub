@@ -149,7 +149,8 @@ function InviteForm({ workspaceId }: { workspaceId: string }) {
   const [success, setSuccess] = useState<{
     inviteUrl?: string
     emailSent: boolean
-    emailFallback: boolean
+    emailRateLimited: boolean
+    emailError?: string
     mode: 'member-created' | 'invite-pending'
   } | null>(null)
 
@@ -163,7 +164,8 @@ function InviteForm({ workspaceId }: { workspaceId: string }) {
         setSuccess({
           inviteUrl: r.inviteUrl,
           emailSent: r.emailSent ?? false,
-          emailFallback: r.emailFallback ?? false,
+          emailRateLimited: r.emailRateLimited ?? false,
+          emailError: r.emailError,
           mode: r.mode,
         })
         setEmail('')
@@ -264,7 +266,8 @@ function InviteSuccessCard({
   success: {
     inviteUrl?: string
     emailSent: boolean
-    emailFallback: boolean
+    emailRateLimited: boolean
+    emailError?: string
     mode: 'member-created' | 'invite-pending'
   }
 }) {
@@ -292,37 +295,38 @@ function InviteSuccessCard({
     setTimeout(() => setCopied(false), 1500)
   }
 
+  const isWarn = !success.emailSent
   return (
     <div
       className="rounded-md p-3 ts-12 space-y-2"
       style={{
-        background: success.emailFallback
-          ? 'var(--warn-soft)'
-          : 'var(--success-soft)',
-        border: success.emailFallback
+        background: isWarn ? 'var(--warn-soft)' : 'var(--success-soft)',
+        border: isWarn
           ? '1px solid oklch(0.6 0.14 75 / 0.4)'
           : '1px solid oklch(0.5 0.13 150 / 0.35)',
-        color: success.emailFallback ? 'var(--warn)' : 'var(--success)',
+        color: isWarn ? 'var(--warn)' : 'var(--success)',
       }}
     >
       <div>
-        {success.emailFallback ? (
+        {success.emailSent ? (
           <>
-            <strong>Email not sent.</strong> No real provider configured (set
-            <code className="mx-1 px-1 py-0.5 rounded bg-black/10">
-              RESEND_API_KEY
-            </code>
-            in your Vercel env). Copy the link below to invite by hand.
+            <strong>Email sent.</strong> Supabase queued a magic-link to that
+            address — the recipient clicks it, signs in (account auto-created
+            if needed), then lands on the accept page. The same link is below
+            if you want to relay it directly.
           </>
-        ) : success.emailSent ? (
+        ) : success.emailRateLimited ? (
           <>
-            <strong>Email sent.</strong> The invitee will get a link valid for
-            7 days. The same link is below if you want to relay it directly.
+            <strong>Rate limited.</strong> Supabase&apos;s free tier caps magic
+            links at ~4/hour per recipient. The invite row was still created —
+            copy the link below to deliver this one out-of-band, or try again
+            in an hour.
           </>
         ) : (
           <>
-            <strong>Email send failed</strong> — the invite row was created,
-            and the link below still works.
+            <strong>Email send failed</strong>
+            {success.emailError ? ` (${success.emailError})` : ''} — the
+            invite row was created, and the link below still works.
           </>
         )}
       </div>
@@ -598,11 +602,11 @@ function PendingInviteRow({
       try {
         const r = await resendInvite({ inviteId: invite.id })
         setStatus(
-          r.emailFallback
-            ? 'Logged to console — no real email provider configured. Copy the link instead.'
-            : r.emailSent
-              ? 'Email re-sent.'
-              : 'Email send returned no confirmation. Try copying the link.',
+          r.emailSent
+            ? 'Email re-sent via Supabase magic link.'
+            : r.emailRateLimited
+              ? 'Rate-limited (~4/hour per recipient). Copy the link instead.'
+              : `Email send failed${r.emailError ? ' — ' + r.emailError : ''}. Copy the link instead.`,
         )
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Resend failed.')
