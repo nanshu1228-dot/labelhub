@@ -10,6 +10,7 @@ import {
 } from '@/lib/actions/billing/payment-methods'
 import { requestWithdraw } from '@/lib/actions/billing/withdraw'
 import { formatMoneyMinor } from '@/lib/billing/calculate-payout'
+import type { MyContribution } from '@/lib/queries/trust-consensus'
 
 /**
  * Annotator earnings dashboard.
@@ -87,14 +88,18 @@ interface DashboardData {
 export function EarningsDashboard({
   data,
   userId: _userId,
+  contribution,
 }: {
   data: DashboardData
   userId: string
+  /** Cold counts — submitted / approved / rejected / pending review. NO score. */
+  contribution: MyContribution
 }) {
   return (
     <div className="app-light min-h-screen" style={{ background: 'var(--bg)' }}>
       <Header />
       <main className="mx-auto max-w-[1200px] px-6 py-8 space-y-8">
+        <ContributionSection contribution={contribution} />
         <WalletsSection wallets={data.wallets} methods={data.methods} />
         <PendingSection
           pendingByCurrency={data.pendingByCurrency}
@@ -104,6 +109,108 @@ export function EarningsDashboard({
         <LedgerSection recentTxns={data.recentTxns} />
         <PaymentMethodsSection methods={data.methods} />
       </main>
+    </div>
+  )
+}
+
+/**
+ * Cold contribution counts. NO smoothed score, NO percentage — just the raw
+ * numbers so the annotator can see "I did N pieces of work" without being
+ * graded back. Quality judgment is private to admins (see Members page).
+ */
+function ContributionSection({
+  contribution,
+}: {
+  contribution: MyContribution
+}) {
+  return (
+    <section>
+      <SectionHeading
+        label="CONTRIBUTION"
+        title="What you&rsquo;ve submitted"
+      />
+      <div
+        className="grid gap-3"
+        style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}
+      >
+        <CountTile
+          label="submitted"
+          value={contribution.submitted}
+          hint="Annotations you marked complete."
+        />
+        <CountTile
+          label="approved"
+          value={contribution.approved}
+          hint="Admin accepted — counts toward your payout."
+          tone="success"
+        />
+        <CountTile
+          label="pending review"
+          value={contribution.pendingReview}
+          hint="Waiting for admin to review."
+          tone="muted"
+        />
+        <CountTile
+          label="rejected"
+          value={contribution.rejected}
+          hint="Admin sent it back. Check feedback in /inbox."
+          tone={contribution.rejected > 0 ? 'warn' : 'muted'}
+        />
+      </div>
+      <p
+        className="ts-11 mt-2"
+        style={{ color: 'var(--mute2)', maxWidth: 600 }}
+      >
+        These are counts of what you did — there&rsquo;s no rating you can
+        see. Quality is judged privately by workspace admins; if you want
+        feedback on a rejected piece, check the rejection note on the
+        annotation in /inbox.
+      </p>
+    </section>
+  )
+}
+
+function CountTile({
+  label,
+  value,
+  hint,
+  tone = 'default',
+}: {
+  label: string
+  value: number
+  hint?: string
+  tone?: 'default' | 'success' | 'warn' | 'muted'
+}) {
+  const color =
+    tone === 'success'
+      ? 'var(--success)'
+      : tone === 'warn'
+        ? 'var(--warn)'
+        : tone === 'muted'
+          ? 'var(--mute)'
+          : 'var(--hi)'
+  return (
+    <div
+      className="rounded-xl p-4"
+      style={{
+        background: 'var(--panel)',
+        border: '1px solid var(--line)',
+      }}
+    >
+      <div
+        className="lbl mb-1.5"
+        style={{ color: 'var(--mute2)' }}
+      >
+        {label}
+      </div>
+      <div className="ts-24 mono" style={{ color, fontWeight: 600 }}>
+        {value}
+      </div>
+      {hint && (
+        <div className="ts-11 mt-1" style={{ color: 'var(--mute2)' }}>
+          {hint}
+        </div>
+      )}
     </div>
   )
 }

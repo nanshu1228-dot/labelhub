@@ -65,6 +65,7 @@ export function MembersClient({
   isAdmin: boolean
   members: Member[]
   pendingInvites: PendingInvite[]
+  /** Map of userId → trust. Only populated when viewer is admin (server gates). */
   trustByUserId: Record<string, UserTrust>
 }) {
   return (
@@ -96,7 +97,14 @@ export function MembersClient({
               <tr>
                 <th className="text-left p-3">member</th>
                 <th className="text-left p-3">role</th>
-                <th className="text-left p-3">trust</th>
+                {isAdmin && (
+                  <th
+                    className="text-left p-3"
+                    title="Admin verdict (authoritative) or peer consensus (preliminary). Admin-only data — never shown to annotators."
+                  >
+                    trust
+                  </th>
+                )}
                 <th className="text-left p-3">joined</th>
                 <th className="text-right p-3"></th>
               </tr>
@@ -508,9 +516,11 @@ function MemberRow({
             <RoleTag role={member.role} />
           )}
         </td>
-        <td className="p-3">
-          <TrustBadge trust={trust} size="md" />
-        </td>
+        {isAdmin && (
+          <td className="p-3">
+            <TrustBadge trust={trust} viewerIsAdmin={isAdmin} size="md" />
+          </td>
+        )}
         <td className="p-3 mono" style={{ color: 'var(--mute2)', fontSize: 12 }}>
           {member.joinedAt.toISOString().slice(0, 10)}
         </td>
@@ -536,7 +546,7 @@ function MemberRow({
       </tr>
       {error && (
         <tr>
-          <td colSpan={5} className="px-3 pb-2">
+          <td colSpan={isAdmin ? 5 : 4} className="px-3 pb-2">
             <div
               className="ts-11 mono"
               style={{ color: 'var(--danger)' }}

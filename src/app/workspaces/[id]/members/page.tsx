@@ -8,7 +8,7 @@ import {
 } from '@/lib/actions/membership'
 import { optionalUser, requireWorkspaceMember } from '@/lib/auth/guards'
 import {
-  getWorkspaceTrustScores,
+  getWorkspaceTrust,
   type UserTrust,
 } from '@/lib/queries/trust-consensus'
 import { MembersClient } from '@/components/workspaces/members-client'
@@ -48,17 +48,20 @@ export default async function MembersPage(
   const { role } = await requireWorkspaceMember(workspaceId)
   const isAdmin = role === 'admin' || workspace.adminId === me.id
 
+  // Trust scores are admin-only operational data — only fetch when the
+  // viewer can see them. Saves a workspace-scan for annotators/viewers.
   const [members, pendingInvites, trustList] = await Promise.all([
     listWorkspaceMembers(workspaceId),
     isAdmin
       ? listPendingInvites(workspaceId).catch(() => [])
       : Promise.resolve([]),
-    getWorkspaceTrustScores(workspaceId).catch(() => [] as UserTrust[]),
+    isAdmin
+      ? getWorkspaceTrust(workspaceId).catch(() => [] as UserTrust[])
+      : Promise.resolve([] as UserTrust[]),
   ])
 
   // Serialize the trust list into a plain {userId → UserTrust} record so the
-  // client component receives it as a serializable prop. Members who don't
-  // appear in this map have no annotation history yet.
+  // client component receives it as a serializable prop. Empty for non-admins.
   const trustByUserId: Record<string, UserTrust> = {}
   for (const t of trustList) trustByUserId[t.userId] = t
 

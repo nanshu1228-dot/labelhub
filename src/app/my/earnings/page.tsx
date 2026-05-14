@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
 import { optionalUser } from '@/lib/auth/guards'
 import { getMyEarnings } from '@/lib/queries/billing'
+import { getMyContribution } from '@/lib/queries/trust-consensus'
 import { EarningsDashboard } from '@/components/billing/earnings-dashboard'
 
 export const metadata: Metadata = {
@@ -15,11 +16,17 @@ export const dynamic = 'force-dynamic'
  * /my/earnings — annotator-facing dashboard.
  *
  * Shows:
+ *   - Contribution (cold counts: submitted / approved / rejected / pending)
  *   - Wallet balance(s) per (workspace, currency)
  *   - Pending earnings (approved line_items not yet rolled into a payout)
  *   - Recent payouts (with status / external ref)
  *   - Ledger (last 30 transactions)
  *   - Payment methods + add/remove/set-default UI
+ *
+ * Deliberately does NOT show a trust score to the annotator — gamifying
+ * quality creates perverse incentives (avoiding hard tasks, demoralization
+ * at low scores, race-to-top inflation). Annotators see what they actually
+ * did; admins judge quality privately on /workspaces/.../members.
  *
  * Authenticated-only: earnings are personal financial data. Unauth visitors
  * get bounced to /signin with a return-to-here next param.
@@ -29,6 +36,15 @@ export default async function MyEarningsPage() {
   if (!me) {
     redirect('/signin?next=/my/earnings')
   }
-  const data = await getMyEarnings(me.id)
-  return <EarningsDashboard data={data} userId={me.id} />
+  const [data, contribution] = await Promise.all([
+    getMyEarnings(me.id),
+    getMyContribution({ userId: me.id }),
+  ])
+  return (
+    <EarningsDashboard
+      data={data}
+      userId={me.id}
+      contribution={contribution}
+    />
+  )
 }

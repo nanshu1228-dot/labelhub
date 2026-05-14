@@ -8,9 +8,10 @@ import {
   type RaterMark,
 } from '@/lib/queries/iaa'
 import {
-  getWorkspaceTrustScores,
+  getWorkspaceTrust,
   type UserTrust,
 } from '@/lib/queries/trust-consensus'
+import { optionalUser, requireWorkspaceMember } from '@/lib/auth/guards'
 import { listRecentPatches } from '@/lib/actions/guideline-refiner'
 import { RefinerActionClient } from '@/components/disputes/refiner-action-client'
 import { PatchActionsClient } from '@/components/disputes/patch-actions-client'
@@ -41,17 +42,29 @@ export default async function DisputesPage(
   let summary: Awaited<ReturnType<typeof getWorkspaceIaaSummary>> | null = null
   let disputes: Awaited<ReturnType<typeof listTopDisputes>> = []
   let patches: Awaited<ReturnType<typeof listRecentPatches>> = []
-  let trustByUserId: Record<string, UserTrust> = {}
+  const trustByUserId: Record<string, UserTrust> = {}
+  let isAdmin = false
 
   try {
     const workspace = await getWorkspaceById(workspaceId)
     if (!workspace) notFound()
     workspaceName = workspace.name
+
+    // Resolve viewer's role — trust scores are admin-only operational data,
+    // never shown to annotators (would create perverse incentives).
+    const me = await optionalUser()
+    if (me) {
+      const { role } = await requireWorkspaceMember(workspaceId)
+      isAdmin = role === 'admin' || workspace.adminId === me.id
+    }
+
     const [s, d, p, trustList] = await Promise.all([
       getWorkspaceIaaSummary(workspaceId),
       listTopDisputes({ workspaceId, limit: 20 }),
       listRecentPatches(workspaceId, 20),
-      getWorkspaceTrustScores(workspaceId).catch(() => [] as UserTrust[]),
+      isAdmin
+        ? getWorkspaceTrust(workspaceId).catch(() => [] as UserTrust[])
+        : Promise.resolve([] as UserTrust[]),
     ])
     summary = s
     disputes = d
@@ -99,6 +112,7 @@ export default async function DisputesPage(
                     workspaceId={workspaceId}
                     disputes={disputes}
                     trustByUserId={trustByUserId}
+                    viewerIsAdmin={isAdmin}
                   />
                   {demoMode && hasAnthropicKey && (
                     <div className="mt-4">
@@ -307,10 +321,12 @@ function DisputeList({
   workspaceId,
   disputes,
   trustByUserId,
+  viewerIsAdmin,
 }: {
   workspaceId: string
   disputes: Awaited<ReturnType<typeof listTopDisputes>>
   trustByUserId: Record<string, UserTrust>
+  viewerIsAdmin: boolean
 }) {
   return (
     <ul className="flex flex-col gap-3">
@@ -341,7 +357,11 @@ function DisputeList({
               step {d.trajectoryStepId.slice(0, 8)}…
             </span>
           </div>
-          <RaterTable raters={d.raters} trustByUserId={trustByUserId} />
+          <RaterTable
+            raters={d.raters}
+            trustByUserId={trustByUserId}
+            viewerIsAdmin={viewerIsAdmin}
+          />
         </li>
       ))}
     </ul>
@@ -384,9 +404,11 @@ function SpreadChip({ spread }: { spread: number }) {
 function RaterTable({
   raters,
   trustByUserId,
+  viewerIsAdmin,
 }: {
   raters: RaterMark[]
   trustByUserId: Record<string, UserTrust>
+  viewerIsAdmin: boolean
 }) {
   return (
     <ul className="flex flex-col gap-1.5">
@@ -406,14 +428,19 @@ function RaterTable({
               className="mono flex items-center gap-1.5"
               style={{
                 color: 'var(--mute2)',
-                minWidth: 180,
+                minWidth: viewerIsAdmin ? 180 : 110,
                 flexShrink: 0,
               }}
             >
               <span className="trunc-1" style={{ maxWidth: 110 }}>
                 {r.displayName ?? r.userId.slice(0, 8)}
               </span>
-              <TrustBadge trust={trust} size="sm" showCounts={false} />
+              <TrustBadge
+                trust={trust}
+                viewerIsAdmin={viewerIsAdmin}
+                size="sm"
+                showCounts={false}
+              />
             </span>
             <span
               className="mono"
