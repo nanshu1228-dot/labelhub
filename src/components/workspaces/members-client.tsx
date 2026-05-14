@@ -10,6 +10,7 @@ import {
   revokeInvite,
 } from '@/lib/actions/membership'
 import type { UserTrust } from '@/lib/queries/trust-consensus'
+import type { UserCalibration } from '@/lib/queries/gold-standards'
 import { TrustBadge } from '@/components/quality/trust-badge'
 
 /**
@@ -58,6 +59,7 @@ export function MembersClient({
   members,
   pendingInvites,
   trustByUserId,
+  calibrationByUserId,
 }: {
   workspaceId: string
   workspaceCreatorId: string
@@ -67,6 +69,8 @@ export function MembersClient({
   pendingInvites: PendingInvite[]
   /** Map of userId → trust. Only populated when viewer is admin (server gates). */
   trustByUserId: Record<string, UserTrust>
+  /** Map of userId → calibration vs gold standards. Admin-only. */
+  calibrationByUserId: Record<string, UserCalibration>
 }) {
   return (
     <div className="space-y-10">
@@ -98,12 +102,20 @@ export function MembersClient({
                 <th className="text-left p-3">member</th>
                 <th className="text-left p-3">role</th>
                 {isAdmin && (
-                  <th
-                    className="text-left p-3"
-                    title="Admin verdict (authoritative) or peer consensus (preliminary). Admin-only data — never shown to annotators."
-                  >
-                    trust
-                  </th>
+                  <>
+                    <th
+                      className="text-left p-3"
+                      title="Admin verdict (authoritative) or peer consensus (preliminary). Admin-only — never shown to annotators."
+                    >
+                      trust
+                    </th>
+                    <th
+                      className="text-left p-3"
+                      title="Calibration vs. gold standards — how often this rater matches the frozen reference answers. Admin-only."
+                    >
+                      calibration
+                    </th>
+                  </>
                 )}
                 <th className="text-left p-3">joined</th>
                 <th className="text-right p-3"></th>
@@ -119,6 +131,7 @@ export function MembersClient({
                   isMe={m.userId === myUserId}
                   isCreator={m.userId === workspaceCreatorId}
                   trust={trustByUserId[m.userId] ?? null}
+                  calibration={calibrationByUserId[m.userId] ?? null}
                 />
               ))}
             </tbody>
@@ -406,6 +419,7 @@ function MemberRow({
   isMe,
   isCreator,
   trust,
+  calibration,
 }: {
   member: Member
   workspaceId: string
@@ -413,6 +427,7 @@ function MemberRow({
   isMe: boolean
   isCreator: boolean
   trust: UserTrust | null
+  calibration: UserCalibration | null
 }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
@@ -517,9 +532,14 @@ function MemberRow({
           )}
         </td>
         {isAdmin && (
-          <td className="p-3">
-            <TrustBadge trust={trust} viewerIsAdmin={isAdmin} size="md" />
-          </td>
+          <>
+            <td className="p-3">
+              <TrustBadge trust={trust} viewerIsAdmin={isAdmin} size="md" />
+            </td>
+            <td className="p-3">
+              <CalibrationCell calibration={calibration} />
+            </td>
+          </>
         )}
         <td className="p-3 mono" style={{ color: 'var(--mute2)', fontSize: 12 }}>
           {member.joinedAt.toISOString().slice(0, 10)}
@@ -546,7 +566,7 @@ function MemberRow({
       </tr>
       {error && (
         <tr>
-          <td colSpan={isAdmin ? 5 : 4} className="px-3 pb-2">
+          <td colSpan={isAdmin ? 6 : 4} className="px-3 pb-2">
             <div
               className="ts-11 mono"
               style={{ color: 'var(--danger)' }}
@@ -557,6 +577,106 @@ function MemberRow({
         </tr>
       )}
     </>
+  )
+}
+
+function CalibrationCell({
+  calibration,
+}: {
+  calibration: UserCalibration | null
+}) {
+  if (!calibration) {
+    return (
+      <span
+        title="No calibration data — either no gold standards exist yet, or this rater hasn't annotated any gold trajectories"
+        className="mono ts-11"
+        style={{
+          color: 'var(--mute2)',
+        }}
+      >
+        —
+      </span>
+    )
+  }
+  const total = calibration.matched + calibration.diverged
+  if (total === 0) {
+    return (
+      <span
+        title={`Annotated ${calibration.goldsCovered} gold trajector${calibration.goldsCovered === 1 ? 'y' : 'ies'} but no comparable rubrics (only text/skipped)`}
+        className="mono ts-11"
+        style={{
+          color: 'var(--mute2)',
+        }}
+      >
+        no signal
+      </span>
+    )
+  }
+  const pct = Math.round(calibration.score * 100)
+  const tier =
+    calibration.score >= 0.8
+      ? {
+          bg: 'var(--success-soft)',
+          fg: 'var(--success)',
+          bord: 'oklch(0.5 0.13 150 / 0.4)',
+        }
+      : calibration.score >= 0.6
+        ? {
+            bg: 'oklch(0.94 0 0)',
+            fg: 'var(--hi)',
+            bord: 'var(--line)',
+          }
+        : calibration.score >= 0.4
+          ? {
+              bg: 'oklch(0.7 0.14 75 / 0.08)',
+              fg: 'var(--warn)',
+              bord: 'oklch(0.7 0.14 75 / 0.4)',
+            }
+          : {
+              bg: 'var(--danger-soft)',
+              fg: 'var(--danger)',
+              bord: 'oklch(0.55 0.2 25 / 0.4)',
+            }
+  return (
+    <span
+      title={`Calibration vs gold: ${calibration.matched} matched / ${calibration.diverged} diverged across ${calibration.goldsCovered} gold trajector${calibration.goldsCovered === 1 ? 'y' : 'ies'}${calibration.missed > 0 ? ` (${calibration.missed} missed)` : ''} (Bayesian smoothed)`}
+      className="mono shrink-0"
+      style={{
+        background: tier.bg,
+        color: tier.fg,
+        border: `1px solid ${tier.bord}`,
+        borderRadius: 4,
+        padding: '2px 8px',
+        fontSize: 11,
+        letterSpacing: '0.02em',
+        whiteSpace: 'nowrap',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+      }}
+    >
+      <span
+        title="vs. gold standards"
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 12,
+          height: 12,
+          borderRadius: 3,
+          background: tier.fg,
+          color: tier.bg,
+          fontSize: 8,
+          fontWeight: 700,
+        }}
+      >
+        ★
+      </span>
+      <span style={{ fontWeight: 600 }}>{pct}%</span>
+      <span style={{ opacity: 0.75 }}>
+        ✓{calibration.matched} ✗{calibration.diverged}
+      </span>
+    </span>
   )
 }
 

@@ -11,6 +11,10 @@ import {
   getWorkspaceTrust,
   type UserTrust,
 } from '@/lib/queries/trust-consensus'
+import {
+  getWorkspaceCalibration,
+  type UserCalibration,
+} from '@/lib/queries/gold-standards'
 import { MembersClient } from '@/components/workspaces/members-client'
 
 export const metadata: Metadata = {
@@ -48,22 +52,30 @@ export default async function MembersPage(
   const { role } = await requireWorkspaceMember(workspaceId)
   const isAdmin = role === 'admin' || workspace.adminId === me.id
 
-  // Trust scores are admin-only operational data — only fetch when the
-  // viewer can see them. Saves a workspace-scan for annotators/viewers.
-  const [members, pendingInvites, trustList] = await Promise.all([
-    listWorkspaceMembers(workspaceId),
-    isAdmin
-      ? listPendingInvites(workspaceId).catch(() => [])
-      : Promise.resolve([]),
-    isAdmin
-      ? getWorkspaceTrust(workspaceId).catch(() => [] as UserTrust[])
-      : Promise.resolve([] as UserTrust[]),
-  ])
+  // Trust + calibration scores are admin-only operational data — only fetch
+  // when the viewer can see them. Saves the workspace-wide scans for non-admins.
+  const [members, pendingInvites, trustList, calibrationList] =
+    await Promise.all([
+      listWorkspaceMembers(workspaceId),
+      isAdmin
+        ? listPendingInvites(workspaceId).catch(() => [])
+        : Promise.resolve([]),
+      isAdmin
+        ? getWorkspaceTrust(workspaceId).catch(() => [] as UserTrust[])
+        : Promise.resolve([] as UserTrust[]),
+      isAdmin
+        ? getWorkspaceCalibration(workspaceId).catch(
+            () => [] as UserCalibration[],
+          )
+        : Promise.resolve([] as UserCalibration[]),
+    ])
 
-  // Serialize the trust list into a plain {userId → UserTrust} record so the
-  // client component receives it as a serializable prop. Empty for non-admins.
+  // Serialize lists into plain {userId → row} records so the client component
+  // receives serializable props. Empty for non-admins.
   const trustByUserId: Record<string, UserTrust> = {}
   for (const t of trustList) trustByUserId[t.userId] = t
+  const calibrationByUserId: Record<string, UserCalibration> = {}
+  for (const c of calibrationList) calibrationByUserId[c.userId] = c
 
   return (
     <div className="app-light min-h-screen" style={{ background: 'var(--bg)' }}>
@@ -113,6 +125,7 @@ export default async function MembersPage(
           members={members}
           pendingInvites={pendingInvites}
           trustByUserId={trustByUserId}
+          calibrationByUserId={calibrationByUserId}
         />
       </main>
     </div>

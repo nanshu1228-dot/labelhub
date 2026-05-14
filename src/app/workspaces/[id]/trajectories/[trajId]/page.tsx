@@ -4,9 +4,15 @@ import { notFound } from 'next/navigation'
 import { getWorkspaceById } from '@/lib/queries/workspaces'
 import { getTrajectoryWithSteps } from '@/lib/queries/trajectories'
 import { getTrajectoryIAA, type StepIAA } from '@/lib/queries/iaa'
+import { getGoldForTrajectory } from '@/lib/queries/gold-standards'
+import { optionalUser, requireWorkspaceMember } from '@/lib/auth/guards'
+import { getDb } from '@/lib/db/client'
+import { users as usersTable } from '@/lib/db/schema'
+import { eq } from 'drizzle-orm'
 import { listMyStepAnnotationsDemo } from '@/lib/actions/step-annotations-demo'
 import type { stepAnnotations as stepAnnotationsTable, trajectorySteps } from '@/lib/db/schema'
 import { StepMarkWidget } from '@/components/trajectory/step-mark-widget'
+import { GoldPromoteClient } from '@/components/quality/gold-promote-client'
 
 export const metadata: Metadata = {
   title: 'Trajectory — LabelHub',
@@ -33,22 +39,69 @@ export default async function TrajectoryDetailPage(
   let bundle: Awaited<ReturnType<typeof getTrajectoryWithSteps>> = null
   let myMarks: Awaited<ReturnType<typeof listMyStepAnnotationsDemo>> = {}
   let iaaByStep = new Map<string, StepIAA>()
+  let isAdmin = false
+  let goldBlock: {
+    id: string
+    promotedAt: Date
+    promotedBy: string | null
+    explanation: string | null
+    markCount: number
+  } | null = null
 
   try {
     const workspace = await getWorkspaceById(workspaceId)
     if (!workspace) notFound()
     workspaceName = workspace.name
+
+    const me = await optionalUser()
+    if (me) {
+      try {
+        const { role } = await requireWorkspaceMember(workspaceId)
+        isAdmin = role === 'admin' || workspace.adminId === me.id
+      } catch {
+        /* not a member — leave isAdmin = false */
+      }
+    }
+
     bundle = await getTrajectoryWithSteps(trajId)
     if (bundle) {
-      const [marks, iaa] = await Promise.all([
+      const [marks, iaa, gold] = await Promise.all([
         listMyStepAnnotationsDemo({
           workspaceId,
           trajectoryId: trajId,
         }),
         getTrajectoryIAA(trajId),
+        getGoldForTrajectory({ workspaceId, trajectoryId: trajId }),
       ])
       myMarks = marks
       iaaByStep = new Map(iaa.map((s) => [s.trajectoryStepId, s]))
+      if (gold) {
+        const db = getDb()
+        const [promoter] = await db
+          .select({
+            displayName: usersTable.displayName,
+            email: usersTable.email,
+          })
+          .from(usersTable)
+          .where(eq(usersTable.id, gold.promotedByUserId))
+          .limit(1)
+        const trajMarkCount = Object.keys(
+          gold.correctAnswer.trajectoryMarks ?? {},
+        ).length
+        const stepMarkCount = Object.values(
+          gold.correctAnswer.stepMarks ?? {},
+        ).reduce((acc, m) => acc + Object.keys(m).length, 0)
+        goldBlock = {
+          id: gold.id,
+          promotedAt: gold.promotedAt,
+          promotedBy:
+            promoter?.displayName ??
+            promoter?.email?.split('@')[0] ??
+            null,
+          explanation: gold.explanation,
+          markCount: trajMarkCount + stepMarkCount,
+        }
+      }
     }
   } catch (e) {
     dbError = e instanceof Error ? e.message : String(e)
@@ -71,15 +124,27 @@ export default async function TrajectoryDetailPage(
         {dbError ? (
           <DbError message={dbError} />
         ) : bundle ? (
-          <Body
-            workspaceId={workspaceId}
-            trajectory={bundle.trajectory}
-            steps={bundle.steps}
-            providersById={bundle.providersById}
-            myMarks={myMarks}
-            demoMode={demoMode}
-            iaaByStep={iaaByStep}
-          />
+          <>
+            {(goldBlock || isAdmin) && (
+              <div className="mb-6">
+                <GoldPromoteClient
+                  workspaceId={workspaceId}
+                  trajectoryId={trajId}
+                  isAdmin={isAdmin}
+                  gold={goldBlock}
+                />
+              </div>
+            )}
+            <Body
+              workspaceId={workspaceId}
+              trajectory={bundle.trajectory}
+              steps={bundle.steps}
+              providersById={bundle.providersById}
+              myMarks={myMarks}
+              demoMode={demoMode}
+              iaaByStep={iaaByStep}
+            />
+          </>
         ) : null}
       </main>
     </div>
