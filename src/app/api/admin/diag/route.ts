@@ -47,6 +47,10 @@ export async function GET(request: Request) {
       check('NEXT_PUBLIC_SUPABASE_ANON_KEY'),
       check('SUPABASE_SERVICE_ROLE_KEY'),
     ],
+    email: [
+      check('RESEND_API_KEY'),
+      check('RESEND_FROM_EMAIL'),
+    ],
     config: {
       AI_DEFAULT_PROVIDER: process.env.AI_DEFAULT_PROVIDER ?? null,
       LABELHUB_DEMO_MODE: process.env.LABELHUB_DEMO_MODE ?? null,
