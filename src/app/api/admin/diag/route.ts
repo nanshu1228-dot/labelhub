@@ -39,6 +39,14 @@ export async function GET(request: Request) {
       check('QWEN_API_KEY'),
       check('OPENAI_API_KEY'),
     ],
+    // Auth-related env. NEXT_PUBLIC_* must be available at BUILD time
+    // for Next to inline them into the client bundle — set them in Vercel
+    // BEFORE the build, then redeploy.
+    auth: [
+      check('NEXT_PUBLIC_SUPABASE_URL'),
+      check('NEXT_PUBLIC_SUPABASE_ANON_KEY'),
+      check('SUPABASE_SERVICE_ROLE_KEY'),
+    ],
     config: {
       AI_DEFAULT_PROVIDER: process.env.AI_DEFAULT_PROVIDER ?? null,
       LABELHUB_DEMO_MODE: process.env.LABELHUB_DEMO_MODE ?? null,
