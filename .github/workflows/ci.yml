@@ -6,6 +6,17 @@ on:
   pull_request:
     branches: [main]
 
+# Opt into Node 24 for the Action runtime itself (the JS engine that
+# executes actions/checkout@v4 and actions/setup-node@v4 internally).
+# Default is still Node 20 today, but GitHub flips the default on
+# 2026-06-02 and removes Node 20 entirely on 2026-09-16. Setting this
+# now silences the deprecation warning and front-loads any breakage
+# while we still have time to fix it. Has no effect on the Node
+# version OUR code runs under — that's controlled by setup-node's
+# `node-version: '22'` further down.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   build-and-test:
     name: Build + Test
