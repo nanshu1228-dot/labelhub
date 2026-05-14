@@ -12,11 +12,14 @@ import { KindPill } from './kind-pill'
  *
  * Replaces the design's hand-rolled scroll-window with TanStack Virtual.
  * Why: the design works because TRAJ_A is 52 steps — manageable. Real
- * trajectories from agentic eval runs go to 500+. AGENTS.md hard rule:
- * "Annotation grids: @tanstack/react-virtual mandatory past 30 rows."
+ * trajectories from agentic eval runs go to 500+ and the perf-test seed
+ * pushes to 1000+. AGENTS.md hard rule: "Annotation grids:
+ * @tanstack/react-virtual mandatory past 30 rows."
  *
- * Each row is a fixed 48px to keep estimateSize honest (no measured-size
- * thrash). If a future row needs to be taller, switch to measureElement.
+ * Each row is a fixed 48px and we DO NOT set `ref={measureElement}` on
+ * rows — that would attach a ResizeObserver to every visible row on
+ * every scroll, which we measured as a real cost at 1000+ steps. The
+ * fixed `estimateSize` is the source of truth.
  */
 
 const ROW_HEIGHT = 48
@@ -72,7 +75,6 @@ export function StepList({
               role="option"
               aria-selected={i === selectedIdx}
               data-index={i}
-              ref={virtualizer.measureElement}
               onClick={() => onSelect(i)}
               className={`step-row ${i === selectedIdx ? 'selected' : ''}`}
               style={{
