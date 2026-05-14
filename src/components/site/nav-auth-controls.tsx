@@ -26,7 +26,8 @@ export function NavAuthControls({ userEmail }: { userEmail: string | null }) {
   if (userEmail) {
     return (
       <>
-        <span
+        <a
+          href="/account"
           className="hidden sm:inline mono"
           style={{
             fontSize: 12,
@@ -38,11 +39,13 @@ export function NavAuthControls({ userEmail }: { userEmail: string | null }) {
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
+            textDecoration: 'none',
+            transition: 'color 120ms, border-color 120ms',
           }}
-          title={userEmail}
+          title={`Account: ${userEmail}`}
         >
           {userEmail}
-        </span>
+        </a>
         <form action="/signout" method="post">
           <button type="submit" className="nav-link" style={{ background: 'transparent', border: 0, cursor: 'pointer' }}>
             Sign out

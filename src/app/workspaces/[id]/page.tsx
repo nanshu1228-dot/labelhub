@@ -257,6 +257,18 @@ export default async function WorkspacePage(
           hint="start an agent run"
           href={`/workspaces/${id}/eval-runs/new`}
         />
+        <StatTile
+          label="MEMBERS"
+          value="↗"
+          hint="invite + manage roles"
+          href={`/workspaces/${id}/members`}
+        />
+        <StatTile
+          label="BILLING"
+          value="↗"
+          hint="payout periods + spend"
+          href={`/workspaces/${id}/billing`}
+        />
       </div>
 
       {stats.trajCount === 0 && (

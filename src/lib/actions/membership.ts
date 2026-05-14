@@ -19,21 +19,28 @@
 
 import { z } from 'zod'
 import { revalidatePath } from 'next/cache'
-import { and, eq, isNull, sql } from 'drizzle-orm'
+import { and, desc, eq, isNull, sql } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import {
   events,
   users,
   workspaceInvites,
   workspaceMembers,
+  workspaces,
 } from '@/lib/db/schema'
-import { requireUser, requireWorkspaceAdmin } from '@/lib/auth/guards'
+import {
+  requireUser,
+  requireWorkspaceAdmin,
+  requireWorkspaceMember,
+} from '@/lib/auth/guards'
 import {
   AppError,
   ConflictError,
   NotFoundError,
   ValidationError,
 } from '@/lib/errors'
+import { uuidLike } from '@/lib/validators/uuid'
+import { getEmailSender } from '@/lib/email/sender'
 
 const ROLE = z.enum(['admin', 'annotator', 'viewer'])
 type Role = z.infer<typeof ROLE>
@@ -43,7 +50,7 @@ type Role = z.infer<typeof ROLE>
 // ───────────────────────────────────────────────────────────────────────
 
 const InviteInput = z.object({
-  workspaceId: z.string().uuid(),
+  workspaceId: uuidLike,
   email: z.string().email().max(254),
   role: ROLE,
 })
@@ -54,8 +61,14 @@ export async function inviteToWorkspace(
   ok: true
   mode: 'member-created' | 'invite-pending'
   /** When the invitee doesn't have an account yet, surface the link so the
-   *  caller can hand it off via email (we don't send mail from here). */
+   *  caller can hand it off via email (out-of-band if needed). */
   inviteUrl?: string
+  /** True when the configured EmailSender confirmed delivery. False on the
+   *  Console fallback (no real email infra) or on a provider error. */
+  emailSent?: boolean
+  /** True when the sender was the Console fallback — UI should surface
+   *  "copy invite link" since the invitee won't actually see an email. */
+  emailFallback?: boolean
 }> {
   const parsed = InviteInput.parse(input)
   const { user, workspace } = await requireWorkspaceAdmin(parsed.workspaceId)
@@ -129,15 +142,226 @@ export async function inviteToWorkspace(
     },
   })
 
-  // The caller (a future UI) sends the invitee an email containing this URL.
-  // We don't have email infra wired yet; surface the link so the admin can
-  // hand-deliver it.
-  const base =
-    process.env.PUBLIC_BASE_URL ?? 'http://localhost:3000'
+  const base = process.env.PUBLIC_BASE_URL ?? 'http://localhost:3000'
   const inviteUrl = `${base}/invites/${token}`
-  void workspace // workspace already validated
-  return { ok: true, mode: 'invite-pending', inviteUrl }
+
+  // Try to send the invite email. Failure is non-fatal — the action still
+  // succeeds and surfaces `inviteUrl` so admin can copy-paste it out-of-
+  // band (Slack / WeChat / etc). When RESEND_API_KEY isn't set, the
+  // ConsoleSender returns ok=true with fallback=true and logs the URL.
+  const sender = getEmailSender()
+  let emailResult: Awaited<ReturnType<typeof sender.sendInvite>> | null = null
+  try {
+    emailResult = await sender.sendInvite({
+      to: email,
+      workspaceName: workspace.name,
+      inviterDisplayName: user.email,
+      inviteUrl,
+      role: parsed.role,
+    })
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      'invite email send failed (URL still available for copy):',
+      e instanceof Error ? e.message : e,
+    )
+  }
+
+  return {
+    ok: true,
+    mode: 'invite-pending',
+    inviteUrl,
+    emailSent: emailResult?.ok ?? false,
+    emailFallback: emailResult?.fallback ?? false,
+  }
 }
+
+// ───────────────────────────────────────────────────────────────────────
+// List pending invites — admin-only
+// ───────────────────────────────────────────────────────────────────────
+
+export async function listPendingInvites(workspaceId: string): Promise<
+  Array<{
+    id: string
+    email: string
+    role: Role
+    token: string
+    inviteUrl: string
+    invitedBy: string
+    inviterEmail: string | null
+    createdAt: Date
+    expiresAt: Date | null
+  }>
+> {
+  await requireWorkspaceAdmin(workspaceId)
+  const db = getDb()
+  const rows = await db
+    .select({
+      id: workspaceInvites.id,
+      email: workspaceInvites.email,
+      role: workspaceInvites.role,
+      token: workspaceInvites.token,
+      invitedBy: workspaceInvites.invitedBy,
+      inviterEmail: users.email,
+      createdAt: workspaceInvites.createdAt,
+      expiresAt: workspaceInvites.expiresAt,
+    })
+    .from(workspaceInvites)
+    .leftJoin(users, eq(workspaceInvites.invitedBy, users.id))
+    .where(
+      and(
+        eq(workspaceInvites.workspaceId, workspaceId),
+        isNull(workspaceInvites.acceptedAt),
+      ),
+    )
+    .orderBy(desc(workspaceInvites.createdAt))
+
+  const base = process.env.PUBLIC_BASE_URL ?? 'http://localhost:3000'
+  return rows.map((r) => ({
+    ...r,
+    role: r.role as Role,
+    inviteUrl: `${base}/invites/${r.token}`,
+  }))
+}
+
+// ───────────────────────────────────────────────────────────────────────
+// Re-send invite email (or surface link again)
+// ───────────────────────────────────────────────────────────────────────
+
+const ResendInviteInput = z.object({ inviteId: uuidLike })
+
+export async function resendInvite(
+  input: z.infer<typeof ResendInviteInput>,
+): Promise<{ ok: true; inviteUrl: string; emailSent: boolean; emailFallback: boolean }> {
+  const parsed = ResendInviteInput.parse(input)
+  const db = getDb()
+  const [invite] = await db
+    .select()
+    .from(workspaceInvites)
+    .where(eq(workspaceInvites.id, parsed.inviteId))
+    .limit(1)
+  if (!invite) throw new NotFoundError('Invite')
+  if (invite.acceptedAt) {
+    throw new ConflictError('Invite has already been accepted.')
+  }
+  const { user, workspace } = await requireWorkspaceAdmin(invite.workspaceId)
+
+  const base = process.env.PUBLIC_BASE_URL ?? 'http://localhost:3000'
+  const inviteUrl = `${base}/invites/${invite.token}`
+  const sender = getEmailSender()
+  const result = await sender.sendInvite({
+    to: invite.email,
+    workspaceName: workspace.name,
+    inviterDisplayName: user.email,
+    inviteUrl,
+    role: invite.role as Role,
+  })
+  return {
+    ok: true,
+    inviteUrl,
+    emailSent: result.ok,
+    emailFallback: result.fallback ?? false,
+  }
+}
+
+// ───────────────────────────────────────────────────────────────────────
+// Revoke a pending invite (e.g. sent to wrong email)
+// ───────────────────────────────────────────────────────────────────────
+
+const RevokeInviteInput = z.object({ inviteId: uuidLike })
+
+export async function revokeInvite(
+  input: z.infer<typeof RevokeInviteInput>,
+): Promise<void> {
+  const parsed = RevokeInviteInput.parse(input)
+  const db = getDb()
+  const [invite] = await db
+    .select()
+    .from(workspaceInvites)
+    .where(eq(workspaceInvites.id, parsed.inviteId))
+    .limit(1)
+  if (!invite) throw new NotFoundError('Invite')
+  if (invite.acceptedAt) {
+    throw new ConflictError('Invite already accepted — remove the member instead.')
+  }
+  const { user } = await requireWorkspaceAdmin(invite.workspaceId)
+  await db.delete(workspaceInvites).where(eq(workspaceInvites.id, invite.id))
+  await db.insert(events).values({
+    type: 'workspace.invite.revoked',
+    workspaceId: invite.workspaceId,
+    actorId: user.id,
+    payload: { inviteId: invite.id, email: invite.email },
+  })
+  try {
+    revalidatePath(`/workspaces/${invite.workspaceId}/members`)
+  } catch {
+    /* */
+  }
+}
+
+// ───────────────────────────────────────────────────────────────────────
+// List my workspaces (for /account)
+// ───────────────────────────────────────────────────────────────────────
+
+export async function listMyWorkspaces(): Promise<
+  Array<{
+    workspaceId: string
+    workspaceName: string
+    role: Role
+    joinedAt: Date
+  }>
+> {
+  const me = await requireUser()
+  const db = getDb()
+  const rows = await db
+    .select({
+      workspaceId: workspaces.id,
+      workspaceName: workspaces.name,
+      role: workspaceMembers.role,
+      joinedAt: workspaceMembers.joinedAt,
+    })
+    .from(workspaceMembers)
+    .innerJoin(workspaces, eq(workspaceMembers.workspaceId, workspaces.id))
+    .where(eq(workspaceMembers.userId, me.id))
+    .orderBy(desc(workspaceMembers.joinedAt))
+  return rows.map((r) => ({
+    workspaceId: r.workspaceId,
+    workspaceName: r.workspaceName,
+    role: r.role as Role,
+    joinedAt: r.joinedAt,
+  }))
+}
+
+// ───────────────────────────────────────────────────────────────────────
+// Update profile (display name)
+// ───────────────────────────────────────────────────────────────────────
+
+const UpdateProfileInput = z.object({
+  displayName: z.string().min(1).max(60).nullable(),
+})
+
+export async function updateProfile(
+  input: z.infer<typeof UpdateProfileInput>,
+): Promise<{ ok: true }> {
+  const parsed = UpdateProfileInput.parse(input)
+  const me = await requireUser()
+  const db = getDb()
+  await db
+    .update(users)
+    .set({ displayName: parsed.displayName })
+    .where(eq(users.id, me.id))
+  try {
+    revalidatePath('/account')
+    revalidatePath('/', 'layout')
+  } catch {
+    /* */
+  }
+  return { ok: true }
+}
+
+// Suppress unused-var warning since `requireWorkspaceMember` is exported as a
+// guard that other callers may use; we don't currently invoke it here.
+void requireWorkspaceMember
 
 // ───────────────────────────────────────────────────────────────────────
 // Accept invite (called from /invites/[token] page or Server Action)
@@ -231,8 +455,8 @@ export async function acceptInvite(
 // ───────────────────────────────────────────────────────────────────────
 
 const RemoveInput = z.object({
-  workspaceId: z.string().uuid(),
-  userId: z.string().uuid(),
+  workspaceId: uuidLike,
+  userId: uuidLike,
 })
 
 export async function removeMember(
@@ -276,8 +500,8 @@ export async function removeMember(
 // ───────────────────────────────────────────────────────────────────────
 
 const ChangeRoleInput = z.object({
-  workspaceId: z.string().uuid(),
-  userId: z.string().uuid(),
+  workspaceId: uuidLike,
+  userId: uuidLike,
   role: ROLE,
 })
 
