@@ -9,6 +9,8 @@ import {
   resendInvite,
   revokeInvite,
 } from '@/lib/actions/membership'
+import type { UserTrust } from '@/lib/queries/trust-consensus'
+import { TrustBadge } from '@/components/quality/trust-badge'
 
 /**
  * Client-side membership management UI.
@@ -55,6 +57,7 @@ export function MembersClient({
   isAdmin,
   members,
   pendingInvites,
+  trustByUserId,
 }: {
   workspaceId: string
   workspaceCreatorId: string
@@ -62,6 +65,7 @@ export function MembersClient({
   isAdmin: boolean
   members: Member[]
   pendingInvites: PendingInvite[]
+  trustByUserId: Record<string, UserTrust>
 }) {
   return (
     <div className="space-y-10">
@@ -92,6 +96,7 @@ export function MembersClient({
               <tr>
                 <th className="text-left p-3">member</th>
                 <th className="text-left p-3">role</th>
+                <th className="text-left p-3">trust</th>
                 <th className="text-left p-3">joined</th>
                 <th className="text-right p-3"></th>
               </tr>
@@ -105,6 +110,7 @@ export function MembersClient({
                   isAdmin={isAdmin}
                   isMe={m.userId === myUserId}
                   isCreator={m.userId === workspaceCreatorId}
+                  trust={trustByUserId[m.userId] ?? null}
                 />
               ))}
             </tbody>
@@ -391,12 +397,14 @@ function MemberRow({
   isAdmin,
   isMe,
   isCreator,
+  trust,
 }: {
   member: Member
   workspaceId: string
   isAdmin: boolean
   isMe: boolean
   isCreator: boolean
+  trust: UserTrust | null
 }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
@@ -500,6 +508,9 @@ function MemberRow({
             <RoleTag role={member.role} />
           )}
         </td>
+        <td className="p-3">
+          <TrustBadge trust={trust} size="md" />
+        </td>
         <td className="p-3 mono" style={{ color: 'var(--mute2)', fontSize: 12 }}>
           {member.joinedAt.toISOString().slice(0, 10)}
         </td>
@@ -525,7 +536,7 @@ function MemberRow({
       </tr>
       {error && (
         <tr>
-          <td colSpan={4} className="px-3 pb-2">
+          <td colSpan={5} className="px-3 pb-2">
             <div
               className="ts-11 mono"
               style={{ color: 'var(--danger)' }}

@@ -397,6 +397,56 @@ html[data-lang="zh"] .lh-h4 { letter-spacing: 0.005em; }
   .app-light .right-pane { border-left: 0; border-top: 1px solid var(--line); }
 }
 
+/* ── trajectory annotator layouts ────────────────────────────────────────
+   Three breakpoints because the annotator runs full-bleed and has
+   real screen real estate to lose:
+     ≥1280px  — full 3-pane (step list / detail / rubric panel)
+     1100-1279— shrink sidebars; both panes stay visible
+     <1100px  — collapse step list to a top strip, rubric drops below detail
+   We deliberately don't drop sidebars on first narrowing because the
+   step list is how you NAVIGATE — losing it forces back-button workflow.
+*/
+.app-light .annot-standard {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr) 380px;
+  grid-template-rows: 1fr;
+}
+@media (max-width: 1279px) {
+  .app-light .annot-standard {
+    grid-template-columns: 240px minmax(0, 1fr) 340px;
+  }
+}
+@media (max-width: 1099px) {
+  .app-light .annot-standard {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+  .app-light .annot-standard .annot-steps { max-height: 240px; }
+  .app-light .annot-standard .annot-rubric { max-height: 60vh; }
+}
+
+.app-light .annot-compare {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 380px;
+}
+@media (max-width: 1279px) {
+  .app-light .annot-compare {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 340px;
+  }
+}
+@media (max-width: 1099px) {
+  .app-light .annot-compare {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
+  }
+}
+
+/* "Best on desktop" advisory — surfaced only at very narrow viewports */
+.app-light .annot-narrow-hint { display: none; }
+@media (max-width: 899px) {
+  .app-light .annot-narrow-hint { display: block; }
+}
+
 .app-light .left-pane  { background: var(--bg); display: flex; flex-direction: column; min-height: 100vh; max-height: 100vh; }
 .app-light .right-pane { background: var(--panel2); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 100vh; max-height: 100vh; }
 

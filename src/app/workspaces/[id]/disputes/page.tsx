@@ -7,9 +7,14 @@ import {
   listTopDisputes,
   type RaterMark,
 } from '@/lib/queries/iaa'
+import {
+  getWorkspaceTrustScores,
+  type UserTrust,
+} from '@/lib/queries/trust-consensus'
 import { listRecentPatches } from '@/lib/actions/guideline-refiner'
 import { RefinerActionClient } from '@/components/disputes/refiner-action-client'
 import { PatchActionsClient } from '@/components/disputes/patch-actions-client'
+import { TrustBadge } from '@/components/quality/trust-badge'
 
 export const metadata: Metadata = {
   title: 'Disputes — LabelHub',
@@ -36,16 +41,22 @@ export default async function DisputesPage(
   let summary: Awaited<ReturnType<typeof getWorkspaceIaaSummary>> | null = null
   let disputes: Awaited<ReturnType<typeof listTopDisputes>> = []
   let patches: Awaited<ReturnType<typeof listRecentPatches>> = []
+  let trustByUserId: Record<string, UserTrust> = {}
 
   try {
     const workspace = await getWorkspaceById(workspaceId)
     if (!workspace) notFound()
     workspaceName = workspace.name
-    ;[summary, disputes, patches] = await Promise.all([
+    const [s, d, p, trustList] = await Promise.all([
       getWorkspaceIaaSummary(workspaceId),
       listTopDisputes({ workspaceId, limit: 20 }),
       listRecentPatches(workspaceId, 20),
+      getWorkspaceTrustScores(workspaceId).catch(() => [] as UserTrust[]),
     ])
+    summary = s
+    disputes = d
+    patches = p
+    for (const t of trustList) trustByUserId[t.userId] = t
   } catch (e) {
     dbError = e instanceof Error ? e.message : String(e)
   }
@@ -84,7 +95,11 @@ export default async function DisputesPage(
                 <EmptyDisputes />
               ) : (
                 <>
-                  <DisputeList workspaceId={workspaceId} disputes={disputes} />
+                  <DisputeList
+                    workspaceId={workspaceId}
+                    disputes={disputes}
+                    trustByUserId={trustByUserId}
+                  />
                   {demoMode && hasAnthropicKey && (
                     <div className="mt-4">
                       <RefinerActionClient workspaceId={workspaceId} />
@@ -291,9 +306,11 @@ function Tile({
 function DisputeList({
   workspaceId,
   disputes,
+  trustByUserId,
 }: {
   workspaceId: string
   disputes: Awaited<ReturnType<typeof listTopDisputes>>
+  trustByUserId: Record<string, UserTrust>
 }) {
   return (
     <ul className="flex flex-col gap-3">
@@ -324,7 +341,7 @@ function DisputeList({
               step {d.trajectoryStepId.slice(0, 8)}…
             </span>
           </div>
-          <RaterTable raters={d.raters} />
+          <RaterTable raters={d.raters} trustByUserId={trustByUserId} />
         </li>
       ))}
     </ul>
@@ -364,7 +381,13 @@ function SpreadChip({ spread }: { spread: number }) {
   )
 }
 
-function RaterTable({ raters }: { raters: RaterMark[] }) {
+function RaterTable({
+  raters,
+  trustByUserId,
+}: {
+  raters: RaterMark[]
+  trustByUserId: Record<string, UserTrust>
+}) {
   return (
     <ul className="flex flex-col gap-1.5">
       {raters.map((r) => {
@@ -376,17 +399,21 @@ function RaterTable({ raters }: { raters: RaterMark[] }) {
               : r.rating === 1
                 ? { t: '✗ wrong', c: 'var(--danger)' }
                 : { t: '?', c: 'var(--mute)' }
+        const trust = trustByUserId[r.userId] ?? null
         return (
           <li key={r.userId} className="ts-13 flex items-start gap-2 flex-wrap">
             <span
-              className="mono"
+              className="mono flex items-center gap-1.5"
               style={{
                 color: 'var(--mute2)',
-                minWidth: 110,
+                minWidth: 180,
                 flexShrink: 0,
               }}
             >
-              {r.displayName ?? r.userId.slice(0, 8)}
+              <span className="trunc-1" style={{ maxWidth: 110 }}>
+                {r.displayName ?? r.userId.slice(0, 8)}
+              </span>
+              <TrustBadge trust={trust} size="sm" showCounts={false} />
             </span>
             <span
               className="mono"

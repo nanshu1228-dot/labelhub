@@ -7,6 +7,10 @@ import {
   listPendingInvites,
 } from '@/lib/actions/membership'
 import { optionalUser, requireWorkspaceMember } from '@/lib/auth/guards'
+import {
+  getWorkspaceTrustScores,
+  type UserTrust,
+} from '@/lib/queries/trust-consensus'
 import { MembersClient } from '@/components/workspaces/members-client'
 
 export const metadata: Metadata = {
@@ -44,12 +48,19 @@ export default async function MembersPage(
   const { role } = await requireWorkspaceMember(workspaceId)
   const isAdmin = role === 'admin' || workspace.adminId === me.id
 
-  const [members, pendingInvites] = await Promise.all([
+  const [members, pendingInvites, trustList] = await Promise.all([
     listWorkspaceMembers(workspaceId),
     isAdmin
       ? listPendingInvites(workspaceId).catch(() => [])
       : Promise.resolve([]),
+    getWorkspaceTrustScores(workspaceId).catch(() => [] as UserTrust[]),
   ])
+
+  // Serialize the trust list into a plain {userId → UserTrust} record so the
+  // client component receives it as a serializable prop. Members who don't
+  // appear in this map have no annotation history yet.
+  const trustByUserId: Record<string, UserTrust> = {}
+  for (const t of trustList) trustByUserId[t.userId] = t
 
   return (
     <div className="app-light min-h-screen" style={{ background: 'var(--bg)' }}>
@@ -98,6 +109,7 @@ export default async function MembersPage(
           isAdmin={isAdmin}
           members={members}
           pendingInvites={pendingInvites}
+          trustByUserId={trustByUserId}
         />
       </main>
     </div>

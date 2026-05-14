@@ -56,14 +56,9 @@ export function StandardLayout({
   const step = trajectory.steps[selectedIdx]
 
   return (
-    <div
-      className="grid flex-1 min-h-0"
-      style={{
-        gridTemplateColumns: '280px minmax(0, 1fr) 380px',
-      }}
-    >
+    <div className="annot-standard flex-1 min-h-0">
       <aside
-        className="flex flex-col min-h-0 hairline-r"
+        className="annot-steps scroll flex flex-col min-h-0 hairline-r"
         style={{ background: 'var(--panel)' }}
       >
         <div className="px-4 py-3 hairline-b">
@@ -88,6 +83,17 @@ export function StandardLayout({
         className="scroll min-h-0"
         style={{ background: 'var(--bg)' }}
       >
+        <div
+          className="annot-narrow-hint mono ts-11 px-4 py-2 hairline-b"
+          style={{
+            background: 'var(--warn-soft)',
+            color: 'var(--warn)',
+            borderBottomColor: 'oklch(0.7 0.14 75 / 0.4)',
+          }}
+        >
+          ⚠ best on a desktop — narrow screens stack the panels and lose
+          parallel context.
+        </div>
         {step ? (
           <StepDetail step={step} />
         ) : (
@@ -98,7 +104,7 @@ export function StandardLayout({
       </section>
 
       <aside
-        className="scroll min-h-0 hairline-l"
+        className="annot-rubric scroll min-h-0 hairline-l"
         style={{ background: 'var(--panel)' }}
       >
         {step && (

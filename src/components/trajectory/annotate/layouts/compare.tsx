@@ -259,10 +259,7 @@ function SideBySide({
   }
 
   return (
-    <div
-      className="flex-1 min-h-0 grid"
-      style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) 380px' }}
-    >
+    <div className="annot-compare flex-1 min-h-0">
       <Column
         label="A"
         accent="var(--text)"
