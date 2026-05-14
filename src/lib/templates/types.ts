@@ -63,7 +63,19 @@ export const economyConfigSchema = z.object({
     'token',
     'rating-elo',
   ]),
-  currency: z.string().optional(),
+  /**
+   * ISO 4217 fiat code ('USD', 'CNY') OR a stablecoin symbol ('USDT', 'LBH').
+   * Optional only for `volunteer` and `rating-elo` modes where no real money flows.
+   */
+  currency: z.string().min(3).max(8).optional(),
+  /**
+   * Base payout per completed item in MINOR units (cents / fen / 1e-6 USDT etc.).
+   * Used by the billing engine (src/lib/billing/calculate-payout.ts) to compute
+   * the actual payout: baseAmountMinor × qualityMultiplier + bonuses - penalties.
+   *
+   * Required for `cash-per-item` and `token`; optional otherwise.
+   */
+  baseAmountMinor: z.number().int().nonnegative().optional(),
   qualityMultiplierMin: z.number().positive().optional(),
   qualityMultiplierMax: z.number().positive().optional(),
 })

@@ -1,0 +1,238 @@
+'use server'
+
+/**
+ * Admin marks a payout as paid → ledger lands.
+ *
+ * Inputs:
+ *   - payoutId  : the row to mark
+ *   - externalRef: optional payment-provider receipt (Stripe id / chain tx / wire ref)
+ *   - paymentMethodId: optional method that was actually used (for audit)
+ *
+ * Effects:
+ *   1. Flip payouts.status='pending' → 'paid', stamp paid_at
+ *   2. Insert a transactions row of type='earn', positive amount
+ *   3. Rebuild wallet_balance for (user, workspace, currency)
+ *   4. If this was the LAST pending payout in the period, flip the
+ *      period to status='paid' too
+ *   5. Emit event
+ *
+ * NO real payment-provider integration. The action assumes the admin
+ * confirms out-of-band that money moved; we record the fact.
+ *
+ * Reverse action (`reversePayout`) wraps this so a clawback writes a
+ * negative transaction without deleting the audit trail.
+ */
+
+import { z } from 'zod'
+import { and, eq, sql } from 'drizzle-orm'
+import { revalidatePath } from 'next/cache'
+import { getDb } from '@/lib/db/client'
+import {
+  events,
+  payoutPeriods,
+  payouts,
+  transactions,
+  walletBalance,
+} from '@/lib/db/schema'
+import { AppError, NotFoundError } from '@/lib/errors'
+import { uuidLike } from '@/lib/validators/uuid'
+
+function assertDemoMode(): void {
+  if (process.env.LABELHUB_DEMO_MODE !== 'true') {
+    throw new AppError(
+      'DEMO_MODE_DISABLED',
+      'Billing actions require LABELHUB_DEMO_MODE=true while real auth is pending.',
+      403,
+    )
+  }
+}
+
+const inputSchema = z.object({
+  payoutId: uuidLike,
+  externalRef: z.string().max(200).optional(),
+  paymentMethodId: uuidLike.optional(),
+})
+
+export interface MarkPaidResult {
+  ok: true
+  payoutId: string
+  transactionId: string
+  newWalletBalanceMinor: number
+  periodAlsoClosed: boolean
+}
+
+export async function markPayoutPaid(
+  input: z.infer<typeof inputSchema>,
+): Promise<MarkPaidResult> {
+  assertDemoMode()
+  const parsed = inputSchema.parse(input)
+  const db = getDb()
+
+  const [payout] = await db
+    .select()
+    .from(payouts)
+    .where(eq(payouts.id, parsed.payoutId))
+    .limit(1)
+  if (!payout) throw new NotFoundError('Payout')
+
+  if (payout.status === 'paid') {
+    throw new AppError(
+      'ALREADY_PAID',
+      `Payout ${payout.id} is already paid (at ${payout.paidAt?.toISOString() ?? 'unknown'}).`,
+      400,
+    )
+  }
+  if (payout.status === 'reversed') {
+    throw new AppError(
+      'PAYOUT_REVERSED',
+      `Payout ${payout.id} was reversed; cannot mark paid.`,
+      400,
+    )
+  }
+
+  const [periodRow] = await db
+    .select({ workspaceId: payoutPeriods.workspaceId })
+    .from(payoutPeriods)
+    .where(eq(payoutPeriods.id, payout.payoutPeriodId))
+    .limit(1)
+  if (!periodRow) throw new NotFoundError('Payout period')
+
+  // ── 1. Flip payout → paid ─────────────────────────────────────────
+  await db
+    .update(payouts)
+    .set({
+      status: 'paid',
+      paidAt: new Date(),
+      externalRef: parsed.externalRef ?? null,
+      paymentMethodId: parsed.paymentMethodId ?? payout.paymentMethodId ?? null,
+    })
+    .where(eq(payouts.id, payout.id))
+
+  // ── 2. Append 'earn' transaction ─────────────────────────────────
+  const [txn] = await db
+    .insert(transactions)
+    .values({
+      userId: payout.userId,
+      type: 'earn',
+      amountMinor: payout.amountMinor, // positive — annotator earned this
+      currency: payout.currency,
+      workspaceId: periodRow.workspaceId,
+      refTable: 'payouts',
+      refId: payout.id,
+      memo: `Payout from period ${payout.payoutPeriodId.slice(0, 8)}…`,
+    })
+    .returning({ id: transactions.id })
+
+  // ── 3. Rebuild wallet for (user × workspace × currency) ───────────
+  const newBalance = await rebuildWallet({
+    userId: payout.userId,
+    workspaceId: periodRow.workspaceId,
+    currency: payout.currency,
+  })
+
+  // ── 4. Period also paid? ──────────────────────────────────────────
+  const [{ remaining }] = await db
+    .select({
+      remaining: sql<number>`count(*) filter (where status != 'paid' and status != 'reversed')::int`,
+    })
+    .from(payouts)
+    .where(eq(payouts.payoutPeriodId, payout.payoutPeriodId))
+  const periodAlsoClosed = Number(remaining) === 0
+  if (periodAlsoClosed) {
+    await db
+      .update(payoutPeriods)
+      .set({ status: 'paid', paidAt: new Date() })
+      .where(eq(payoutPeriods.id, payout.payoutPeriodId))
+  }
+
+  // ── 5. Event + revalidate ────────────────────────────────────────
+  await db.insert(events).values({
+    type: 'payout.paid',
+    workspaceId: periodRow.workspaceId,
+    actorId: null,
+    payload: {
+      payoutId: payout.id,
+      transactionId: txn.id,
+      amountMinor: payout.amountMinor,
+      currency: payout.currency,
+      externalRef: parsed.externalRef ?? null,
+      periodAlsoClosed,
+    },
+  })
+
+  try {
+    revalidatePath(`/workspaces/${periodRow.workspaceId}/billing`)
+    revalidatePath(`/my/earnings`)
+  } catch {
+    /* outside request context */
+  }
+
+  return {
+    ok: true,
+    payoutId: payout.id,
+    transactionId: txn.id,
+    newWalletBalanceMinor: newBalance,
+    periodAlsoClosed,
+  }
+}
+
+// ─── Wallet rebuild helper ──────────────────────────────────────────────
+
+/**
+ * Re-derive a single wallet row by summing the user's transactions for
+ * the (workspace × currency) slice. Cheap because we have indexed scans
+ * on (user_id, ts). Upserts the wallet_balance row.
+ */
+export async function rebuildWallet(opts: {
+  userId: string
+  workspaceId: string
+  currency: string
+}): Promise<number> {
+  const db = getDb()
+  const [{ balance }] = await db
+    .select({
+      balance: sql<number>`coalesce(sum(${transactions.amountMinor}), 0)::int`,
+    })
+    .from(transactions)
+    .where(
+      and(
+        eq(transactions.userId, opts.userId),
+        eq(transactions.workspaceId, opts.workspaceId),
+        eq(transactions.currency, opts.currency),
+      ),
+    )
+
+  const balanceMinor = Number(balance)
+
+  // Upsert by (user, workspace, currency).
+  const [existing] = await db
+    .select({ id: walletBalance.id })
+    .from(walletBalance)
+    .where(
+      and(
+        eq(walletBalance.userId, opts.userId),
+        eq(walletBalance.workspaceId, opts.workspaceId),
+        eq(walletBalance.currency, opts.currency),
+      ),
+    )
+    .limit(1)
+
+  if (existing) {
+    await db
+      .update(walletBalance)
+      .set({ balanceMinor, lastSettledAt: new Date() })
+      .where(eq(walletBalance.id, existing.id))
+  } else {
+    await db
+      .insert(walletBalance)
+      .values({
+        userId: opts.userId,
+        workspaceId: opts.workspaceId,
+        currency: opts.currency,
+        balanceMinor,
+        lastSettledAt: new Date(),
+      })
+  }
+
+  return balanceMinor
+}
