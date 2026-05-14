@@ -36,16 +36,7 @@ import {
 } from '@/lib/db/schema'
 import { AppError, NotFoundError } from '@/lib/errors'
 import { uuidLike } from '@/lib/validators/uuid'
-
-function assertDemoMode(): void {
-  if (process.env.LABELHUB_DEMO_MODE !== 'true') {
-    throw new AppError(
-      'DEMO_MODE_DISABLED',
-      'Billing actions require LABELHUB_DEMO_MODE=true while real auth is pending.',
-      403,
-    )
-  }
-}
+import { requireWorkspaceAdmin } from '@/lib/auth/guards'
 
 const inputSchema = z.object({
   payoutId: uuidLike,
@@ -64,7 +55,6 @@ export interface MarkPaidResult {
 export async function markPayoutPaid(
   input: z.infer<typeof inputSchema>,
 ): Promise<MarkPaidResult> {
-  assertDemoMode()
   const parsed = inputSchema.parse(input)
   const db = getDb()
 
@@ -96,6 +86,10 @@ export async function markPayoutPaid(
     .where(eq(payoutPeriods.id, payout.payoutPeriodId))
     .limit(1)
   if (!periodRow) throw new NotFoundError('Payout period')
+
+  // Marking paid is admin-only. Authorize against the workspace we just
+  // resolved (admin-of-A can't mark a payout in workspace B).
+  const { user: actor } = await requireWorkspaceAdmin(periodRow.workspaceId)
 
   // ── 1. Flip payout → paid ─────────────────────────────────────────
   await db
@@ -149,7 +143,7 @@ export async function markPayoutPaid(
   await db.insert(events).values({
     type: 'payout.paid',
     workspaceId: periodRow.workspaceId,
-    actorId: null,
+    actorId: actor.id,
     payload: {
       payoutId: payout.id,
       transactionId: txn.id,

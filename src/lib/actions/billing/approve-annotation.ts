@@ -14,8 +14,9 @@
  *   5. Upserts a payout_line_items row (one per annotation, by uniq index)
  *   6. Emits a `payout_line_item.created` event
  *
- * Demo-mode-gated like its peers (no real Supabase Auth yet). When auth
- * lands, swap the admin actor check.
+ * Workspace-admin only. We resolve the workspaceId from the annotation
+ * chain BEFORE the auth check so admin-of-A can't approve work in
+ * workspace B.
  *
  * Idempotent: re-running for the same annotation updates the existing
  * line item in place (the annotation_id uniq index makes this safe).
@@ -38,22 +39,13 @@ import {
 } from '@/lib/db/schema'
 import { AppError, NotFoundError } from '@/lib/errors'
 import { uuidLike } from '@/lib/validators/uuid'
+import { requireWorkspaceAdmin } from '@/lib/auth/guards'
 import {
   calculatePayoutLineItem,
   type PayoutCalcResult,
 } from '@/lib/billing/calculate-payout'
 import { economyConfigSchema, type EconomyConfig } from '@/lib/templates/types'
 import { ensureActivePeriod } from '@/lib/billing/active-period'
-
-function assertDemoMode(): void {
-  if (process.env.LABELHUB_DEMO_MODE !== 'true') {
-    throw new AppError(
-      'DEMO_MODE_DISABLED',
-      'Billing actions require LABELHUB_DEMO_MODE=true while real auth is pending.',
-      403,
-    )
-  }
-}
 
 const inputSchema = z.object({
   annotationId: uuidLike,
@@ -76,7 +68,6 @@ export interface ApproveAnnotationResult {
 export async function approveAnnotation(
   input: z.infer<typeof inputSchema>,
 ): Promise<ApproveAnnotationResult> {
-  assertDemoMode()
   const parsed = inputSchema.parse(input)
   const db = getDb()
 
@@ -118,6 +109,11 @@ export async function approveAnnotation(
     .where(eq(tasks.id, topicRow.taskId))
     .limit(1)
   if (!taskRow) throw new NotFoundError('Task')
+
+  // Approving annotations is admin-only. We resolve workspaceId from the
+  // annotation chain first (above) so we can authorize against the correct
+  // workspace — admin-of-A can't approve work in workspace B.
+  const { user: actor } = await requireWorkspaceAdmin(taskRow.workspaceId)
 
   // ── 2. Parse the task's economy config ────────────────────────────
   const economyParse = economyConfigSchema.safeParse(taskRow.rewardConfig)
@@ -208,7 +204,7 @@ export async function approveAnnotation(
   await db.insert(events).values({
     type: created ? 'payout_line_item.created' : 'payout_line_item.updated',
     workspaceId: taskRow.workspaceId,
-    actorId: null,
+    actorId: actor.id,
     payload: {
       payoutLineItemId: lineItemId,
       payoutPeriodId: period.id,

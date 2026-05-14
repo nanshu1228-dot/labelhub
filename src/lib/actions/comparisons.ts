@@ -21,18 +21,7 @@ import { getDb } from '@/lib/db/client'
 import { events, trajectories } from '@/lib/db/schema'
 import { AppError, NotFoundError, ForbiddenError } from '@/lib/errors'
 import { uuidLike } from '@/lib/validators/uuid'
-
-const DEMO_USER_ID = '00000000-0000-0000-0000-000000000001'
-
-function assertDemoMode(): void {
-  if (process.env.LABELHUB_DEMO_MODE !== 'true') {
-    throw new AppError(
-      'DEMO_MODE_DISABLED',
-      'Comparison submit requires LABELHUB_DEMO_MODE=true while real auth is pending.',
-      403,
-    )
-  }
-}
+import { requireWorkspaceMember } from '@/lib/auth/guards'
 
 const winnerSchema = z.enum(['A', 'tie', 'B'])
 
@@ -54,8 +43,15 @@ export interface SubmitComparisonResult {
 export async function submitComparison(
   input: z.infer<typeof inputSchema>,
 ): Promise<SubmitComparisonResult> {
-  assertDemoMode()
   const parsed = inputSchema.parse(input)
+  // Comparison submission is an annotator-level action — admins and
+  // annotators can submit; viewers can't (read-only).
+  const { user, role } = await requireWorkspaceMember(parsed.workspaceId)
+  if (role === 'viewer') {
+    throw new ForbiddenError(
+      'Viewers cannot submit comparisons. Ask an admin to upgrade your role.',
+    )
+  }
   const db = getDb()
 
   if (parsed.trajectoryAId === parsed.trajectoryBId) {
@@ -94,7 +90,7 @@ export async function submitComparison(
     .values({
       type: 'comparison.submitted',
       workspaceId: parsed.workspaceId,
-      actorId: DEMO_USER_ID,
+      actorId: user.id,
       payload: {
         trajectoryAId: parsed.trajectoryAId,
         trajectoryBId: parsed.trajectoryBId,
@@ -111,11 +107,6 @@ export async function submitComparison(
   } catch {
     /* outside request context */
   }
-
-  // We don't want submitted comparisons to silently disappear if
-  // ForbiddenError ever gets re-introduced — emit explicitly via the
-  // result rather than via a thrown exception path.
-  void ForbiddenError
 
   return {
     ok: true,

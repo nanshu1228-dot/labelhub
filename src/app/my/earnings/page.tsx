@@ -1,4 +1,6 @@
 import type { Metadata } from 'next'
+import { redirect } from 'next/navigation'
+import { optionalUser } from '@/lib/auth/guards'
 import { getMyEarnings } from '@/lib/queries/billing'
 import { EarningsDashboard } from '@/components/billing/earnings-dashboard'
 
@@ -19,12 +21,14 @@ export const dynamic = 'force-dynamic'
  *   - Ledger (last 30 transactions)
  *   - Payment methods + add/remove/set-default UI
  *
- * Demo mode: always acts as the seeded DEMO_USER_ID. Once real auth lands
- * this becomes `await requireUser()` + use the returned user.id.
+ * Authenticated-only: earnings are personal financial data. Unauth visitors
+ * get bounced to /signin with a return-to-here next param.
  */
-const DEMO_USER_ID = '00000000-0000-0000-0000-000000000001'
-
 export default async function MyEarningsPage() {
-  const data = await getMyEarnings(DEMO_USER_ID)
-  return <EarningsDashboard data={data} userId={DEMO_USER_ID} />
+  const me = await optionalUser()
+  if (!me) {
+    redirect('/signin?next=/my/earnings')
+  }
+  const data = await getMyEarnings(me.id)
+  return <EarningsDashboard data={data} userId={me.id} />
 }

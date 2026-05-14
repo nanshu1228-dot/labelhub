@@ -31,19 +31,8 @@ import {
 } from '@/lib/db/schema'
 import { AppError, ForbiddenError, NotFoundError } from '@/lib/errors'
 import { uuidLike } from '@/lib/validators/uuid'
+import { requireWorkspaceMember } from '@/lib/auth/guards'
 import { rebuildWallet } from './mark-paid'
-
-const DEMO_USER_ID = '00000000-0000-0000-0000-000000000001'
-
-function assertDemoMode(): void {
-  if (process.env.LABELHUB_DEMO_MODE !== 'true') {
-    throw new AppError(
-      'DEMO_MODE_DISABLED',
-      'Billing actions require LABELHUB_DEMO_MODE=true while real auth is pending.',
-      403,
-    )
-  }
-}
 
 // Minimum withdrawal — prevents dust-attack transfers and matches my
 // design recommendation. Bumpable later via workspace settings.
@@ -69,10 +58,17 @@ export interface RequestWithdrawResult {
 export async function requestWithdraw(
   input: z.infer<typeof inputSchema>,
 ): Promise<RequestWithdrawResult> {
-  assertDemoMode()
   const parsed = inputSchema.parse(input)
-  // For demo: actor is always the seeded demo user. Real flow uses requireUser().
-  const userId = DEMO_USER_ID
+  // Withdrawing is annotator-self (or admin-self). Viewers can't receive
+  // payouts — they're read-only collaborators. Use requireWorkspaceMember
+  // so we both authenticate the user AND bind them to this workspace.
+  const { user, role } = await requireWorkspaceMember(parsed.workspaceId)
+  if (role === 'viewer') {
+    throw new ForbiddenError(
+      'Viewers cannot withdraw earnings from this workspace.',
+    )
+  }
+  const userId = user.id
   const db = getDb()
 
   if (parsed.amountMinor < MIN_WITHDRAW_MINOR) {

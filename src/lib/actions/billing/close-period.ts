@@ -18,7 +18,7 @@
  * Idempotency: re-running close() on an already-closed period is a no-op
  * with a clear error code so admin tooling can render "already closed".
  *
- * Admin-only (token-gated for demo; real `requireWorkspaceAdmin` when auth lands).
+ * Admin-only — `requireWorkspaceAdmin` gates entry.
  */
 
 import { z } from 'zod'
@@ -33,16 +33,7 @@ import {
 } from '@/lib/db/schema'
 import { AppError, NotFoundError } from '@/lib/errors'
 import { uuidLike } from '@/lib/validators/uuid'
-
-function assertDemoMode(): void {
-  if (process.env.LABELHUB_DEMO_MODE !== 'true') {
-    throw new AppError(
-      'DEMO_MODE_DISABLED',
-      'Billing actions require LABELHUB_DEMO_MODE=true while real auth is pending.',
-      403,
-    )
-  }
-}
+import { requireWorkspaceAdmin } from '@/lib/auth/guards'
 
 const inputSchema = z.object({
   workspaceId: uuidLike,
@@ -67,8 +58,8 @@ export interface ClosePeriodResult {
 export async function closePayoutPeriod(
   input: z.infer<typeof inputSchema>,
 ): Promise<ClosePeriodResult> {
-  assertDemoMode()
   const parsed = inputSchema.parse(input)
+  const { user: actor } = await requireWorkspaceAdmin(parsed.workspaceId)
   const db = getDb()
 
   // ── 1. Resolve the period to close ─────────────────────────────────
@@ -167,7 +158,7 @@ export async function closePayoutPeriod(
   await db.insert(events).values({
     type: 'payout_period.closed',
     workspaceId: parsed.workspaceId,
-    actorId: null,
+    actorId: actor.id,
     payload: {
       payoutPeriodId: periodRow.id,
       payoutCount: insertable.length,

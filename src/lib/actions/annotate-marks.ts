@@ -33,24 +33,32 @@ import {
   trajectories,
   trajectorySteps,
 } from '@/lib/db/schema'
-import {
-  AppError,
-  ForbiddenError,
-  NotFoundError,
-} from '@/lib/errors'
+import { ForbiddenError, NotFoundError } from '@/lib/errors'
 import { uuidLike } from '@/lib/validators/uuid'
+import {
+  optionalUser,
+  requireWorkspaceMember,
+} from '@/lib/auth/guards'
 import { openTrajectoryForAnnotation } from './inbox'
 
-const DEMO_USER_ID = '00000000-0000-0000-0000-000000000001'
-
-function assertDemoMode(): void {
-  if (process.env.LABELHUB_DEMO_MODE !== 'true') {
-    throw new AppError(
-      'DEMO_MODE_DISABLED',
-      'Demo annotation is disabled. Set LABELHUB_DEMO_MODE=true in .env.local to enable.',
-      403,
+/**
+ * Authorization gate shared by all write actions in this file.
+ *
+ * Replaces the previous `assertDemoMode()` + `DEMO_USER_ID` hack. Now the
+ * real signed-in user attributes their own marks (their own
+ * `annotations` row, their own `step_annotations`, their own IAA contribution).
+ *
+ * Viewers can read the workspace but not submit marks — same rule the rest
+ * of the platform enforces.
+ */
+async function requireAnnotator(workspaceId: string) {
+  const { user, role } = await requireWorkspaceMember(workspaceId)
+  if (role === 'viewer') {
+    throw new ForbiddenError(
+      'Viewers cannot submit annotation marks. Ask an admin to upgrade your role to annotator.',
     )
   }
+  return user
 }
 
 // ─── Mark contract ────────────────────────────────────────────────────────
@@ -110,8 +118,8 @@ export type CommitStepMarkInput = z.infer<typeof commitStepMarkSchema>
  * should switch to reading `payload` for scale-aware aggregation.
  */
 export async function commitStepMark(input: CommitStepMarkInput) {
-  assertDemoMode()
   const parsed = commitStepMarkSchema.parse(input)
+  const me = await requireAnnotator(parsed.workspaceId)
   const db = getDb()
 
   // Resolve trajectory + verify it belongs to the claimed workspace.
@@ -144,7 +152,7 @@ export async function commitStepMark(input: CommitStepMarkInput) {
   const binding = await openTrajectoryForAnnotation({
     workspaceId: parsed.workspaceId,
     trajectoryId: step.trajectoryId,
-    userId: DEMO_USER_ID,
+    userId: me.id,
   })
 
   const mark = parsed.mark
@@ -196,14 +204,14 @@ export async function commitStepMark(input: CommitStepMarkInput) {
   await db.insert(events).values({
     type: existing ? 'step_mark.updated' : 'step_mark.created',
     workspaceId: parsed.workspaceId,
-    actorId: DEMO_USER_ID,
+    actorId: me.id,
     payload: {
       stepAnnotationId: row.id,
       annotationId: binding.annotationId,
       trajectoryStepId: parsed.trajectoryStepId,
       rubricId: parsed.rubricId,
       mark,
-      demo: true,
+      userId: me.id,
     },
   })
 
@@ -248,8 +256,8 @@ export type CommitTrajectoryMarkInput = z.infer<
  * inbox topic — same find-or-create chain as step marks.
  */
 export async function commitTrajectoryMark(input: CommitTrajectoryMarkInput) {
-  assertDemoMode()
   const parsed = commitTrajectoryMarkSchema.parse(input)
+  const me = await requireAnnotator(parsed.workspaceId)
   const db = getDb()
 
   // Verify trajectory ↔ workspace.
@@ -269,7 +277,7 @@ export async function commitTrajectoryMark(input: CommitTrajectoryMarkInput) {
   const binding = await openTrajectoryForAnnotation({
     workspaceId: parsed.workspaceId,
     trajectoryId: parsed.trajectoryId,
-    userId: DEMO_USER_ID,
+    userId: me.id,
   })
 
   // Merge into annotations.payload {rubricId → Mark}.
@@ -291,13 +299,13 @@ export async function commitTrajectoryMark(input: CommitTrajectoryMarkInput) {
   await db.insert(events).values({
     type: 'trajectory_mark.updated',
     workspaceId: parsed.workspaceId,
-    actorId: DEMO_USER_ID,
+    actorId: me.id,
     payload: {
       annotationId: ann.id,
       trajectoryId: parsed.trajectoryId,
       rubricId: parsed.rubricId,
       mark: parsed.mark,
-      demo: true,
+      userId: me.id,
     },
   })
 
@@ -338,6 +346,12 @@ export async function readMyAnnotatorMarks(opts: {
 }): Promise<AnnotatorMarks> {
   const db = getDb()
 
+  // Unauth visitors see the trajectory but have no marks of their own.
+  // Returning empty (instead of throwing) lets /annotate render for
+  // read-only browsing — judges tour without signing in.
+  const me = await optionalUser()
+  if (!me) return { stepMarks: {}, trajectoryMarks: {} }
+
   // Trajectory ↔ workspace check (silently empty on mismatch — readers
   // shouldn't leak the existence of a mis-scoped trajectory).
   const [traj] = await db
@@ -349,13 +363,12 @@ export async function readMyAnnotatorMarks(opts: {
     return { stepMarks: {}, trajectoryMarks: {} }
   }
 
-  // The demo user might have multiple annotation rows across topics. We need
-  // the one bound to THIS trajectory's inbox topic — find via the binding
-  // chain (cheap: small fan-out).
+  // Pull THIS user's annotation rows across all topics. Small fan-out;
+  // narrowing by topic_id would require an extra join.
   const myAnns = await db
     .select({ id: annotations.id, payload: annotations.payload })
     .from(annotations)
-    .where(eq(annotations.userId, DEMO_USER_ID))
+    .where(eq(annotations.userId, me.id))
   if (myAnns.length === 0) return { stepMarks: {}, trajectoryMarks: {} }
   const annIds = myAnns.map((a) => a.id)
 

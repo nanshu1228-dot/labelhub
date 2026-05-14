@@ -250,6 +250,7 @@ export default async function WorkspacePage(
           label="EVENTS"
           value={stats.eventCount.toString()}
           hint="audit log entries"
+          href={`/workspaces/${id}/activity`}
         />
         <StatTile
           label="EVAL-RUN"
@@ -268,6 +269,12 @@ export default async function WorkspacePage(
           value="↗"
           hint="payout periods + spend"
           href={`/workspaces/${id}/billing`}
+        />
+        <StatTile
+          label="SETTINGS"
+          value="⚙"
+          hint="rename, template info"
+          href={`/workspaces/${id}/settings`}
         />
       </div>
 

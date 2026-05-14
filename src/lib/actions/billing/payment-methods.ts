@@ -12,7 +12,9 @@
  *   - bank: micro-deposit + amount confirmation
  *   - stripe: Connect Express onboarding
  *
- * Demo-mode-gated.
+ * All actions in this file are scoped to the signed-in user — you can only
+ * manage your OWN payment methods. Admins manipulating others' wallets
+ * happens via the markPaid / reverse paths, not here.
  */
 
 import { z } from 'zod'
@@ -22,18 +24,7 @@ import { getDb } from '@/lib/db/client'
 import { paymentMethods } from '@/lib/db/schema'
 import { AppError, NotFoundError } from '@/lib/errors'
 import { uuidLike } from '@/lib/validators/uuid'
-
-const DEMO_USER_ID = '00000000-0000-0000-0000-000000000001'
-
-function assertDemoMode(): void {
-  if (process.env.LABELHUB_DEMO_MODE !== 'true') {
-    throw new AppError(
-      'DEMO_MODE_DISABLED',
-      'Payment-method actions require LABELHUB_DEMO_MODE=true while real auth is pending.',
-      403,
-    )
-  }
-}
+import { requireUser } from '@/lib/auth/guards'
 
 // ─── Validators ──────────────────────────────────────────────────────────
 
@@ -106,11 +97,11 @@ const addSchema = z.object({
 })
 
 export async function addPaymentMethod(input: z.infer<typeof addSchema>) {
-  assertDemoMode()
   const parsed = addSchema.parse(input)
   validateDestination(parsed.type, parsed.destination)
+  const me = await requireUser()
   const db = getDb()
-  const userId = DEMO_USER_ID
+  const userId = me.id
 
   // First method becomes default automatically.
   const existing = await db
@@ -154,10 +145,10 @@ const setDefaultSchema = z.object({ paymentMethodId: uuidLike })
 export async function setDefaultPaymentMethod(
   input: z.infer<typeof setDefaultSchema>,
 ) {
-  assertDemoMode()
   const parsed = setDefaultSchema.parse(input)
+  const me = await requireUser()
   const db = getDb()
-  const userId = DEMO_USER_ID
+  const userId = me.id
 
   const [target] = await db
     .select()
@@ -202,10 +193,10 @@ const removeSchema = z.object({ paymentMethodId: uuidLike })
 export async function removePaymentMethod(
   input: z.infer<typeof removeSchema>,
 ) {
-  assertDemoMode()
   const parsed = removeSchema.parse(input)
+  const me = await requireUser()
   const db = getDb()
-  const userId = DEMO_USER_ID
+  const userId = me.id
 
   const [target] = await db
     .select()

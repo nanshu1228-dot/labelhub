@@ -4,8 +4,9 @@
  * Server Actions for provider connections.
  *
  * All write operations route through here so Vault credentials never touch
- * client JavaScript. Demo-mode gated like the step-annotation actions —
- * production should swap the gate for `requireWorkspaceAdmin`.
+ * client JavaScript. Workspace-admin only — connections control which
+ * upstream LLM the workspace's proxy bearer key talks to, which is a
+ * security boundary.
  */
 
 import { z } from 'zod'
@@ -17,17 +18,8 @@ import {
   enableConnection,
 } from '@/lib/proxy/connections'
 import { getProviderDef } from '@/lib/proxy/provider-registry'
-import { AppError, ValidationError } from '@/lib/errors'
-
-function assertDemoMode() {
-  if (process.env.LABELHUB_DEMO_MODE !== 'true') {
-    throw new AppError(
-      'DEMO_MODE_DISABLED',
-      'Connection management requires LABELHUB_DEMO_MODE=true in this build (production should use workspace-admin auth).',
-      403,
-    )
-  }
-}
+import { ValidationError } from '@/lib/errors'
+import { requireWorkspaceAdmin } from '@/lib/auth/guards'
 
 const createSchema = z.object({
   workspaceId: z.string().uuid(),
@@ -41,13 +33,13 @@ const createSchema = z.object({
 export async function addConnectionDemo(
   input: z.infer<typeof createSchema>,
 ): Promise<{ id: string }> {
-  assertDemoMode()
   const parsed = createSchema.safeParse(input)
   if (!parsed.success) {
     throw new ValidationError(
       parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
     )
   }
+  const { user } = await requireWorkspaceAdmin(parsed.data.workspaceId)
   if (!getProviderDef(parsed.data.providerKind)) {
     throw new ValidationError(`unknown provider_kind: ${parsed.data.providerKind}`)
   }
@@ -58,7 +50,7 @@ export async function addConnectionDemo(
     apiKey: parsed.data.apiKey,
     baseUrl: parsed.data.baseUrl ?? null,
     rateLimitRpm: parsed.data.rateLimitRpm ?? null,
-    createdBy: null,
+    createdBy: user.id,
   })
   try {
     revalidatePath(`/workspaces/${parsed.data.workspaceId}/connections`)
@@ -76,8 +68,8 @@ const idsSchema = z.object({
 export async function disableConnectionDemo(
   input: z.infer<typeof idsSchema>,
 ): Promise<void> {
-  assertDemoMode()
   const parsed = idsSchema.parse(input)
+  await requireWorkspaceAdmin(parsed.workspaceId)
   await disableConnection(parsed)
   try {
     revalidatePath(`/workspaces/${parsed.workspaceId}/connections`)
@@ -89,8 +81,8 @@ export async function disableConnectionDemo(
 export async function enableConnectionDemo(
   input: z.infer<typeof idsSchema>,
 ): Promise<void> {
-  assertDemoMode()
   const parsed = idsSchema.parse(input)
+  await requireWorkspaceAdmin(parsed.workspaceId)
   await enableConnection(parsed)
   try {
     revalidatePath(`/workspaces/${parsed.workspaceId}/connections`)
@@ -102,8 +94,8 @@ export async function enableConnectionDemo(
 export async function deleteConnectionDemo(
   input: z.infer<typeof idsSchema>,
 ): Promise<void> {
-  assertDemoMode()
   const parsed = idsSchema.parse(input)
+  await requireWorkspaceAdmin(parsed.workspaceId)
   await deleteConnection(parsed)
   try {
     revalidatePath(`/workspaces/${parsed.workspaceId}/connections`)
