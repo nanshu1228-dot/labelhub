@@ -13,6 +13,7 @@ import {
 } from '@/lib/queries/trust-consensus'
 import { optionalUser, requireWorkspaceMember } from '@/lib/auth/guards'
 import { listRecentPatches } from '@/lib/actions/guideline-refiner'
+import { isAnyProviderConfigured } from '@/lib/ai/client'
 import { RefinerActionClient } from '@/components/disputes/refiner-action-client'
 import { PatchActionsClient } from '@/components/disputes/patch-actions-client'
 import { TrustBadge } from '@/components/quality/trust-badge'
@@ -75,7 +76,8 @@ export default async function DisputesPage(
   }
 
   const demoMode = process.env.LABELHUB_DEMO_MODE === 'true'
-  const hasAnthropicKey = !!process.env.ANTHROPIC_API_KEY
+  // Any provider counts — the refiner is provider-agnostic.
+  const hasAIProvider = isAnyProviderConfigured()
 
   return (
     <div className="app-light min-h-screen">
@@ -114,19 +116,26 @@ export default async function DisputesPage(
                     trustByUserId={trustByUserId}
                     viewerIsAdmin={isAdmin}
                   />
-                  {demoMode && hasAnthropicKey && (
+                  {demoMode && hasAIProvider && (
                     <div className="mt-4">
                       <RefinerActionClient workspaceId={workspaceId} />
                     </div>
                   )}
-                  {!hasAnthropicKey && (
+                  {!hasAIProvider && (
                     <p
                       className="mt-3 ts-12 mono"
                       style={{ color: 'var(--mute2)' }}
                     >
-                      Set <span style={{ color: 'var(--hi)' }}>
+                      Set any of{' '}
+                      <span style={{ color: 'var(--hi)' }}>
+                        DOUBAO_API_KEY
+                      </span>{' '}
+                      ·{' '}
+                      <span style={{ color: 'var(--hi)' }}>
                         ANTHROPIC_API_KEY
                       </span>{' '}
+                      ·{' '}
+                      <span style={{ color: 'var(--hi)' }}>OPENAI_API_KEY</span>{' '}
                       in env to enable the AI Guideline Refiner.
                     </p>
                   )}

@@ -20,6 +20,7 @@ import {
   trajectories,
 } from '@/lib/db/schema'
 import { proposeGuidelinePatch } from '@/lib/ai/guideline-refiner'
+import { isAnyProviderConfigured } from '@/lib/ai/client'
 import { listTopDisputes } from '@/lib/queries/iaa'
 import { assertWithinDailyAIQuota, logAICall } from '@/lib/ai/quota'
 import { AppError, NotFoundError, ValidationError } from '@/lib/errors'
@@ -56,10 +57,12 @@ export async function refineGuidelinesDemo(
       403,
     )
   }
-  if (!process.env.ANTHROPIC_API_KEY) {
+  // Provider-agnostic — any configured LLM (Doubao, Anthropic, DeepSeek,
+  // Moonshot, Qwen, OpenAI) works. Resolved at chat() time.
+  if (!isAnyProviderConfigured()) {
     throw new AppError(
       'AI_NOT_CONFIGURED',
-      'ANTHROPIC_API_KEY missing. The refiner uses Claude Sonnet to draft patches.',
+      'No LLM provider configured. Set one of DOUBAO_API_KEY / ANTHROPIC_API_KEY / OPENAI_API_KEY (etc.) in env.',
       503,
     )
   }

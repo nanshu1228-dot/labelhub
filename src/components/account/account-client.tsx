@@ -182,39 +182,7 @@ function WorkspacesSection({
     <section>
       <div className="lbl mb-3">YOUR WORKSPACES · {workspaces.length}</div>
       {workspaces.length === 0 ? (
-        <div
-          className="rounded-xl p-6 text-center"
-          style={{
-            background: 'var(--panel)',
-            border: '1px dashed var(--line2)',
-          }}
-        >
-          <h3 className="ts-16" style={{ color: 'var(--hi)', fontWeight: 500 }}>
-            You&apos;re not in any workspaces yet
-          </h3>
-          <p
-            className="ts-13 mt-2 mx-auto"
-            style={{ color: 'var(--mute)', maxWidth: 380 }}
-          >
-            Create a new one, or accept an invite from a teammate.
-          </p>
-          <Link
-            href="/workspaces/new"
-            className="lh-btn inline-flex mt-4"
-            style={{
-              background: 'var(--accent)',
-              color: 'white',
-              border: '1px solid var(--accent)',
-              borderRadius: 6,
-              padding: '8px 14px',
-              fontSize: 13,
-              fontWeight: 500,
-              textDecoration: 'none',
-            }}
-          >
-            Start a workspace →
-          </Link>
-        </div>
+        <EmptyWorkspacesState />
       ) : (
         <div className="space-y-2">
           {workspaces.map((w) => (
@@ -252,6 +220,119 @@ function WorkspacesSection({
         </div>
       )}
     </section>
+  )
+}
+
+/**
+ * First-time empty state. Two cards side-by-side:
+ *   1. "Tour the demo workspace" — links straight to the seeded org so
+ *      a brand-new user can see what the product DOES before committing
+ *      to creating their own. Read-only-friendly: the dashboard renders
+ *      for non-members. Mutations gate on role at the server.
+ *   2. "Start your own" — the original CTA, slightly smaller / secondary.
+ *
+ * Demo workspace id is hardcoded — it's the one seed-rich-demo populates.
+ * If the seed changes, update the constant in both places.
+ */
+const DEMO_WORKSPACE_ID = '00000000-0000-0000-0000-000000000010'
+
+function EmptyWorkspacesState() {
+  return (
+    <div
+      className="rounded-xl p-6"
+      style={{
+        background: 'var(--panel)',
+        border: '1px dashed var(--line2)',
+      }}
+    >
+      <h3
+        className="ts-16 text-center"
+        style={{ color: 'var(--hi)', fontWeight: 500 }}
+      >
+        You&apos;re not in any workspaces yet
+      </h3>
+      <p
+        className="ts-13 mt-2 mx-auto text-center"
+        style={{ color: 'var(--mute)', maxWidth: 440 }}
+      >
+        Two ways in: tour the demo to see what LabelHub does, or stand up
+        your own workspace and invite teammates.
+      </p>
+      <div
+        className="grid gap-3 mt-5"
+        style={{
+          gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+          maxWidth: 720,
+          margin: '20px auto 0',
+        }}
+      >
+        <OnboardingCard
+          tag="RECOMMENDED"
+          title="Tour the demo workspace"
+          body="30 trajectories, 3 raters, real disputes + gold standards already wired. Click around and see how the pieces fit."
+          href={`/workspaces/${DEMO_WORKSPACE_ID}`}
+          accent
+        />
+        <OnboardingCard
+          tag="OPTIONAL"
+          title="Start your own workspace"
+          body="Create an empty workspace, capture your first agent run through the proxy, then invite teammates to rate."
+          href="/workspaces/new"
+        />
+      </div>
+    </div>
+  )
+}
+
+function OnboardingCard({
+  tag,
+  title,
+  body,
+  href,
+  accent,
+}: {
+  tag: string
+  title: string
+  body: string
+  href: string
+  accent?: boolean
+}) {
+  return (
+    <Link
+      href={href as `/${string}`}
+      className="block rounded-lg p-4"
+      style={{
+        background: accent ? 'var(--accent-soft)' : 'var(--bg)',
+        border: `1px solid ${accent ? 'var(--accent-line)' : 'var(--line)'}`,
+        textDecoration: 'none',
+        transition: 'border-color 120ms, transform 120ms',
+      }}
+    >
+      <div
+        className="lbl"
+        style={{
+          color: accent ? 'var(--accent)' : 'var(--mute2)',
+          letterSpacing: '0.05em',
+        }}
+      >
+        {tag}
+      </div>
+      <div
+        className="ts-14 mt-1"
+        style={{
+          color: 'var(--hi)',
+          fontWeight: 500,
+        }}
+      >
+        {title} <span style={{ color: 'var(--mute2)' }}>→</span>
+      </div>
+      <p
+        className="ts-12 mt-1.5"
+        style={{ color: 'var(--mute)', lineHeight: 1.5 }}
+      >
+        {body}
+      </p>
+    </Link>
   )
 }
 

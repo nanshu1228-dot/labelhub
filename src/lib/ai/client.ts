@@ -183,6 +183,23 @@ const SUPPORTS_JSON_MODE: Record<Exclude<ProviderKind, 'anthropic'>, boolean> = 
  */
 let _resolvedProvider: ProviderKind | null = null
 
+/**
+ * Cheap check: does ANY known provider have its key set?
+ *
+ * Useful for UI surfaces that want to render "AI feature unavailable —
+ * set a provider key" without trying the call. Doesn't throw, doesn't
+ * cache (env may change in dev), and ignores whichever provider was
+ * explicitly pinned via `AI_DEFAULT_PROVIDER` — the question is
+ * "could the call work at all?" not "is the preferred provider ready?"
+ */
+export function isAnyProviderConfigured(): boolean {
+  for (const p of Object.values(ENV_KEY_FOR)) {
+    const v = process.env[p]
+    if (v && v.trim().length > 0) return true
+  }
+  return false
+}
+
 export function resolveDefaultProvider(): ProviderKind {
   if (_resolvedProvider) return _resolvedProvider
 
