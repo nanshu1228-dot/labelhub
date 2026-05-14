@@ -140,6 +140,39 @@ export async function listWorkspaceGoldStandards(
 }
 
 /**
+ * Cheap id-only set for "is this trajectory a gold?" badges on list views.
+ *
+ * Skips the heavy payload+promoter joins that `listWorkspaceGoldStandards`
+ * does — list pages just need the set membership for badge rendering.
+ */
+export async function listGoldTrajectoryIds(
+  workspaceId: string,
+): Promise<Set<string>> {
+  const db = getDb()
+  const taskIds = (
+    await db
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(eq(tasks.workspaceId, workspaceId))
+  ).map((r) => r.id)
+  if (taskIds.length === 0) return new Set()
+
+  const rows = await db
+    .select({ itemData: goldStandards.itemData })
+    .from(goldStandards)
+    .where(inArray(goldStandards.taskId, taskIds))
+
+  const out = new Set<string>()
+  for (const r of rows) {
+    const item = r.itemData as GoldItemData | null
+    if (!item || item.kind !== 'trajectory') continue
+    if (item.workspaceId !== workspaceId) continue
+    out.add(item.trajectoryId)
+  }
+  return out
+}
+
+/**
  * Return the gold (if any) for a specific trajectory.
  *
  * Returns the raw correctAnswer for use by the calibration scorer and the

@@ -4,7 +4,9 @@ import { notFound } from 'next/navigation'
 import { getWorkspaceById } from '@/lib/queries/workspaces'
 import { listTrajectoriesWithStepStats } from '@/lib/queries/trajectories'
 import { listDisputeCountsByTrajectory } from '@/lib/queries/iaa'
+import { listGoldTrajectoryIds } from '@/lib/queries/gold-standards'
 import { TRAJECTORY_SOURCES, type TrajectorySource } from '@/lib/trajectories/schema'
+import { GoldBadge } from '@/components/quality/gold-badge'
 
 export const metadata: Metadata = {
   title: 'Trajectories — LabelHub',
@@ -44,6 +46,7 @@ export default async function TrajectoriesListPage(
   let rows: Awaited<ReturnType<typeof listTrajectoriesWithStepStats>> = []
   let totalBeforeFilters = 0
   let disputeCounts: Map<string, number> = new Map()
+  let goldTrajectoryIds: Set<string> = new Set()
 
   try {
     const workspace = await getWorkspaceById(workspaceId)
@@ -57,11 +60,16 @@ export default async function TrajectoriesListPage(
         return false
       return true
     })
-    // Pull dispute counts for the visible page in one query.
-    disputeCounts = await listDisputeCountsByTrajectory(
-      workspaceId,
-      rows.map((r) => r.id),
-    )
+    // Both dispute counts and gold ids are small id-only queries; fan out.
+    const [dc, gold] = await Promise.all([
+      listDisputeCountsByTrajectory(
+        workspaceId,
+        rows.map((r) => r.id),
+      ),
+      listGoldTrajectoryIds(workspaceId),
+    ])
+    disputeCounts = dc
+    goldTrajectoryIds = gold
   } catch (e) {
     dbError = e instanceof Error ? e.message : String(e)
   }
@@ -117,6 +125,7 @@ export default async function TrajectoriesListPage(
                   workspaceId={workspaceId}
                   row={row}
                   disputeCount={disputeCounts.get(row.id) ?? 0}
+                  isGold={goldTrajectoryIds.has(row.id)}
                 />
               </li>
             ))}
@@ -193,10 +202,12 @@ function TrajectoryRow({
   workspaceId,
   row,
   disputeCount,
+  isGold,
 }: {
   workspaceId: string
   row: Awaited<ReturnType<typeof listTrajectoriesWithStepStats>>[number]
   disputeCount: number
+  isGold: boolean
 }) {
   const created = new Date(row.createdAt)
   const finalPreview = row.finalResponse
@@ -226,6 +237,7 @@ function TrajectoryRow({
         <div className="min-w-0">
           <div className="flex items-center gap-2 mb-1.5 flex-wrap">
             <SourceBadge source={row.source} />
+            {isGold && <GoldBadge size="sm" />}
             {qcReasons.length > 0 && <QcChip reasons={qcReasons} />}
             {disputeCount > 0 && <DisputeChip count={disputeCount} />}
             <span

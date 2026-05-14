@@ -44,6 +44,12 @@ export default async function WorkspacePage(
     markedSteps: 0,
     last: null,
   }
+  let recentEvents: Array<{
+    id: string
+    type: string
+    ts: Date
+    actorId: string | null
+  }> = []
 
   try {
     const db = getDb()
@@ -130,6 +136,19 @@ export default async function WorkspacePage(
           .orderBy(desc(trajectories.createdAt))
           .limit(1),
       ])
+      // Fan out a parallel fetch for the recent-activity panel — 8 events
+      // is enough for "is the workspace alive?" without dragging the page TTI.
+      recentEvents = await db
+        .select({
+          id: events.id,
+          type: events.type,
+          ts: events.ts,
+          actorId: events.actorId,
+        })
+        .from(events)
+        .where(eq(events.workspaceId, id))
+        .orderBy(desc(events.ts))
+        .limit(8)
       stats = {
         trajCount: trajRow?.n ?? 0,
         stepCount: stepRow?.n ?? 0,
@@ -364,6 +383,83 @@ export default async function WorkspacePage(
         </div>
       )}
 
+      {recentEvents.length > 0 && (
+        <div className="mt-10">
+          <div
+            className="lh-mono lh-caption mb-2 flex items-center justify-between"
+            style={{
+              color: 'oklch(0.55 0 0)',
+              letterSpacing: '0.06em',
+            }}
+          >
+            <span>§ RECENT ACTIVITY</span>
+            <Link
+              href={`/workspaces/${id}/activity`}
+              className="lh-mono"
+              style={{
+                color: 'oklch(0.6 0.18 280)',
+                textDecoration: 'none',
+                fontSize: 11,
+              }}
+            >
+              view all →
+            </Link>
+          </div>
+          <ul
+            className="rounded-xl overflow-hidden"
+            style={{
+              background: 'oklch(0.13 0 0)',
+              border: '1px solid oklch(0.22 0 0)',
+            }}
+          >
+            {recentEvents.map((e, idx) => (
+              <li
+                key={e.id}
+                className="flex items-center gap-3 px-4 py-2 lh-mono"
+                style={{
+                  borderTop:
+                    idx === 0 ? 'none' : '1px solid oklch(0.22 0 0)',
+                  fontSize: 12,
+                }}
+              >
+                <span
+                  style={{
+                    color: 'oklch(0.5 0 0)',
+                    width: 130,
+                    flexShrink: 0,
+                  }}
+                  title={e.ts.toISOString()}
+                >
+                  {formatRelativeTime(e.ts)}
+                </span>
+                <span
+                  style={{
+                    color: 'oklch(0.78 0.12 280)',
+                    flex: 1,
+                    minWidth: 0,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {e.type}
+                </span>
+                {!e.actorId && (
+                  <span
+                    style={{
+                      color: 'oklch(0.42 0 0)',
+                      fontSize: 11,
+                    }}
+                  >
+                    system
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div
         className="mt-10 lh-body-sm"
         style={{ color: 'oklch(0.42 0 0)' }}
@@ -375,6 +471,27 @@ export default async function WorkspacePage(
       </div>
     </main>
   )
+}
+
+/**
+ * Compact relative time formatter — "2m ago", "3h ago", "yesterday", "May 14".
+ *
+ * Kept here vs in a shared lib because nothing else in the project needs it
+ * yet, and inlining keeps the dashboard self-contained.
+ */
+function formatRelativeTime(ts: Date): string {
+  const now = Date.now()
+  const diff = now - ts.getTime()
+  const sec = Math.floor(diff / 1000)
+  if (sec < 60) return `${sec}s ago`
+  const min = Math.floor(sec / 60)
+  if (min < 60) return `${min}m ago`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr}h ago`
+  const day = Math.floor(hr / 24)
+  if (day === 1) return 'yesterday'
+  if (day < 7) return `${day}d ago`
+  return ts.toISOString().slice(5, 10).replace('-', '/')
 }
 
 function StatTile({
