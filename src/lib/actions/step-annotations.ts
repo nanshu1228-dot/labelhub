@@ -35,8 +35,9 @@ const addSchema = z.object({
   /** 1-5 Likert, nullable for boolean/categorical kinds */
   rating: z.number().int().min(1).max(5).nullable().optional(),
   reasoning: z.string().min(1).max(4000),
-  /** "Should have been X instead" — replaces / suggests alternative */
-  altSuggestion: z.record(z.string(), z.unknown()).optional(),
+  /** Canonical Mark JSON (or any structured override). Renamed from
+   *  `altSuggestion` on 2026-05-14 to reflect what it actually stores. */
+  payload: z.record(z.string(), z.unknown()).optional(),
 })
 
 export type AddStepAnnotationInput = z.infer<typeof addSchema>
@@ -99,7 +100,7 @@ export async function addStepAnnotation(input: AddStepAnnotationInput) {
       kind: parsed.kind,
       rating: parsed.rating ?? null,
       reasoning: parsed.reasoning,
-      altSuggestion: parsed.altSuggestion ?? null,
+      payload: parsed.payload ?? null,
     })
     .returning()
 

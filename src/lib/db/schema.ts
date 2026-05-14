@@ -408,6 +408,17 @@ export const workspaceApiKeys = pgTable(
     createdBy: uuid('created_by')
       .references(() => users.id)
       .notNull(),
+    /**
+     * Optional per-key RPM cap. NULL = no per-key limit (only the
+     * connection-level limit applies). When set, the proxy enforces
+     * BOTH: connection's limit AND this key's limit, whichever bites
+     * first.
+     *
+     * Lets publishers issue a wide-open key for their own backend +
+     * narrow keys for third-party integrations without having to fork
+     * provider connections.
+     */
+    rateLimitRpm: integer('rate_limit_rpm'),
     lastUsedAt: timestamp('last_used_at'),
     expiresAt: timestamp('expires_at'),
     revokedAt: timestamp('revoked_at'),
@@ -483,6 +494,14 @@ export const providerRateLog = pgTable(
     connectionId: uuid('connection_id')
       .references(() => providerConnections.id)
       .notNull(),
+    /**
+     * Which API key triggered this call. Lets the rate-limiter count by
+     * (connection × key) AND by (key alone), so a runaway third-party key
+     * gets capped without affecting siblings sharing the same connection.
+     * Nullable for forward-compat with old logged rows / non-keyed
+     * call paths (e.g. internal admin scripts).
+     */
+    apiKeyId: uuid('api_key_id').references(() => workspaceApiKeys.id),
     ts: timestamp('ts').defaultNow().notNull(),
     tokensUsed: integer('tokens_used').default(0).notNull(),
   },
@@ -634,8 +653,17 @@ export const stepAnnotations = pgTable(
     /** 1-5 Likert, nullable for boolean / categorical kinds */
     rating: integer('rating'),
     reasoning: text('reasoning').notNull(),
-    /** "This step should have been ..." — replaces / suggests alternative */
-    altSuggestion: jsonb('alt_suggestion'),
+    /**
+     * Canonical Mark JSON ({scale: 'likert' | 'bool' | 'enum' | 'text', value, reason?}).
+     * Source of truth for non-likert marks (bool, enum, text) — `rating` +
+     * `reasoning` are the legacy likert representation kept for back-compat.
+     *
+     * Historical note: this column was originally named `alt_suggestion` (for
+     * "alternative annotator suggestion") before its semantics drifted to
+     * "canonical mark JSON". Renamed in-place via ALTER COLUMN RENAME on
+     * 2026-05-14 — no data lost, no row rewrite, just a clearer name.
+     */
+    payload: jsonb('payload'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (table) => ({

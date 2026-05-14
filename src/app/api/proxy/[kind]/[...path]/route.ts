@@ -25,7 +25,7 @@ import {
   getProviderDef,
   type ProviderDef,
 } from '@/lib/proxy/provider-registry'
-import { recordCallAndCheckRpm } from '@/lib/proxy/rate-limit'
+import { recordCallAndCheckRpm, getApiKeyRpm } from '@/lib/proxy/rate-limit'
 import { injectScopeForFamily } from '@/lib/proxy/inject-scope'
 import { resolveTopicScope } from '@/lib/queries/topic-scope'
 
@@ -146,18 +146,25 @@ export async function POST(
       )
     }
 
-    // ── 5. Rate limit ────────────────────────────────────────────────
+    // ── 5. Rate limit (per-connection + per-API-key) ─────────────────
+    // The connection limit caps the workspace's total spend on this
+    // provider; the per-key limit caps any individual API key (e.g. a
+    // third-party integration we don't fully trust). Both checked off the
+    // same logged row.
     if (conn.connectionId && conn.rateLimitRpm) {
+      const apiKeyRpm = await getApiKeyRpm(auth.apiKeyId)
       const allow = await recordCallAndCheckRpm({
         connectionId: conn.connectionId,
         limit: conn.rateLimitRpm,
+        apiKeyId: auth.apiKeyId,
+        apiKeyLimit: apiKeyRpm,
       })
       if (!allow.ok) {
-        throw new AppError(
-          'RATE_LIMITED',
-          `Workspace exceeded ${conn.rateLimitRpm} req/min for this ${providerDef.label} connection. Retry after ${allow.retryAfterSeconds}s.`,
-          429,
-        )
+        const msg =
+          allow.scope === 'api-key'
+            ? `API key exceeded its own ${apiKeyRpm} req/min cap. Retry after ${allow.retryAfterSeconds}s.`
+            : `Workspace exceeded ${conn.rateLimitRpm} req/min for this ${providerDef.label} connection. Retry after ${allow.retryAfterSeconds}s.`
+        throw new AppError('RATE_LIMITED', msg, 429)
       }
     }
     if (conn.connectionId) {

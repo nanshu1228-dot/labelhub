@@ -13,8 +13,8 @@
  *
  *   2. Canonical Mark storage. The existing schema stores `rating` (int)
  *      + `reasoning` (text). We extend this by writing the discriminated
- *      `Mark` union to the `altSuggestion` jsonb column. Reading prefers
- *      `altSuggestion`, falls back to `rating + reasoning` for legacy rows.
+ *      `Mark` union to the `payload` jsonb column. Reading prefers
+ *      `payload`, falls back to `rating + reasoning` for legacy rows.
  *      No schema migration needed.
  *
  * Demo-mode-gated like its sibling, because real Supabase Auth wiring is
@@ -103,11 +103,11 @@ export type CommitStepMarkInput = z.infer<typeof commitStepMarkSchema>
  *   - `kind`         = rubricId
  *   - `rating`       = mark.value when scale=likert (else null)
  *   - `reasoning`    = mark.reason ?? '' (NOT NULL on the column; empty allowed)
- *   - `altSuggestion`= the full Mark object (canonical, covers all scales)
+ *   - `payload`= the full Mark object (canonical, covers all scales)
  *
  * Why we still write rating/reasoning when scale=likert: keeps the existing
  * IAA query (which reads `rating`) working without changes. New IAA paths
- * should switch to reading `altSuggestion` for scale-aware aggregation.
+ * should switch to reading `payload` for scale-aware aggregation.
  */
 export async function commitStepMark(input: CommitStepMarkInput) {
   assertDemoMode()
@@ -173,7 +173,7 @@ export async function commitStepMark(input: CommitStepMarkInput) {
       .set({
         rating,
         reasoning,
-        altSuggestion: mark,
+        payload: mark,
       })
       .where(eq(stepAnnotations.id, existing.id))
       .returning()
@@ -187,7 +187,7 @@ export async function commitStepMark(input: CommitStepMarkInput) {
         kind: parsed.rubricId,
         rating,
         reasoning,
-        altSuggestion: mark,
+        payload: mark,
       })
       .returning()
     row = created
@@ -323,7 +323,7 @@ export async function commitTrajectoryMark(input: CommitTrajectoryMarkInput) {
  *   trajectoryMarks — { rubricId: Mark }
  *
  * Decoding precedence per row:
- *   - If `altSuggestion` looks like a Mark (has `scale`), trust it as-is.
+ *   - If `payload` looks like a Mark (has `scale`), trust it as-is.
  *   - Else if `rating` is set, synthesize a likert Mark from `rating` + `reasoning`.
  *   - Else skip (row exists but has no value yet).
  */
@@ -381,7 +381,7 @@ export async function readMyAnnotatorMarks(opts: {
   const stepMarks: Record<string, Record<string, MarkLike>> = {}
   let activeAnnIdForTraj: string | null = null
   for (const r of rows) {
-    const mark = decodeMark(r.altSuggestion, r.rating, r.reasoning)
+    const mark = decodeMark(r.payload, r.rating, r.reasoning)
     if (!mark) continue
     const bucket = stepMarks[r.trajectoryStepId] ?? {}
     bucket[r.kind] = mark
@@ -408,12 +408,12 @@ export async function readMyAnnotatorMarks(opts: {
 }
 
 function decodeMark(
-  altSuggestion: unknown,
+  payload: unknown,
   rating: number | null,
   reasoning: string | null,
 ): MarkLike | null {
-  if (altSuggestion && typeof altSuggestion === 'object') {
-    const o = altSuggestion as Record<string, unknown>
+  if (payload && typeof payload === 'object') {
+    const o = payload as Record<string, unknown>
     if (
       o.scale === 'likert' ||
       o.scale === 'bool' ||

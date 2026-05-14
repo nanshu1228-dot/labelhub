@@ -48,8 +48,11 @@ export async function SiteNav() {
             <a href="/workspaces/00000000-0000-0000-0000-000000000010" className="nav-link">
               Demo workspace
             </a>
-            <a href="https://github.com/nanshu1228-dot/labelhub" className="nav-link" target="_blank" rel="noreferrer">
+            <a href="/docs" className="nav-link">
               Docs
+            </a>
+            <a href="https://github.com/nanshu1228-dot/labelhub" className="nav-link" target="_blank" rel="noreferrer">
+              GitHub ↗
             </a>
           </nav>
         </div>

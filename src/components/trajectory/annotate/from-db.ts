@@ -158,7 +158,7 @@ function safeStringify(v: unknown): string {
  *   - `kind` IS the rubric id (e.g. 'tool_choice', 'safety')
  *   - `rating` int holds likert values
  *   - `reasoning` text holds the reason
- *   - `altSuggestion` jsonb is reserved for non-likert payloads (bool / enum /
+ *   - `payload` jsonb is reserved for non-likert payloads (bool / enum /
  *     text) — added in Step 3 when the schema gets a proper `payload` column
  *
  * For Step 2 we round-trip likert marks only. Non-likert marks are stored on
@@ -178,7 +178,7 @@ export function stepMarksFromDb<
     kind: string
     rating: number | null
     reasoning: string | null
-    altSuggestion?: unknown
+    payload?: unknown
   },
 >(
   rows: Readonly<Record<string, Row | Row[]>>,
@@ -199,12 +199,12 @@ export function stepMarksFromDb<
 function rowToMark(row: {
   rating: number | null
   reasoning: string | null
-  altSuggestion?: unknown
+  payload?: unknown
 }): Mark | null {
-  // Future: `altSuggestion` jsonb may hold the full discriminated Mark for
+  // Future: `payload` jsonb may hold the full discriminated Mark for
   // bool / enum / text. Detect & return it as-is when it looks like one.
-  if (row.altSuggestion && typeof row.altSuggestion === 'object') {
-    const obj = row.altSuggestion as Record<string, unknown>
+  if (row.payload && typeof row.payload === 'object') {
+    const obj = row.payload as Record<string, unknown>
     if (
       'scale' in obj &&
       (obj.scale === 'likert' ||
