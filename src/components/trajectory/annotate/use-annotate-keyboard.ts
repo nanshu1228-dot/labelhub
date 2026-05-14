@@ -30,6 +30,7 @@ export interface KeyboardHandlerArgs {
  *
  * Behavior matches the design:
  *   j / k                — prev / next step (skipped when a text input has focus)
+ *   ←/↑  →/↓             — same as j/k (arrow keys for non-vim users)
  *   1 / 3 / 5            — set primary likert on selected step
  *   b                    — toggle bool (safety) on selected step
  *   ?                    — open rubric reference drawer
@@ -91,13 +92,17 @@ export function useAnnotateKeyboard(args: KeyboardHandlerArgs): void {
         args.setShowReference(false)
         return
       }
-      if (e.key === 'j') {
+      // Step navigation — vim-style (j/k) and arrow keys both work.
+      // Arrow keys also prevent default to stop page-scroll hijack.
+      if (e.key === 'j' || e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+        if (e.key !== 'j') e.preventDefault()
         args.setSelectedIdx((i: number) =>
           Math.min(args.steps.length - 1, i + 1),
         )
         return
       }
-      if (e.key === 'k') {
+      if (e.key === 'k' || e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+        if (e.key !== 'k') e.preventDefault()
         args.setSelectedIdx((i: number) => Math.max(0, i - 1))
         return
       }

@@ -17,7 +17,7 @@ export function BottomBar({ mode }: { mode: AnnotateMode }) {
     >
       <div className="flex items-center justify-between px-5 h-9 ts-11 mono">
         <div className="flex items-center gap-3" style={{ color: 'var(--mute2)' }}>
-          <Hint k="j / k" label="prev / next step" />
+          <Hint k="← →  /  j k" label="prev / next step" />
           <Hint k="1 · 3 · 5" label="rate primary likert" />
           <Hint k="b" label="toggle safety" />
           {mode === 'compare' && <Hint k="a · t · b" label="A / tie / B wins" />}
