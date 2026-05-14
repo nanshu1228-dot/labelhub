@@ -556,3 +556,46 @@ html[data-lang="zh"] .lh-h4 { letter-spacing: 0.005em; }
 .docs-foot-line { font-size: 14px; color: oklch(0.62 0 0); }
 .docs-foot-link { color: oklch(0.6 0.18 280); text-decoration: none; }
 .docs-foot-link:hover { color: oklch(0.7 0.18 280); }
+
+/* ── OAuth button + divider on /signin /signup ────────────────────── */
+.auth-oauth-wrap { margin-bottom: 14px; }
+.auth-oauth-btn {
+  width: 100%;
+  height: 40px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: oklch(0.99 0 0);
+  color: oklch(0.13 0 0);
+  border: 1px solid oklch(0.85 0 0);
+  border-radius: 7px;
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms;
+}
+.auth-oauth-btn:hover:not(:disabled) {
+  background: oklch(1 0 0);
+  border-color: oklch(0.72 0 0);
+}
+.auth-oauth-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0 12px;
+  color: oklch(0.55 0 0);
+  font-size: 11px;
+  font-family: var(--font-geist-mono), monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.auth-divider::before, .auth-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: oklch(0.27 0 0);
+}

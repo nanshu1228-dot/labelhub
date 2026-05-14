@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { signIn, signUp } from '@/lib/actions/auth'
+import { GoogleSignInButton } from './google-button'
 
 /**
  * Shared sign-in / sign-up form.
@@ -28,7 +29,11 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
   const searchParams = useSearchParams()
   const next = searchParams.get('next') ?? '/'
   const [isPending, startTransition] = useTransition()
-  const [error, setError] = useState<string | null>(null)
+  // OAuth callback may bounce back here with ?oauth_error=... (Google
+  // consent cancelled, etc.). Surface as a top-of-form notice so the
+  // user sees why they're not signed in.
+  const oauthError = searchParams.get('oauth_error')
+  const [error, setError] = useState<string | null>(oauthError)
   const [info, setInfo] = useState<string | null>(null)
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -105,6 +110,19 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
         <div className="auth-card">
           <h1 className="auth-h1">{headline}</h1>
           <p className="auth-sub">{subhead}</p>
+
+          {/* OAuth primary path — most users prefer this over typing a
+              password. Sits ABOVE the form so it's the default eye-line.
+              Disabled gracefully when GOOGLE OAuth provider isn't
+              configured in the Supabase dashboard — Supabase will return
+              an error which lands in the callback's ?oauth_error path. */}
+          <GoogleSignInButton
+            label={mode === 'signin' ? 'Continue with Google' : 'Sign up with Google'}
+          />
+
+          <div className="auth-divider" role="separator" aria-orientation="horizontal">
+            <span>or</span>
+          </div>
 
           <form onSubmit={onSubmit} className="auth-form" noValidate>
             {mode === 'signup' && (

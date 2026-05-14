@@ -222,10 +222,44 @@ LABELHUB_DEMO_MODE=true                 # opens demo-only Server Actions
 
 Then:
 
-1. Visit `/signup` and create a real account, or
+1. Visit `/signup` and create a real account (email + password OR Google), or
 2. Go straight to `/workspaces/00000000-0000-0000-0000-000000000010` to
    tour the bootstrapped demo (read-only without sign-in, full-edit
    with the demo mode env above).
+
+## Enabling Google sign-in
+
+The button is on `/signin` and `/signup` already — flip it on by configuring
+the provider once in two consoles. Total time: ~10 minutes.
+
+### Google Cloud Console
+
+1. [console.cloud.google.com](https://console.cloud.google.com/) →
+   create or pick a project
+2. **APIs & Services → Credentials → Create credentials → OAuth client ID**
+3. Application type: **Web application**
+4. Authorized redirect URIs (add BOTH):
+   ```
+   https://<your-supabase-project>.supabase.co/auth/v1/callback
+   http://localhost:3000/auth/callback        ← for local dev
+   ```
+5. Copy the **Client ID** + **Client secret**
+
+### Supabase Dashboard
+
+1. **Project Settings → Authentication → Providers → Google → Enable**
+2. Paste the Client ID + Client secret from step 5 above
+3. **Authentication → URL Configuration → Site URL**: your prod URL
+4. **Redirect URLs**: add `https://your-prod-url.com/auth/callback` and
+   `http://localhost:3000/auth/callback`
+
+Save. The "Continue with Google" button now works end-to-end — Supabase
+handles the OAuth code exchange, our `/auth/callback` route picks up the
+session and mirrors the user into `public.users`.
+
+No code changes needed. The button is dark-aware and shows a useful error
+message when the provider isn't configured yet (Supabase returns
+`provider_not_enabled` which lands in `?oauth_error=...`).
 
 ## Scripts
 
