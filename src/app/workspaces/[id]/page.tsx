@@ -259,6 +259,43 @@ export default async function WorkspacePage(
         />
       </div>
 
+      {stats.trajCount === 0 && (
+        <div className="mt-10">
+          <div
+            className="lh-mono lh-caption mb-3"
+            style={{ color: 'oklch(0.6 0.18 280)', letterSpacing: '0.06em' }}
+          >
+            § GET STARTED · 3 STEPS
+          </div>
+          <div
+            className="grid grid-cols-1 md:grid-cols-3 gap-3"
+            style={{ maxWidth: 900 }}
+          >
+            <NextStepCard
+              n={1}
+              done={stats.apiKeyCount > 0}
+              title="Mint a workspace API key"
+              body="Authorize publisher SDK calls + proxy invocations. Run `npm run bootstrap` or hit the API keys page."
+              href={`/workspaces/${id}/api`}
+            />
+            <NextStepCard
+              n={2}
+              done={stats.trajCount > 0}
+              title="Capture your first trajectory"
+              body="Point your agent at /api/proxy/{provider}/* with the API key — every call is captured. Or run an Eval-Run."
+              href={`/workspaces/${id}/eval-runs/new`}
+            />
+            <NextStepCard
+              n={3}
+              done={stats.markedSteps > 0}
+              title="Annotate a captured trace"
+              body="Open the trajectory inspector, click 'Open annotator', score steps with the rubric. Claude pre-annotates."
+              href={`/workspaces/${id}/trajectories`}
+            />
+          </div>
+        </div>
+      )}
+
       {stats.last && (
         <div className="mt-10">
           <div
@@ -366,5 +403,89 @@ function StatTile({
     </Link>
   ) : (
     body
+  )
+}
+
+/**
+ * Onboarding step card — surfaces ONLY on a fresh workspace
+ * (when the user has no captures yet). Once trajectories exist this section
+ * is replaced by the "MOST RECENT CAPTURE" link.
+ *
+ * Each card has its own checkmark when the step is done — a soft signal of
+ * "you're 1/3 through" without a full progress bar.
+ */
+function NextStepCard({
+  n,
+  done,
+  title,
+  body,
+  href,
+}: {
+  n: number
+  done: boolean
+  title: string
+  body: string
+  href: string
+}) {
+  return (
+    <Link
+      href={href}
+      className="block p-5 rounded-xl relative"
+      style={{
+        background: done ? 'oklch(0.5 0.13 150 / 0.06)' : 'oklch(0.155 0 0)',
+        border: done
+          ? '1px solid oklch(0.5 0.13 150 / 0.4)'
+          : '1px solid oklch(0.22 0 0)',
+        textDecoration: 'none',
+        transition: 'border-color 120ms',
+      }}
+    >
+      <div className="flex items-center justify-between mb-2">
+        <div
+          className="lh-mono"
+          style={{
+            color: done ? 'oklch(0.7 0.13 150)' : 'oklch(0.6 0.18 280)',
+            fontSize: 11,
+            letterSpacing: '0.06em',
+          }}
+        >
+          STEP {n} {done ? '· DONE' : ''}
+        </div>
+        <span
+          aria-hidden
+          style={{
+            width: 18,
+            height: 18,
+            borderRadius: '50%',
+            background: done ? 'oklch(0.5 0.13 150)' : 'transparent',
+            border: done
+              ? '1px solid oklch(0.5 0.13 150)'
+              : '1px solid oklch(0.27 0 0)',
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'white',
+            fontSize: 11,
+          }}
+        >
+          {done ? '✓' : ''}
+        </span>
+      </div>
+      <h3
+        className="lh-h4 mb-1"
+        style={{
+          color: 'oklch(0.92 0 0)',
+          fontSize: 15,
+        }}
+      >
+        {title}
+      </h3>
+      <p
+        className="lh-body-sm"
+        style={{ color: 'oklch(0.55 0 0)', lineHeight: 1.5 }}
+      >
+        {body}
+      </p>
+    </Link>
   )
 }

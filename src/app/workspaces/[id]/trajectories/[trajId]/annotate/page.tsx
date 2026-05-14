@@ -1,6 +1,9 @@
 import type { Metadata } from 'next'
 import { after } from 'next/server'
 import { notFound } from 'next/navigation'
+import { count, eq, desc, and, isNull } from 'drizzle-orm'
+import { getDb } from '@/lib/db/client'
+import { trajectories, trajectorySteps } from '@/lib/db/schema'
 import { getWorkspaceById } from '@/lib/queries/workspaces'
 import { getTrajectoryWithSteps } from '@/lib/queries/trajectories'
 import { getTrajectoryIAA } from '@/lib/queries/iaa'
@@ -37,9 +40,12 @@ export const metadata: Metadata = {
  * "Open annotator" CTA on that page links here.
  */
 export default async function TrajectoryAnnotatePage(
-  props: PageProps<'/workspaces/[id]/trajectories/[trajId]/annotate'>,
+  props: PageProps<'/workspaces/[id]/trajectories/[trajId]/annotate'> & {
+    searchParams?: Promise<{ compareWith?: string }>
+  },
 ) {
   const { id: workspaceId, trajId } = await props.params
+  const searchParams = (await props.searchParams) ?? {}
 
   const workspace = await getWorkspaceById(workspaceId)
   if (!workspace) notFound()
@@ -96,6 +102,55 @@ export default async function TrajectoryAnnotatePage(
     })
   }
 
+  // Compare-mode data: list other trajectories in the workspace + optionally
+  // load the one we're comparing against (from ?compareWith=… query param).
+  const db = getDb()
+  const candidateRows = await db
+    .select({
+      id: trajectories.id,
+      agentName: trajectories.agentName,
+      capturedAt: trajectories.createdAt,
+      stepCount: count(trajectorySteps.id),
+    })
+    .from(trajectories)
+    .leftJoin(
+      trajectorySteps,
+      eq(trajectorySteps.trajectoryId, trajectories.id),
+    )
+    .where(
+      and(
+        eq(trajectories.workspaceId, workspaceId),
+        isNull(trajectories.deletedAt),
+      ),
+    )
+    .groupBy(
+      trajectories.id,
+      trajectories.agentName,
+      trajectories.createdAt,
+    )
+    .orderBy(desc(trajectories.createdAt))
+    .limit(50)
+  const candidateTrajectories = candidateRows
+    .filter((r) => r.id !== trajId) // exclude self
+    .map((r) => ({
+      id: r.id,
+      agentName: r.agentName,
+      capturedAt: r.capturedAt as Date | null,
+      stepCount: Number(r.stepCount ?? 0),
+    }))
+
+  let compareWithTrajectory: ReturnType<typeof trajectoryViewFromDb> | null = null
+  if (searchParams.compareWith) {
+    const bundleB = await getTrajectoryWithSteps(searchParams.compareWith)
+    if (bundleB && bundleB.trajectory.workspaceId === workspaceId) {
+      compareWithTrajectory = trajectoryViewFromDb(
+        bundleB.trajectory,
+        bundleB.steps,
+        bundleB.providersById,
+      )
+    }
+  }
+
   return (
     <TrajectoryAnnotator
       workspaceId={workspaceId}
@@ -105,6 +160,8 @@ export default async function TrajectoryAnnotatePage(
       initialTrajectoryMarks={marks.trajectoryMarks}
       peerMarksByStep={peerMarksByStep}
       claudeHintsByStep={claudeHintsByStep}
+      candidateTrajectories={candidateTrajectories}
+      compareWithTrajectory={compareWithTrajectory}
     />
   )
 }

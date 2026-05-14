@@ -10,6 +10,17 @@ export type PickerTemplate = {
   description: string
 }
 
+/**
+ * Which template modes are FULLY-IMPLEMENTED (have working
+ * annotator UI / submit flow / read-side queries). Other modes show
+ * a "Coming in v2" badge and are not selectable.
+ *
+ * Update this set when a mode ships end-to-end — the registry stays
+ * the source of truth for data shapes, this set is the source of
+ * truth for "can the user actually use this mode right now".
+ */
+const SHIPPED_MODES = new Set<TemplateMode>(['agent-trace-eval'])
+
 export function TemplatePicker({ templates }: { templates: PickerTemplate[] }) {
   const [selected, setSelected] = useState<TemplateMode | null>(null)
   const [name, setName] = useState('')
@@ -84,46 +95,65 @@ export function TemplatePicker({ templates }: { templates: PickerTemplate[] }) {
         <div className="mt-12 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
           {templates.map((tpl, i) => {
             const active = selected === tpl.mode
+            const shipped = SHIPPED_MODES.has(tpl.mode)
             return (
               <button
                 key={tpl.mode}
                 type="button"
-                onClick={() => setSelected(tpl.mode)}
-                className="text-left p-6 transition-colors"
+                disabled={!shipped}
+                onClick={() => shipped && setSelected(tpl.mode)}
+                className="text-left p-6 transition-colors relative"
                 style={{
                   borderRadius: 12,
                   border: active
                     ? '1px solid oklch(0.6 0.18 280)'
                     : '1px solid oklch(0.22 0 0)',
-                  background: active ? 'oklch(0.6 0.18 280 / 0.06)' : 'oklch(0.13 0 0)',
-                  cursor: 'pointer',
+                  background: active
+                    ? 'oklch(0.6 0.18 280 / 0.06)'
+                    : 'oklch(0.13 0 0)',
+                  cursor: shipped ? 'pointer' : 'not-allowed',
+                  opacity: shipped ? 1 : 0.45,
                 }}
               >
                 <div className="flex items-center justify-between mb-3">
                   <span className="mode-tag">
                     {String(i + 1).padStart(2, '0')} · {tpl.mode.replace(/-/g, ' ')}
                   </span>
-                  <span
-                    aria-hidden
-                    style={{
-                      width: 16,
-                      height: 16,
-                      borderRadius: '50%',
-                      border: active
-                        ? '4px solid oklch(0.6 0.18 280)'
-                        : '1px solid oklch(0.27 0 0)',
-                      background: active ? 'oklch(0.13 0 0)' : 'transparent',
-                      transition: 'all 150ms',
-                    }}
-                  />
+                  {shipped ? (
+                    <span
+                      aria-hidden
+                      style={{
+                        width: 16,
+                        height: 16,
+                        borderRadius: '50%',
+                        border: active
+                          ? '4px solid oklch(0.6 0.18 280)'
+                          : '1px solid oklch(0.27 0 0)',
+                        background: active ? 'oklch(0.13 0 0)' : 'transparent',
+                        transition: 'all 150ms',
+                      }}
+                    />
+                  ) : (
+                    <span
+                      className="lh-mono lh-caption"
+                      style={{
+                        color: 'oklch(0.62 0 0)',
+                        background: 'oklch(0.22 0 0)',
+                        border: '1px solid oklch(0.27 0 0)',
+                        padding: '2px 8px',
+                        borderRadius: 4,
+                        letterSpacing: '0.04em',
+                      }}
+                      title="Data shape ready; annotator UI ships in v2."
+                    >
+                      v2
+                    </span>
+                  )}
                 </div>
                 <h3 className="lh-h4 mb-2" style={{ color: 'oklch(0.92 0 0)' }}>
                   {tpl.name}
                 </h3>
-                <p
-                  className="lh-body-sm"
-                  style={{ color: 'oklch(0.62 0 0)' }}
-                >
+                <p className="lh-body-sm" style={{ color: 'oklch(0.62 0 0)' }}>
                   {tpl.description}
                 </p>
               </button>

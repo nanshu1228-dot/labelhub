@@ -14,6 +14,8 @@ import {
   listProviders,
   type ProviderDef,
 } from '@/lib/proxy/provider-registry'
+import { resolveTopicScope } from '@/lib/queries/topic-scope'
+import { TopicScopeAdmin } from '@/components/api/topic-scope-admin'
 
 export const metadata: Metadata = {
   title: 'API — LabelHub',
@@ -42,13 +44,14 @@ export default async function ApiManagementPage(
   let keys: Awaited<ReturnType<typeof listApiKeysWithStatus>> = []
   let usage: Awaited<ReturnType<typeof getWorkspaceApiUsage>> | null = null
   let recentLog: Array<typeof apiRequestLog.$inferSelect> = []
+  let topicScope: Awaited<ReturnType<typeof resolveTopicScope>> = null
 
   try {
     const workspace = await getWorkspaceById(workspaceId)
     if (!workspace) notFound()
     workspaceName = workspace.name
     const db = getDb()
-    ;[keys, usage, recentLog] = await Promise.all([
+    ;[keys, usage, recentLog, topicScope] = await Promise.all([
       listApiKeysWithStatus(workspaceId),
       getWorkspaceApiUsage(workspaceId),
       db
@@ -57,6 +60,7 @@ export default async function ApiManagementPage(
         .where(eq(apiRequestLog.workspaceId, workspaceId))
         .orderBy(desc(apiRequestLog.ts))
         .limit(20),
+      resolveTopicScope({ workspaceId }),
     ])
   } catch (e) {
     dbError = e instanceof Error ? e.message : String(e)
@@ -83,6 +87,10 @@ export default async function ApiManagementPage(
         ) : (
           <div className="flex flex-col gap-10">
             <EndpointsSection workspaceId={workspaceId} />
+            <TopicScopeAdmin
+              workspaceId={workspaceId}
+              scope={topicScope}
+            />
             <LimitationsSection />
             <KeysSection keys={keys} />
             <UsageSection usage={usage} />

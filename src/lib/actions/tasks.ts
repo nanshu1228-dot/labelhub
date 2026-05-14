@@ -92,6 +92,39 @@ export async function createTask(input: CreateTaskInput) {
     },
   })
 
+  // Fire-and-forget Layer A guardrail bootstrap. When this is the FIRST task
+  // in the workspace, `autoEnsureScopeForWorkspace` calls Haiku/Doubao to
+  // derive a topic scope from the task description and writes it to
+  // task_topic_scopes. Subsequent task creations short-circuit (scope already
+  // exists).
+  //
+  // We deliberately don't await — if the AI call fails, task creation still
+  // succeeds and the admin can later hit `/workspaces/{id}/api` →
+  // "Generate scope" manually. The function handles its own quota check and
+  // swallows errors per its own contract.
+  //
+  // Imported lazily inside the function so a misconfigured AI provider
+  // doesn't break unrelated task-creation flows on module load.
+  if (parsed.description && parsed.description.trim().length > 0) {
+    void (async () => {
+      try {
+        const { autoEnsureScopeForWorkspace } = await import(
+          './topic-scope'
+        )
+        await autoEnsureScopeForWorkspace({
+          workspaceId: parsed.workspaceId,
+          userId: user.id,
+        })
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `autoEnsureScopeForWorkspace failed for task ${task.id}:`,
+          e instanceof Error ? e.message : e,
+        )
+      }
+    })()
+  }
+
   return task
 }
 

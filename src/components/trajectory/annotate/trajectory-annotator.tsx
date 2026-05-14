@@ -23,6 +23,8 @@ import { BottomBar } from './bottom-bar'
 import { HeatMapStrip } from './heat-map-strip'
 import { StandardLayout } from './layouts/standard'
 import { FocusLayout } from './layouts/focus'
+import { CompareLayout } from './layouts/compare'
+import { AttachmentsStrip } from './attachments-strip'
 import { RubricReferenceDrawer } from './rubric-reference-drawer'
 import { useAnnotateKeyboard } from './use-annotate-keyboard'
 import { useAutosaveMark } from './use-autosave-mark'
@@ -67,6 +69,15 @@ export interface TrajectoryAnnotatorProps {
   initialTrajectoryMarks: TrajectoryMarks
   peerMarksByStep: PeerMarksByStep
   claudeHintsByStep: ClaudeHintsByStep
+  /** Other trajectories in the workspace, for the Compare-mode picker. */
+  candidateTrajectories?: Array<{
+    id: string
+    agentName: string
+    capturedAt: Date | null
+    stepCount: number
+  }>
+  /** Optional trajectory to compare against (B side). Driven by ?compareWith URL param. */
+  compareWithTrajectory?: TrajectoryView | null
   disabled?: boolean
   onSubmit?: () => void
   submitDisabled?: boolean
@@ -150,6 +161,8 @@ function TrajectoryAnnotatorInner({
   rubric,
   peerMarksByStep,
   claudeHintsByStep,
+  candidateTrajectories,
+  compareWithTrajectory,
   disabled,
   onSubmit,
   submitDisabled,
@@ -283,6 +296,10 @@ function TrajectoryAnnotatorInner({
         submitLabel={submitLabel}
       />
 
+      {trajectory.attachments.length > 0 && (
+        <AttachmentsStrip attachments={trajectory.attachments} />
+      )}
+
       <div className="px-5 py-2 hairline-b" style={{ background: 'var(--bg)' }}>
         <HeatMapStrip
           rubric={rubric}
@@ -319,37 +336,21 @@ function TrajectoryAnnotatorInner({
           disabled={disabled}
         />
       )}
-      {mode === 'compare' && <ComparePlaceholder />}
+      {mode === 'compare' && (
+        <CompareLayout
+          trajectory={trajectory}
+          rubric={rubric}
+          candidateTrajectories={candidateTrajectories ?? []}
+          compareWith={compareWithTrajectory ?? null}
+          workspaceId={workspaceId}
+        />
+      )}
 
       <BottomBar mode={mode} />
 
       {showReference && (
         <RubricReferenceDrawer onClose={() => setShowReference(false)} />
       )}
-    </div>
-  )
-}
-
-function ComparePlaceholder() {
-  return (
-    <div
-      className="flex-1 min-h-0 flex items-center justify-center"
-      style={{ color: 'var(--mute)' }}
-    >
-      <div className="text-center" style={{ maxWidth: 420 }}>
-        <div className="lbl mb-2">compare mode</div>
-        <div
-          className="ts-14 mb-2"
-          style={{ color: 'var(--hi)', fontWeight: 500 }}
-        >
-          Pick a second trajectory to diff
-        </div>
-        <p className="ts-13">
-          Compare mode shows two agent runs side-by-side with synced
-          scrolling and per-dimension winner selection. The &quot;compare with…&quot;
-          picker isn&apos;t wired yet — coming next.
-        </p>
-      </div>
     </div>
   )
 }
