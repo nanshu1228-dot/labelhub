@@ -464,6 +464,196 @@ async function main() {
     `  ✓ created ${trajCreated} new trajectories · ${stepsCreated} new steps · ${marksCreated} new annotations\n`,
   )
 
+  // 5. Simulate admin review verdicts on reviewer + junior annotations.
+  //    The admin plays workspace reviewer; self-review is skipped.
+  //    Approval rates are CALIBRATED to produce the trust-score story we
+  //    advertise in the UI:
+  //      reviewer → ~80% approved (high trust)
+  //      junior   → ~40% approved (low trust)
+  //    Each verdict writes both a topic status flip AND an
+  //    annotation.approved / annotation.rejected event whose payload
+  //    denormalizes `submitterUserId` (TrustProjection contract).
+  let approvedCount = 0
+  let rejectedCount = 0
+  const reviewedAnnotationIds = new Set<string>()
+
+  // Pull every annotation under the inbox task, joined to its trajectory,
+  // skipping admin self-reviews and skipping rows we've already verdicted.
+  const reviewableAnnotations = await db
+    .select({
+      id: schema.annotations.id,
+      userId: schema.annotations.userId,
+      topicId: schema.annotations.topicId,
+      submittedAt: schema.annotations.submittedAt,
+      topicStatus: schema.topics.status,
+      itemData: schema.topics.itemData,
+    })
+    .from(schema.annotations)
+    .innerJoin(
+      schema.topics,
+      eq(schema.topics.id, schema.annotations.topicId),
+    )
+    .where(eq(schema.topics.taskId, inboxTask.id))
+
+  for (const ann of reviewableAnnotations) {
+    if (ann.userId === ADMIN_ID) continue // skip self-review
+    // Skip if already approved/rejected (idempotency).
+    if (ann.topicStatus === 'approved' || ann.topicStatus === 'rejected') {
+      reviewedAnnotationIds.add(ann.id)
+      continue
+    }
+
+    // Calibrated approval rate.
+    const approvalProbability = ann.userId === REVIEWER_ID ? 0.8 : 0.4
+    const decision: 'approve' | 'reject' =
+      Math.random() < approvalProbability ? 'approve' : 'reject'
+
+    // Make sure the annotation has submittedAt set so the review chain is
+    // semantically valid.
+    if (!ann.submittedAt) {
+      await db
+        .update(schema.annotations)
+        .set({ submittedAt: new Date() })
+        .where(eq(schema.annotations.id, ann.id))
+    }
+
+    // Flip the topic status.
+    await db
+      .update(schema.topics)
+      .set({
+        status: decision === 'approve' ? 'approved' : 'rejected',
+      })
+      .where(eq(schema.topics.id, ann.topicId))
+
+    // Emit the event the trust projection / events page reads.
+    await db.insert(schema.events).values({
+      type:
+        decision === 'approve' ? 'annotation.approved' : 'annotation.rejected',
+      workspaceId: WORKSPACE_ID,
+      actorId: ADMIN_ID, // reviewer = admin
+      payload: {
+        topicId: ann.topicId,
+        annotationId: ann.id,
+        submitterUserId: ann.userId, // denormalized for TrustProjection
+        decision,
+        feedback:
+          decision === 'reject'
+            ? 'Spread is too wide on the tool_call rationale — re-rate with the new guideline.'
+            : null,
+        taskId: inboxTask.id,
+        templateMode: 'agent-trace-eval',
+        annotationPayload: {}, // seed doesn't have trajectory-level marks
+      },
+    })
+
+    if (decision === 'approve') approvedCount++
+    else rejectedCount++
+    reviewedAnnotationIds.add(ann.id)
+  }
+  console.log(
+    `  ✓ ${approvedCount + rejectedCount} review verdicts emitted (${approvedCount} approved · ${rejectedCount} rejected)\n`,
+  )
+
+  // 6. Promote the admin's annotation on the first 2 trajectories to gold
+  //    standards — calibration scores need at least one gold to be visible.
+  //    Idempotent: skip if a gold already exists for the trajectory.
+  const GOLD_TRAJECTORY_IDS = TRAJECTORIES.slice(0, 2).map((t) => t.id)
+  let goldsCreated = 0
+  for (const trajId of GOLD_TRAJECTORY_IDS) {
+    // Existing gold for this trajectory?
+    const existingGolds = await db
+      .select()
+      .from(schema.goldStandards)
+      .where(eq(schema.goldStandards.taskId, inboxTask.id))
+    const already = existingGolds.find((g) => {
+      const item = g.itemData as {
+        kind?: string
+        trajectoryId?: string
+      } | null
+      return item?.kind === 'trajectory' && item.trajectoryId === trajId
+    })
+    if (already) continue
+
+    // Find admin's annotation row for this trajectory.
+    const [topic] = await db
+      .select()
+      .from(schema.topics)
+      .where(eq(schema.topics.taskId, inboxTask.id))
+      .then((rows) =>
+        rows.filter(
+          (r) =>
+            (r.itemData as { trajectoryId?: string }).trajectoryId === trajId,
+        ),
+      )
+    if (!topic) continue
+    const [adminAnnotation] = await db
+      .select()
+      .from(schema.annotations)
+      .where(
+        and(
+          eq(schema.annotations.topicId, topic.id),
+          eq(schema.annotations.userId, ADMIN_ID),
+        ),
+      )
+      .limit(1)
+    if (!adminAnnotation) continue
+
+    // Snapshot the admin's step marks.
+    const adminStepMarks = await db
+      .select()
+      .from(schema.stepAnnotations)
+      .where(eq(schema.stepAnnotations.annotationId, adminAnnotation.id))
+
+    const stepMarksByStep: Record<string, Record<string, unknown>> = {}
+    let frozenCount = 0
+    for (const m of adminStepMarks) {
+      if (m.rating == null) continue
+      const mark = {
+        scale: 'likert' as const,
+        value: m.rating as 1 | 3 | 5,
+        reason: m.reasoning ?? undefined,
+      }
+      const bucket = stepMarksByStep[m.trajectoryStepId] ?? {}
+      bucket[m.kind] = mark
+      stepMarksByStep[m.trajectoryStepId] = bucket
+      frozenCount++
+    }
+    if (frozenCount === 0) continue
+
+    await db.insert(schema.goldStandards).values({
+      taskId: inboxTask.id,
+      itemData: {
+        kind: 'trajectory',
+        workspaceId: WORKSPACE_ID,
+        trajectoryId: trajId,
+        sourceAnnotationId: adminAnnotation.id,
+        promotedByUserId: ADMIN_ID,
+        promotedAt: new Date().toISOString(),
+      },
+      correctAnswer: {
+        trajectoryMarks: {},
+        stepMarks: stepMarksByStep,
+      },
+      explanation:
+        'Seed gold: admin\'s annotation calibrated against the synthetic "ground truth" baked into seed-rich-demo.',
+    })
+
+    await db.insert(schema.events).values({
+      type: 'gold.promoted',
+      workspaceId: WORKSPACE_ID,
+      actorId: ADMIN_ID,
+      payload: {
+        trajectoryId: trajId,
+        sourceAnnotationId: adminAnnotation.id,
+        stepMarkCount: frozenCount,
+        trajectoryMarkCount: 0,
+      },
+    })
+
+    goldsCreated++
+  }
+  console.log(`  ✓ ${goldsCreated} gold standard${goldsCreated === 1 ? '' : 's'} seeded\n`)
+
   // Final tallies
   const [{ n: trajCount }] = (await sql`
     SELECT COUNT(*)::int AS n FROM trajectories WHERE workspace_id = ${WORKSPACE_ID}
