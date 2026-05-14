@@ -1,9 +1,11 @@
 'use server'
 import { z } from 'zod'
+import { after } from 'next/server'
 import { and, eq } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { tasks, topics, annotations, events } from '@/lib/db/schema'
 import { requireUser, requireWorkspaceAdmin } from '@/lib/auth/guards'
+import { fanoutWebhook } from '@/lib/webhooks/fanout'
 import {
   ConflictError,
   ForbiddenError,
@@ -318,6 +320,26 @@ export async function reviewAnnotation(input: z.infer<typeof reviewSchema>) {
       annotationPayload: annotation.payload,
     },
   })
+
+  // Fire any registered webhook subscribers AFTER the response — keeps the
+  // admin's review action snappy even when downstream receivers are slow.
+  after(() =>
+    fanoutWebhook({
+      type: event,
+      workspaceId: task.workspaceId,
+      payload: {
+        annotationId: annotation.id,
+        topicId: topic.id,
+        taskId: task.id,
+        submitterUserId: annotation.userId,
+        decision: parsed.decision,
+        feedback: parsed.feedback ?? null,
+      },
+    }).catch((e) => {
+      // eslint-disable-next-line no-console
+      console.warn('webhook fanout failed', e)
+    }),
+  )
 
   return { ok: true as const }
 }

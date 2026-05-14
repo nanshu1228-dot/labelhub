@@ -61,6 +61,15 @@ export default function DocsPage() {
           <a href="#export" className="docs-nav-link">
             Export
           </a>
+          <a href="#annotations" className="docs-nav-link">
+            Annotations
+          </a>
+          <a href="#quality" className="docs-nav-link">
+            Quality
+          </a>
+          <a href="#webhooks" className="docs-nav-link">
+            Webhooks
+          </a>
           <Link href="/" className="docs-nav-link">
             ← home
           </Link>
@@ -306,6 +315,162 @@ await t.flush()  // POSTs the canonical trajectory to /api/ingest/trajectories`}
           key&apos;s workspace. One trajectory per line, full canonical
           schema. Useful for re-importing into your own training pipeline or
           BigQuery.
+        </p>
+
+        <SectionAnchor id="annotations" label="07" title="Annotations" />
+        <p className="docs-body">
+          Pull the actual labeling output back into your pipeline. The
+          response carries the canonical Mark shape (
+          <code>&#123; scale, value, reason? &#125;</code>) — same one stored
+          on disk, no lossy translation.
+        </p>
+        <CodeBlock
+          lang="bash"
+          code={`# Recent annotations across the workspace
+curl -sS 'https://labelhub-gamma.vercel.app/api/annotations?limit=10' \\
+  -H 'Authorization: Bearer lh_ws_YOUR_KEY'
+
+# Filter to one trajectory
+curl -sS 'https://labelhub-gamma.vercel.app/api/annotations?trajectory_id=<uuid>' \\
+  -H 'Authorization: Bearer lh_ws_YOUR_KEY'
+
+# Only fully-reviewed ones since a checkpoint
+curl -sS 'https://labelhub-gamma.vercel.app/api/annotations?status=approved&since=2026-05-01T00:00:00Z' \\
+  -H 'Authorization: Bearer lh_ws_YOUR_KEY'`}
+        />
+        <p className="docs-body">
+          Query params: <code>trajectory_id</code> · <code>status</code> (
+          <code>drafting | submitted | approved | rejected | revising</code>) ·{' '}
+          <code>since</code> · <code>until</code> · <code>limit</code> (≤200) ·{' '}
+          <code>offset</code>.
+        </p>
+        <CodeBlock
+          lang="json"
+          code={`{
+  "annotations": [
+    {
+      "id": "...",
+      "trajectoryId": "...",
+      "userId": "...",
+      "userDisplayName": "Demo Admin",
+      "status": "approved",
+      "submittedAt": "2026-05-14T03:12:09.000Z",
+      "reviewVerdict": "approved",
+      "reviewFeedback": null,
+      "reviewedAt": "2026-05-14T03:25:18.000Z",
+      "trajectoryMarks": {
+        "goal_achieved": { "scale": "likert", "value": 5, "reason": "..." }
+      },
+      "stepMarks": {
+        "<stepId>": {
+          "step_quality": { "scale": "likert", "value": 5, "reason": "..." },
+          "safety":       { "scale": "bool",   "value": true }
+        }
+      }
+    }
+  ],
+  "total": 87, "limit": 10, "offset": 0, "hasMore": true
+}`}
+        />
+        <p className="docs-body">
+          <code>GET /api/annotations/&lt;id&gt;</code> returns a single
+          annotation in the same shape (wrapped in{' '}
+          <code>&#123; annotation &#125;</code>). 404 for not-found OR
+          wrong-workspace — we don&apos;t distinguish so tenant existence
+          doesn&apos;t leak.
+        </p>
+
+        <SectionAnchor id="quality" label="08" title="Quality summary" />
+        <p className="docs-body">
+          Workspace-wide quality roll-up — one call, everything an external
+          dashboard needs.
+        </p>
+        <CodeBlock
+          lang="bash"
+          code={`curl -sS 'https://labelhub-gamma.vercel.app/api/quality/summary' \\
+  -H 'Authorization: Bearer lh_ws_YOUR_KEY'`}
+        />
+        <CodeBlock
+          lang="json"
+          code={`{
+  "workspaceId": "...",
+  "asOf": "2026-05-14T10:23:45.000Z",
+  "iaa": {
+    "annotatedSteps": 57, "multiRaterSteps": 19,
+    "disputedSteps": 4, "agreementRate": 0.7895
+  },
+  "raterCount": 3,
+  "raters": [
+    {
+      "userId": "...", "displayName": "Demo Reviewer",
+      "trust": { "source": "admin", "score": 0.7857, "positives": 4, "negatives": 1 },
+      "calibration": { "matched": 5, "diverged": 2, "score": 0.625, "goldsCovered": 2 },
+      "contribution": { "submitted": 5, "approved": 4, "rejected": 1, "pendingReview": 0 }
+    }
+  ],
+  "goldStandards": { "count": 2, "items": [{ "id": "...", "trajectoryId": "...", "rubricCount": 4, ... }] },
+  "criticalViolations": { "count": 2, "recent": [{ "trajectoryId": "...", "rubricName": "Safety", ... }] }
+}`}
+        />
+
+        <SectionAnchor id="webhooks" label="09" title="Webhooks" />
+        <p className="docs-body">
+          Subscribe a URL to receive POSTs when annotations land. Each
+          delivery is HMAC-signed with your subscription secret. Failures
+          back off (10 strikes → auto-disable).
+        </p>
+        <CodeBlock
+          lang="bash"
+          code={`# Register a hook
+curl -sS -X POST https://labelhub-gamma.vercel.app/api/webhooks \\
+  -H 'Authorization: Bearer lh_ws_YOUR_KEY' \\
+  -H 'Content-Type: application/json' \\
+  -d '{
+    "url": "https://your.app/incoming/labelhub",
+    "events": ["annotation.approved", "annotation.rejected"]
+  }'
+# → { "webhook": { "id": "...", "secret": "<save this>", ... } }
+
+# List your hooks
+curl -sS https://labelhub-gamma.vercel.app/api/webhooks \\
+  -H 'Authorization: Bearer lh_ws_YOUR_KEY'
+
+# Revoke
+curl -sS -X DELETE https://labelhub-gamma.vercel.app/api/webhooks/<id> \\
+  -H 'Authorization: Bearer lh_ws_YOUR_KEY'`}
+        />
+        <p className="docs-body">
+          Each delivery includes these headers:
+        </p>
+        <CodeBlock
+          lang="http"
+          code={`POST /incoming/labelhub HTTP/1.1
+x-labelhub-event: annotation.approved
+x-labelhub-signature: 5f3a... (hex hmac-sha256 of body, using your secret)
+user-agent: LabelHub-Webhook/1.0
+content-type: application/json
+
+{ "type": "annotation.approved", "workspaceId": "...", "deliveredAt": "...",
+  "payload": { "annotationId": "...", "submitterUserId": "...", "feedback": null } }`}
+        />
+        <p className="docs-body">
+          Verify on your side:
+        </p>
+        <CodeBlock
+          lang="ts"
+          code={`import { createHmac, timingSafeEqual } from 'node:crypto'
+
+function verify(body: string, signature: string, secret: string): boolean {
+  const expected = createHmac('sha256', secret).update(body).digest('hex')
+  const a = Buffer.from(expected, 'hex')
+  const b = Buffer.from(signature, 'hex')
+  return a.length === b.length && timingSafeEqual(a, b)
+}`}
+        />
+        <p className="docs-body">
+          Currently emitted from the <code>reviewAnnotation</code> path
+          (approved/rejected/revised). More event types and an in-app
+          delivery log are next on the roadmap.
         </p>
 
         <footer className="docs-footer">

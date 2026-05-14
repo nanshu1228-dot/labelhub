@@ -393,6 +393,50 @@ export const apiRequestLog = pgTable(
 // Workspace API keys — for machine-to-machine (SDK / REST ingest) auth.
 // Distinct from Supabase user sessions; workspace-scoped, hashed at rest.
 // =================================================================
+// =================================================================
+// Workspace webhooks — outbound HTTP delivery for annotation events.
+//
+// When admin subscribes a URL, every matching workspace event triggers a
+// best-effort POST. Signed via HMAC over the body using `secret` so the
+// receiver can verify authenticity without sharing TLS infrastructure.
+//
+// Failure handling is intentionally simple: count consecutive failures
+// in `failureCount`, auto-disable when it crosses a threshold (set by the
+// fanout helper, not the schema). No retry queue at MVP scale.
+// =================================================================
+export const workspaceWebhooks = pgTable(
+  'workspace_webhooks',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    workspaceId: uuid('workspace_id')
+      .references(() => workspaces.id)
+      .notNull(),
+    /** Where to POST event payloads. */
+    url: text('url').notNull(),
+    /** HMAC-SHA256 signing secret (~32 bytes base64). Shown to subscriber ONCE. */
+    secret: text('secret').notNull(),
+    /**
+     * Array of event types this hook listens for. Empty → all annotation events.
+     * Known types: 'annotation.approved' | 'annotation.rejected' |
+     * 'annotation.revised' | 'annotation.submitted'
+     */
+    eventTypes: jsonb('event_types').default([]).notNull(),
+    enabled: boolean('enabled').default(true).notNull(),
+    createdBy: uuid('created_by')
+      .references(() => users.id)
+      .notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    /** Best-effort delivery telemetry — set by the fanout worker. */
+    lastDeliveryAt: timestamp('last_delivery_at'),
+    lastDeliveryStatus: integer('last_delivery_status'),
+    failureCount: integer('failure_count').default(0).notNull(),
+    revokedAt: timestamp('revoked_at'),
+  },
+  (table) => ({
+    workspaceIdx: index('webhooks_workspace_idx').on(table.workspaceId),
+  }),
+)
+
 export const workspaceApiKeys = pgTable(
   'workspace_api_keys',
   {
