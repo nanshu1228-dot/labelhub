@@ -654,6 +654,152 @@ async function main() {
   }
   console.log(`  ✓ ${goldsCreated} gold standard${goldsCreated === 1 ? '' : 's'} seeded\n`)
 
+  // 7. Critical-rubric violations — give junior a couple of `safety=false`
+  //    bool marks so /quality's CRITICAL VIOLATIONS section has real data.
+  //    Hits the first two steps of the first trajectory; idempotent on
+  //    (annotation_id, step_id, kind='safety').
+  let criticalCount = 0
+  {
+    const firstTraj = TRAJECTORIES[0]
+    const [firstTopic] = (
+      await db
+        .select()
+        .from(schema.topics)
+        .where(eq(schema.topics.taskId, inboxTask.id))
+    ).filter(
+      (t) =>
+        (t.itemData as { trajectoryId?: string }).trajectoryId === firstTraj.id,
+    )
+    if (firstTopic) {
+      const [juniorAnn] = await db
+        .select()
+        .from(schema.annotations)
+        .where(
+          and(
+            eq(schema.annotations.topicId, firstTopic.id),
+            eq(schema.annotations.userId, JUNIOR_ID),
+          ),
+        )
+        .limit(1)
+      if (juniorAnn) {
+        const violationSteps = firstTraj.steps.slice(0, 2)
+        for (let i = 0; i < violationSteps.length; i++) {
+          const step = violationSteps[i]
+          const [existing] = await db
+            .select()
+            .from(schema.stepAnnotations)
+            .where(
+              and(
+                eq(schema.stepAnnotations.annotationId, juniorAnn.id),
+                eq(schema.stepAnnotations.trajectoryStepId, step.id),
+                eq(schema.stepAnnotations.kind, 'safety'),
+              ),
+            )
+            .limit(1)
+          if (existing) continue
+          const reasons = [
+            'Tool invocation looked unsafe — bypassed the validation step.',
+            'Agent leaked the user\'s email into a public log.',
+          ]
+          await db.insert(schema.stepAnnotations).values({
+            annotationId: juniorAnn.id,
+            trajectoryStepId: step.id,
+            kind: 'safety',
+            // safety is bool, no integer rating
+            rating: null,
+            reasoning: reasons[i] ?? 'Safety concern flagged.',
+            payload: {
+              scale: 'bool' as const,
+              value: false,
+              reason: reasons[i] ?? 'Safety concern flagged.',
+            },
+          })
+          criticalCount++
+        }
+      }
+    }
+  }
+  console.log(
+    `  ✓ ${criticalCount} critical-rubric violation${criticalCount === 1 ? '' : 's'} seeded (safety=false on junior's first-traj steps)\n`,
+  )
+
+  // 8. Review thread — pick one of junior's rejected annotations, simulate
+  //    a back-and-forth: rejected → submitter reply → reviewer revised.
+  //    Idempotent across re-runs: skip the entire phase if ANY review reply
+  //    already exists in this workspace.
+  let threadCount = 0
+  const anyExistingReplies = await db
+    .select({ id: schema.events.id })
+    .from(schema.events)
+    .where(
+      and(
+        eq(schema.events.type, 'annotation.review_replied'),
+        eq(schema.events.workspaceId, WORKSPACE_ID),
+      ),
+    )
+    .limit(1)
+  const rejections = anyExistingReplies.length > 0
+    ? []
+    : await db
+        .select()
+        .from(schema.events)
+        .where(
+          and(
+            eq(schema.events.type, 'annotation.rejected'),
+            eq(schema.events.workspaceId, WORKSPACE_ID),
+          ),
+        )
+        .limit(20)
+  for (const rejection of rejections) {
+    const p = rejection.payload as {
+      annotationId?: string
+      submitterUserId?: string
+      topicId?: string
+      taskId?: string
+    } | null
+    if (!p?.annotationId || p.submitterUserId !== JUNIOR_ID) continue
+
+    // Submitter reply
+    await db.insert(schema.events).values({
+      type: 'annotation.review_replied',
+      workspaceId: WORKSPACE_ID,
+      actorId: JUNIOR_ID,
+      payload: {
+        annotationId: p.annotationId,
+        topicId: p.topicId,
+        taskId: p.taskId,
+        submitterUserId: JUNIOR_ID,
+        message:
+          'Thanks for the catch — I re-read the guideline on tool-choice and I see I was overly optimistic on step 4. The agent\'s second tool call was redundant given what the first returned. Re-rating now with a 1 on tool_choice and updating my reasoning.',
+      },
+    })
+
+    // Reviewer follow-up: ask for revision with new guidance (creates a
+    // 3-message thread: rejected → replied → revised)
+    await db.insert(schema.events).values({
+      type: 'annotation.revised',
+      workspaceId: WORKSPACE_ID,
+      actorId: ADMIN_ID,
+      payload: {
+        topicId: p.topicId,
+        annotationId: p.annotationId,
+        submitterUserId: JUNIOR_ID,
+        decision: 'request_revision',
+        feedback:
+          'Good self-correction. Resubmit and I\'ll close the loop. Pay attention to step 4 vs step 5 sequence — the rubric is unambiguous there.',
+        taskId: p.taskId,
+        templateMode: 'agent-trace-eval',
+        annotationPayload: {},
+      },
+    })
+
+    threadCount++
+    break // one demo thread is enough
+  }
+  console.log(
+    `  ✓ ${threadCount} review thread${threadCount === 1 ? '' : 's'} seeded (submitter reply + reviewer follow-up)\n`,
+  )
+
   // Final tallies
   const [{ n: trajCount }] = (await sql`
     SELECT COUNT(*)::int AS n FROM trajectories WHERE workspace_id = ${WORKSPACE_ID}
