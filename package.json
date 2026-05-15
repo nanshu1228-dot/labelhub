@@ -20,6 +20,7 @@
     "seed:rich-demo": "tsx scripts/seed-rich-demo.ts",
     "seed:perf-test": "tsx scripts/seed-perf-test.ts",
     "test:customer-api": "tsx scripts/test-customer-api.ts",
+    "security:smoke": "tsx scripts/security-smoke-test.ts",
     "backfill:features": "tsx scripts/backfill-trajectory-features.ts",
     "backfill:summaries": "tsx --import ./scripts/_server-only-stub.mjs scripts/backfill-trajectory-summaries.ts",
     "mcp": "tsx mcp/server.ts",

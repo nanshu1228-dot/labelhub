@@ -14,7 +14,7 @@ import { optionalUser, requireWorkspaceMember } from '@/lib/auth/guards'
 import { getDb } from '@/lib/db/client'
 import { users as usersTable } from '@/lib/db/schema'
 import { eq } from 'drizzle-orm'
-import { listMyStepAnnotationsDemo } from '@/lib/actions/step-annotations-demo'
+import { listMyStepMarksInline } from '@/lib/actions/step-annotations-inline'
 import type { stepAnnotations as stepAnnotationsTable, trajectorySteps } from '@/lib/db/schema'
 import { StepMarkWidget } from '@/components/trajectory/step-mark-widget'
 import { GoldPromoteClient } from '@/components/quality/gold-promote-client'
@@ -47,7 +47,7 @@ export default async function TrajectoryDetailPage(
   let workspaceName = 'workspace'
   let dbError: string | null = null
   let bundle: Awaited<ReturnType<typeof getTrajectoryWithSteps>> = null
-  let myMarks: Awaited<ReturnType<typeof listMyStepAnnotationsDemo>> = {}
+  let myMarks: Awaited<ReturnType<typeof listMyStepMarksInline>> = {}
   let iaaByStep = new Map<string, StepIAA>()
   let isAdmin = false
   let goldBlock: {
@@ -114,7 +114,7 @@ export default async function TrajectoryDetailPage(
       summary = await getCachedSummary(trajId).catch(() => null)
 
       const [marks, iaa, gold] = await Promise.all([
-        listMyStepAnnotationsDemo({
+        listMyStepMarksInline({
           workspaceId,
           trajectoryId: trajId,
         }),

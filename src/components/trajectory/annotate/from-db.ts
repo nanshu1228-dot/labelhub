@@ -166,7 +166,7 @@ function safeStringify(v: unknown): string {
  * in Step 3 — see actions/step-marks.ts (forthcoming).
  *
  * NOTE: the SSR loader currently produces `Record<stepId, oneRow>` because
- * listMyStepAnnotationsDemo() flattens to a single row per step. The future
+ * listMyStepMarksInline() flattens to a single row per step. The future
  * format will be `Record<stepId, oneRow[]>` (one per rubric). The adapter
  * tolerates both — single-row input is treated as "the legacy `step_quality`
  * rubric" and surfaced under rubric id `step_quality` so old data stays

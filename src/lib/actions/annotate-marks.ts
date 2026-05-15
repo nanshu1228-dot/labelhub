@@ -4,7 +4,7 @@
  * Annotation Mark — read + write Server Actions for the trajectory annotator.
  *
  * Built specifically for the new `<TrajectoryAnnotator>` shell. Differs from
- * `step-annotations-demo.ts` in two ways:
+ * the inline path (`step-annotations-inline.ts`) in two ways:
  *
  *   1. Multi-rubric per step. The existing reader returns `Record<stepId,
  *      oneRow>` (one mark per step) which fits the old single-likert UI.

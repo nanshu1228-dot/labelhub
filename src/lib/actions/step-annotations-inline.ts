@@ -1,25 +1,23 @@
 'use server'
 
 /**
- * Demo-mode step annotation Server Action.
+ * Inline step-annotation Server Action — powers the small "rate this
+ * step" widget on the trajectory detail page.
  *
- * Why a separate action: the production `addStepAnnotation` requires a real
- * Supabase user session (`requireUser()`). Proxy-captured trajectories that
- * an evaluator wants to demo through are not behind that session — they only
- * carry a workspace API key + the captured data. Adding a real auth flow is
- * its own thing.
+ * Distinct from `addStepAnnotation` (in `step-annotations.ts`) which is
+ * the heavier workflow-aware path used by the full annotator. This one
+ * is the lighter inline upsert path: one rating button click → one
+ * step_annotation row, auto-binding into the workspace inbox topic on
+ * first touch.
  *
- * For the competition demo we want: open a trajectory detail page, click a
- * rating button, see the mark land in DB. To make that work without burning
- * a day on Supabase Auth wiring, we provide this side-door:
+ * Auth: every export calls `requireWorkspaceMember(workspaceId)` and
+ * blocks viewers from writes. Reads return empty for unauth callers so
+ * the trajectory detail page still renders for read-only browse.
  *
- *   - Only callable when `LABELHUB_DEMO_MODE=true` (defaults FALSE in prod)
- *   - Always acts as the seeded demo admin user (id …001)
- *   - Auto-binds the trajectory into the workspace Inbox task on first call
- *   - Inserts into `step_annotations` exactly as the prod path would
- *
- * Production code paths are untouched. The day we wire Supabase Auth, this
- * file can be deleted and the prod `addStepAnnotation` becomes canonical.
+ * History note (deleted in commit after 5a2ec01): this file was named
+ * `step-annotations-demo.ts` and used a hardcoded `DEMO_USER_ID` as
+ * the actor, gated only on `LABELHUB_DEMO_MODE=true`. Both gone now —
+ * real auth across the board.
  */
 
 import { z } from 'zod'
@@ -40,16 +38,6 @@ import {
 } from '@/lib/auth/guards'
 import { openTrajectoryForAnnotation } from './inbox'
 
-/**
- * SECURITY note: this file used to gate on LABELHUB_DEMO_MODE + a
- * hardcoded DEMO_USER_ID literal — anyone in demo mode could
- * impersonate the seed admin. Both have been removed; every export now
- * resolves the real signed-in user via the standard auth guards.
- *
- * The "-demo" suffix on the file name is historical; kept to avoid
- * breaking imports elsewhere in the tree. The behavior is real auth.
- */
-
 // ───────────────────────────────────────────────────────────────────────
 // Add / upsert
 // ───────────────────────────────────────────────────────────────────────
@@ -64,16 +52,17 @@ const markSchema = z.object({
   reasoning: z.string().min(1).max(4000),
 })
 
-export type MarkStepDemoInput = z.infer<typeof markSchema>
+export type MarkStepInlineInput = z.infer<typeof markSchema>
 
 /**
- * Upsert a step annotation in demo mode.
+ * Upsert one step annotation. Used by the inline rating widget on the
+ * trajectory detail page.
  *
  * Semantics: one annotation per (annotationId, trajectoryStepId, kind).
  * Calling this twice with the same triple UPDATES the existing row rather
  * than creating a second mark — UI can re-save freely on rating change.
  */
-export async function markStepDemo(input: MarkStepDemoInput) {
+export async function markStepInline(input: MarkStepInlineInput) {
   const parsed = markSchema.parse(input)
   // Real auth: must be a workspace member; viewers can't write marks.
   const { user, role } = await requireWorkspaceMember(parsed.workspaceId)
@@ -201,7 +190,7 @@ export async function markStepDemo(input: MarkStepDemoInput) {
  *
  * Idempotent + safe to call before any mark exists (returns empty map).
  */
-export async function listMyStepAnnotationsDemo(opts: {
+export async function listMyStepMarksInline(opts: {
   workspaceId: string
   trajectoryId: string
 }): Promise<Record<string, typeof stepAnnotations.$inferSelect>> {

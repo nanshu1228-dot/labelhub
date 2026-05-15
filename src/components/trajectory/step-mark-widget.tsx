@@ -1,6 +1,6 @@
 'use client'
 import { useRef, useState, useTransition } from 'react'
-import { markStepDemo } from '@/lib/actions/step-annotations-demo'
+import { markStepInline } from '@/lib/actions/step-annotations-inline'
 
 /**
  * Per-step annotation widget.
@@ -21,9 +21,8 @@ import { markStepDemo } from '@/lib/actions/step-annotations-demo'
  * absolutely must not re-render every sibling step. This is the same rule
  * the Pillar-4 perf budget enforces for annotation grids — see AGENTS.md.
  *
- * Demo-mode caveat: writes go through `markStepDemo` which asserts
- * LABELHUB_DEMO_MODE=true on the server. Without that env, the click errors
- * out with a 403 — by design.
+ * Auth: `markStepInline` requires the caller be a workspace member;
+ * viewers are blocked. Non-members get a 403 — by design.
  */
 
 type Rating = 1 | 3 | 5
@@ -78,7 +77,7 @@ export function StepMarkWidget({
     setError(null)
     startTransition(async () => {
       try {
-        await markStepDemo({
+        await markStepInline({
           workspaceId,
           trajectoryStepId,
           kind: 'step_quality',
