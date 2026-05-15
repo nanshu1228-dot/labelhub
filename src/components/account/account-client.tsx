@@ -44,12 +44,63 @@ export function AccountClient({
         </h1>
       </div>
 
+      {workspaces.length > 0 && <QueueCTA />}
+
       <ProfileSection email={email} initialDisplayName={displayName} />
 
       <WorkspacesSection workspaces={workspaces} />
 
       <SignOutCard />
     </div>
+  )
+}
+
+/**
+ * Big-action card pointing the user at /my/queue. Top of the account
+ * page when they're a member of any workspace — the actual daily
+ * "what should I work on" surface. Skipped for users with zero
+ * memberships (the empty-state below is their starting point).
+ */
+function QueueCTA() {
+  return (
+    <Link
+      href="/my/queue"
+      className="block rounded-xl p-5"
+      style={{
+        background:
+          'linear-gradient(135deg, var(--accent-soft), oklch(0.95 0.04 280 / 0.5))',
+        border: '1px solid var(--accent-line)',
+        textDecoration: 'none',
+      }}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="lbl" style={{ color: 'var(--accent)' }}>
+            § ANNOTATE
+          </div>
+          <h3
+            className="ts-18 mt-1"
+            style={{ color: 'var(--hi)', fontWeight: 500 }}
+          >
+            Open my queue
+          </h3>
+          <p
+            className="ts-13 mt-1"
+            style={{ color: 'var(--mute)', maxWidth: 480 }}
+          >
+            See ranked trajectories waiting for your review across every
+            workspace you&apos;re in — disputes first.
+          </p>
+        </div>
+        <span
+          className="ts-24"
+          style={{ color: 'var(--accent)' }}
+          aria-hidden="true"
+        >
+          →
+        </span>
+      </div>
+    </Link>
   )
 }
 
