@@ -272,6 +272,12 @@ export default async function WorkspacePage(
           href={`/workspaces/${id}/quality`}
         />
         <StatTile
+          label="ANALYZE"
+          value="◔"
+          hint="filter + aggregate + ask Claude"
+          href={`/workspaces/${id}/analyze`}
+        />
+        <StatTile
           label="EVENTS"
           value={stats.eventCount.toString()}
           hint="audit log entries"

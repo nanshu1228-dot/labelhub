@@ -19,6 +19,10 @@ import type { stepAnnotations as stepAnnotationsTable, trajectorySteps } from '@
 import { StepMarkWidget } from '@/components/trajectory/step-mark-widget'
 import { GoldPromoteClient } from '@/components/quality/gold-promote-client'
 import { ReviewThread } from '@/components/quality/review-thread'
+import { SummaryCard } from '@/components/trajectory/summary-card'
+import { getCachedSummary } from '@/lib/actions/trajectory-summary'
+import type { TrajectoryFeatures } from '@/lib/trajectories/extract-features'
+import type { TrajectorySummary } from '@/lib/ai/trajectory-summarizer'
 
 export const metadata: Metadata = {
   title: 'Trajectory — LabelHub',
@@ -56,6 +60,10 @@ export default async function TrajectoryDetailPage(
   let reviewThread: ReviewThreadMessage[] = []
   let reviewAnnotationId: string | null = null
   let viewerIsSubmitter = false
+  let summary: TrajectorySummary | null = null
+  let summaryAt: Date | null = null
+  let summaryModel: string | null = null
+  let features: TrajectoryFeatures | null = null
 
   try {
     const workspace = await getWorkspaceById(workspaceId)
@@ -89,6 +97,11 @@ export default async function TrajectoryDetailPage(
 
     bundle = await getTrajectoryWithSteps(trajId)
     if (bundle) {
+      features = (bundle.trajectory.features ?? null) as TrajectoryFeatures | null
+      summaryAt = bundle.trajectory.summaryAt ?? null
+      summaryModel = bundle.trajectory.summaryModel ?? null
+      summary = await getCachedSummary(trajId).catch(() => null)
+
       const [marks, iaa, gold] = await Promise.all([
         listMyStepAnnotationsDemo({
           workspaceId,
@@ -149,6 +162,14 @@ export default async function TrajectoryDetailPage(
           <DbError message={dbError} />
         ) : bundle ? (
           <>
+            <div className="mb-6">
+              <SummaryCard
+                summary={summary}
+                features={features}
+                summaryAt={summaryAt}
+                summaryModel={summaryModel}
+              />
+            </div>
             {(goldBlock || isAdmin) && (
               <div className="mb-6">
                 <GoldPromoteClient

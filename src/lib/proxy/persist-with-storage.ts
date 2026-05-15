@@ -2,6 +2,7 @@ import 'server-only'
 import type { CanonicalTrajectory } from '@/lib/trajectories/schema'
 import { persistTrajectory } from '@/lib/trajectories/ingest'
 import { validateTrajectory } from '@/lib/trajectories/schema'
+import { scheduleSummaryIfMissing } from '@/lib/actions/trajectory-summary'
 import { uploadAttachmentsToStorage } from './storage'
 import type { AttachmentRecord } from './attachment-extractor'
 
@@ -40,9 +41,13 @@ export async function persistWithStorage(opts: {
   }
 
   const validated = validateTrajectory(cleanedTrajectory)
-  await persistTrajectory({
+  const result = await persistTrajectory({
     workspaceId: opts.workspaceId,
     trajectory: validated,
     actorId: null,
   })
+
+  // Pre-distill into a one-paragraph summary for the /analyze page. Best
+  // effort, throw-away result — the action handles its own errors.
+  await scheduleSummaryIfMissing({ trajectoryId: result.trajectoryId })
 }

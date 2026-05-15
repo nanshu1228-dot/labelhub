@@ -1,5 +1,5 @@
 import 'server-only'
-import { sql } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import {
   events,
@@ -17,6 +17,7 @@ import {
   type ToolProviderKind,
   type TrajectorySource,
 } from './schema'
+import { extractFeatures } from './extract-features'
 
 /**
  * Trajectory ingest orchestrator.
@@ -193,6 +194,23 @@ export async function persistTrajectory(opts: {
       modelName: step.modelName ?? null,
       ts: step.ts ? new Date(step.ts) : new Date(),
     })
+  }
+
+  // Compute + persist structured features for the /analyze page filter UI
+  // + the LLM batch-analyst. Pure function, no LLM, fast. Reads the rows we
+  // just inserted to get authoritative createdAt timestamps.
+  try {
+    const insertedSteps = await db
+      .select()
+      .from(trajectorySteps)
+      .where(eq(trajectorySteps.trajectoryId, traj.id))
+    const features = extractFeatures(insertedSteps)
+    await db
+      .update(trajectories)
+      .set({ features })
+      .where(eq(trajectories.id, traj.id))
+  } catch {
+    // Feature extraction is best-effort — don't fail the ingest if it errors.
   }
 
   // Audit event (Pillar 2)

@@ -6,7 +6,9 @@ import { listTrajectoriesWithStepStats } from '@/lib/queries/trajectories'
 import { listDisputeCountsByTrajectory } from '@/lib/queries/iaa'
 import { listGoldTrajectoryIds } from '@/lib/queries/gold-standards'
 import { TRAJECTORY_SOURCES, type TrajectorySource } from '@/lib/trajectories/schema'
+import type { TrajectoryFeatures } from '@/lib/trajectories/extract-features'
 import { GoldBadge } from '@/components/quality/gold-badge'
+import { FeatureChips } from '@/components/trajectory/feature-chips'
 
 export const metadata: Metadata = {
   title: 'Trajectories — LabelHub',
@@ -252,6 +254,12 @@ function TrajectoryRow({
             style={{ color: 'var(--text)' }}
           >
             {rootPreview}
+          </div>
+          <div className="mt-2">
+            <FeatureChips
+              features={row.features as TrajectoryFeatures | null}
+              size="sm"
+            />
           </div>
         </div>
         <div
