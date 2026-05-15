@@ -19,6 +19,7 @@ import type { stepAnnotations as stepAnnotationsTable, trajectorySteps } from '@
 import { StepMarkWidget } from '@/components/trajectory/step-mark-widget'
 import { GoldPromoteClient } from '@/components/quality/gold-promote-client'
 import { ReviewThread } from '@/components/quality/review-thread'
+import { ReviewVerdictControls } from '@/components/quality/review-verdict-controls'
 import { SummaryCard } from '@/components/trajectory/summary-card'
 import { getCachedSummary } from '@/lib/actions/trajectory-summary'
 import type { TrajectoryFeatures } from '@/lib/trajectories/extract-features'
@@ -40,9 +41,16 @@ export const metadata: Metadata = {
  * keeps the page cacheable + cheap to scroll.
  */
 export default async function TrajectoryDetailPage(
-  props: PageProps<'/workspaces/[id]/trajectories/[trajId]'>,
+  props: PageProps<'/workspaces/[id]/trajectories/[trajId]'> & {
+    searchParams?: Promise<{ annotationId?: string }>
+  },
 ) {
   const { id: workspaceId, trajId } = await props.params
+  const search = (await props.searchParams) ?? {}
+  // ?annotationId= switches the page into "review mode" — show THIS
+  // submitter's marks (not the viewer's) and render verdict controls.
+  const reviewAnnotationIdFromUrl =
+    typeof search.annotationId === 'string' ? search.annotationId : null
 
   let workspaceName = 'workspace'
   let dbError: string | null = null
@@ -50,6 +58,7 @@ export default async function TrajectoryDetailPage(
   let myMarks: Awaited<ReturnType<typeof listMyStepMarksInline>> = {}
   let iaaByStep = new Map<string, StepIAA>()
   let isAdmin = false
+  let viewerRole: 'admin' | 'qc' | 'annotator' | 'viewer' = 'viewer'
   let goldBlock: {
     id: string
     promotedAt: Date
@@ -60,6 +69,8 @@ export default async function TrajectoryDetailPage(
   let reviewThread: ReviewThreadMessage[] = []
   let reviewAnnotationId: string | null = null
   let viewerIsSubmitter = false
+  // Review-mode-only fields, populated when ?annotationId= is present.
+  let reviewContext: import('@/lib/queries/annotation-review').AnnotationReviewContext | null = null
   let summary: TrajectorySummary | null = null
   let summaryAt: Date | null = null
   let summaryModel: string | null = null
@@ -84,25 +95,51 @@ export default async function TrajectoryDetailPage(
     {
       try {
         const { role } = await requireWorkspaceMember(workspaceId)
+        viewerRole = role
         isAdmin = role === 'admin' || workspace.adminId === me.id
       } catch {
         // Not a member of this workspace — don't render anything.
         notFound()
       }
 
-      // Surface the review thread when the viewer is the submitter
-      // (they need to see + reply) OR an admin (they need to monitor).
-      const annId = await findUserAnnotationForTrajectory({
-        workspaceId,
-        trajectoryId: trajId,
-        userId: me.id,
-      }).catch(() => null)
-      if (annId) {
-        reviewAnnotationId = annId
-        viewerIsSubmitter = true
-        reviewThread = await getReviewThread({ annotationId: annId }).catch(
-          () => [],
+      // Review mode (?annotationId=...): load the SPECIFIC submitter's
+      // marks + their thread; verdict controls render based on viewer
+      // role × topic status. Falls back to "my marks" mode if the
+      // annotationId is invalid or not in this workspace.
+      if (reviewAnnotationIdFromUrl) {
+        const { getAnnotationReviewContext } = await import(
+          '@/lib/queries/annotation-review'
         )
+        const ctx = await getAnnotationReviewContext({
+          annotationId: reviewAnnotationIdFromUrl,
+          workspaceId,
+        }).catch(() => null)
+        if (ctx) {
+          reviewContext = ctx
+          reviewAnnotationId = ctx.annotationId
+          viewerIsSubmitter = ctx.submitterId === me.id
+          reviewThread = await getReviewThread({
+            annotationId: ctx.annotationId,
+          }).catch(() => [])
+        }
+      }
+
+      // Fallback path: if we're NOT in review mode (or review-mode load
+      // failed), wire up the viewer's own annotation thread so the
+      // submitter can see and reply to their pending review.
+      if (!reviewContext) {
+        const annId = await findUserAnnotationForTrajectory({
+          workspaceId,
+          trajectoryId: trajId,
+          userId: me.id,
+        }).catch(() => null)
+        if (annId) {
+          reviewAnnotationId = annId
+          viewerIsSubmitter = true
+          reviewThread = await getReviewThread({
+            annotationId: annId,
+          }).catch(() => [])
+        }
       }
     }
 
@@ -113,11 +150,23 @@ export default async function TrajectoryDetailPage(
       summaryModel = bundle.trajectory.summaryModel ?? null
       summary = await getCachedSummary(trajId).catch(() => null)
 
+      // Marks source: in review mode use the submitter's marks; otherwise
+      // the viewer's own. Same shape either way, downstream widgets don't
+      // know the difference.
+      const marksLoader = reviewContext
+        ? (async () => {
+            const { getStepMarksForAnnotation } = await import(
+              '@/lib/queries/annotation-review'
+            )
+            return getStepMarksForAnnotation({
+              annotationId: reviewContext.annotationId,
+              workspaceId,
+            })
+          })()
+        : listMyStepMarksInline({ workspaceId, trajectoryId: trajId })
+
       const [marks, iaa, gold] = await Promise.all([
-        listMyStepMarksInline({
-          workspaceId,
-          trajectoryId: trajId,
-        }),
+        marksLoader,
         getTrajectoryIAA(trajId),
         getGoldForTrajectory({ workspaceId, trajectoryId: trajId }),
       ])
@@ -173,6 +222,20 @@ export default async function TrajectoryDetailPage(
           <DbError message={dbError} />
         ) : bundle ? (
           <>
+            {reviewContext && (
+              <div className="mb-3">
+                <ReviewModeBanner
+                  submitter={
+                    reviewContext.submitterDisplayName ??
+                    reviewContext.submitterEmail?.split('@')[0] ??
+                    'this annotator'
+                  }
+                  status={reviewContext.topicStatus}
+                  workspaceId={workspaceId}
+                  trajectoryId={trajId}
+                />
+              </div>
+            )}
             <div className="mb-6">
               <SummaryCard
                 summary={summary}
@@ -188,6 +251,18 @@ export default async function TrajectoryDetailPage(
                   trajectoryId={trajId}
                   isAdmin={isAdmin}
                   gold={goldBlock}
+                />
+              </div>
+            )}
+            {/* Verdict controls only render in review mode (?annotationId=…). */}
+            {reviewContext && (
+              <div className="mb-6">
+                <ReviewVerdictControls
+                  annotationId={reviewContext.annotationId}
+                  topicStatus={reviewContext.topicStatus}
+                  viewerRole={viewerRole}
+                  viewerIsSubmitter={viewerIsSubmitter}
+                  submitterDisplayName={reviewContext.submitterDisplayName}
                 />
               </div>
             )}
@@ -1402,6 +1477,58 @@ function Row({
       >
         {value}
       </dd>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Review-mode banner — shown only when the page is opened with
+// ?annotationId=… so the reviewer knows whose work they're looking at.
+
+function ReviewModeBanner({
+  submitter,
+  status,
+  workspaceId,
+  trajectoryId,
+}: {
+  submitter: string
+  status: string
+  workspaceId: string
+  trajectoryId: string
+}) {
+  return (
+    <div
+      className="rounded-md flex items-center justify-between gap-3 px-3 py-2"
+      style={{
+        background: 'var(--accent-soft)',
+        border: '1px solid var(--accent-line)',
+      }}
+    >
+      <div className="ts-12">
+        <span className="lbl" style={{ color: 'var(--accent)' }}>
+          § REVIEW MODE
+        </span>
+        <span className="ml-2" style={{ color: 'var(--text)' }}>
+          inspecting{' '}
+          <strong style={{ color: 'var(--hi)' }}>{submitter}</strong>
+          &apos;s annotation · status{' '}
+          <span className="mono" style={{ color: 'var(--mute2)' }}>
+            {status}
+          </span>
+        </span>
+      </div>
+      <Link
+        href={
+          `/workspaces/${workspaceId}/trajectories/${trajectoryId}` as `/${string}`
+        }
+        className="ts-11 mono shrink-0"
+        style={{
+          color: 'var(--accent)',
+          textDecoration: 'none',
+        }}
+      >
+        exit review →
+      </Link>
     </div>
   )
 }
