@@ -50,6 +50,7 @@ export const workflowStageSchema = z.enum([
   'revising',
   'submitted',
   'reviewing',
+  'awaiting_acceptance',
   'approved',
   'rejected',
 ])

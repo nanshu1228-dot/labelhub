@@ -4,15 +4,20 @@ import { getDb } from '@/lib/db/client'
 import { annotations, events, users } from '@/lib/db/schema'
 
 /**
- * Review thread — reconstruct the back-and-forth between admin reviewer
- * and annotator (submitter) from the events log.
+ * Review thread — reconstruct the back-and-forth between qc/admin
+ * reviewers and the annotator (submitter) from the events log.
  *
- * The four event types that compose a thread:
+ * Event types that compose a thread:
  *
- *   1. annotation.approved        — reviewer accepted (terminal but feedback may exist)
- *   2. annotation.rejected        — reviewer rejected (with optional feedback)
- *   3. annotation.revised         — reviewer requested revision (with feedback)
- *   4. annotation.review_replied  — submitter responded
+ *   1. annotation.qc_passed       — QC passed → escalated to admin acceptance
+ *   2. annotation.approved        — admin accepted (terminal)
+ *   3. annotation.rejected        — admin rejected (terminal)
+ *   4. annotation.revised         — 打回 by QC or admin (feedback inside)
+ *   5. annotation.review_replied  — submitter responded
+ *
+ * The `reviewerRole` is denormalized on the payload at emit time so the
+ * UI can color QC verdicts differently from admin verdicts without a
+ * second lookup.
  *
  * No new table; everything is derived from `events` so the audit log
  * remains the single source of truth.
@@ -21,18 +26,24 @@ import { annotations, events, users } from '@/lib/db/schema'
 export interface ReviewThreadMessage {
   eventId: string
   ts: Date
-  /** Who sent the message — 'reviewer' (admin) or 'submitter' (annotator). */
-  authorRole: 'reviewer' | 'submitter'
+  /**
+   * Who sent the message:
+   *   - 'submitter' — the annotator (replies to feedback)
+   *   - 'qc'        — quality-check reviewer (intermediate step)
+   *   - 'reviewer'  — admin doing final acceptance
+   */
+  authorRole: 'submitter' | 'qc' | 'reviewer'
   authorId: string | null
   authorDisplayName: string | null
   authorEmail: string | null
-  /** Free-form message body. Empty string when reviewer's verdict had no note. */
+  /** Free-form message body. Empty string when verdict had no note. */
   message: string
   /** Tag for UI styling. */
-  kind: 'approved' | 'rejected' | 'revised' | 'reply'
+  kind: 'qc_passed' | 'approved' | 'rejected' | 'revised' | 'reply'
 }
 
 const THREAD_EVENT_TYPES = [
+  'annotation.qc_passed',
   'annotation.approved',
   'annotation.rejected',
   'annotation.revised',
@@ -103,13 +114,31 @@ export async function getReviewThread(opts: {
         : typeof p.feedback === 'string'
           ? p.feedback
           : ''
-    const role: 'reviewer' | 'submitter' =
-      r.actorId === submitterId ? 'submitter' : 'reviewer'
+
+    // Classify author role. The verdict payload carries `reviewerRole`
+    // when emitted by the QC action; admin's reviewAnnotation events
+    // don't set it so we default those to 'reviewer'.
+    let role: ReviewThreadMessage['authorRole']
+    if (r.actorId === submitterId) {
+      role = 'submitter'
+    } else if (
+      r.type === 'annotation.qc_passed' ||
+      (r.type === 'annotation.revised' &&
+        (p.reviewerRole === 'qc' || p.reviewerRole === 'admin'))
+    ) {
+      // QC pass is always 'qc'. Revised events depend on who emitted —
+      // qcReviewAnnotation tags reviewerRole; reviewAnnotation doesn't.
+      role = p.reviewerRole === 'qc' ? 'qc' : 'reviewer'
+    } else {
+      role = 'reviewer'
+    }
+
     const u = r.actorId ? userById.get(r.actorId) : undefined
     let kind: ReviewThreadMessage['kind']
     if (r.type === 'annotation.approved') kind = 'approved'
     else if (r.type === 'annotation.rejected') kind = 'rejected'
     else if (r.type === 'annotation.revised') kind = 'revised'
+    else if (r.type === 'annotation.qc_passed') kind = 'qc_passed'
     else kind = 'reply'
 
     return {

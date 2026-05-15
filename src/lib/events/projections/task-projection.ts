@@ -28,6 +28,7 @@ function emptyCounts(): Record<WorkflowStage, number> {
     revising: 0,
     submitted: 0,
     reviewing: 0,
+    awaiting_acceptance: 0,
     approved: 0,
     rejected: 0,
   }

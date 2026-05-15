@@ -42,7 +42,7 @@ import {
 import { uuidLike } from '@/lib/validators/uuid'
 import { sendSupabaseMagicInvite } from '@/lib/email/supabase-magic-link'
 
-const ROLE = z.enum(['admin', 'annotator', 'viewer'])
+const ROLE = z.enum(['admin', 'qc', 'annotator', 'viewer'])
 type Role = z.infer<typeof ROLE>
 
 // ───────────────────────────────────────────────────────────────────────

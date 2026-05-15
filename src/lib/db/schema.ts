@@ -34,6 +34,13 @@ export const workflowStageEnum = pgEnum('workflow_stage', [
   'revising',
   'submitted',
   'reviewing',
+  /**
+   * QC has passed but admin acceptance is pending. Lives between the
+   * QC stage and final acceptance — added when the 3-role flow
+   * (annotator/qc/admin) landed. Skipped when admin acts directly on
+   * a 'submitted' annotation (admin can collapse QC + acceptance).
+   */
+  'awaiting_acceptance',
   'approved',
   'rejected',
 ])
@@ -81,13 +88,22 @@ export const workspaces = pgTable('workspaces', {
 // for backward compat but the source of truth for "can this user X?" is
 // this table.
 //
-// Roles (deliberately small set — extend cautiously):
-//   - 'admin'     — full control: invite/remove, modify settings, mint keys,
-//                   create tasks, edit guidelines, accept patches
-//   - 'annotator' — can claim topics, submit annotations, comment
-//   - 'viewer'    — read-only; can see trajectories + annotations + analytics
+// Roles (small but stratified — each one is a strict superset of the next):
+//   - 'admin'     — everything qc can do, PLUS workspace management
+//                   (members, billing, keys, settings, connections) AND
+//                   final acceptance review (approve/reject/打回 from
+//                   awaiting_acceptance OR straight from submitted).
+//   - 'qc'        — everything annotator can do, PLUS quality-check
+//                   review on submitted annotations (qc_pass → escalate
+//                   to admin for acceptance, OR 打回 to annotator).
+//                   Can be a senior expert role, or admin can skip it
+//                   and act as qc themselves.
+//   - 'annotator' — claim topics, submit annotations, reply to review
+//                   threads when their work was sent back.
+//   - 'viewer'    — read-only; can see trajectories + annotations + analytics.
 //
-// Auth guards (`requireWorkspaceAdmin` etc.) check this table.
+// Auth guards (`requireWorkspaceAdmin`, `requireWorkspaceQC`,
+// `requireWorkspaceMember`) check this table.
 // =================================================================
 export const workspaceMembers = pgTable(
   'workspace_members',
@@ -99,7 +115,7 @@ export const workspaceMembers = pgTable(
     userId: uuid('user_id')
       .references(() => users.id)
       .notNull(),
-    role: text('role').notNull(), // 'admin' | 'annotator' | 'viewer'
+    role: text('role').notNull(), // 'admin' | 'qc' | 'annotator' | 'viewer'
     /** Who invited this user (null for the workspace creator). */
     invitedBy: uuid('invited_by').references(() => users.id),
     joinedAt: timestamp('joined_at').defaultNow().notNull(),

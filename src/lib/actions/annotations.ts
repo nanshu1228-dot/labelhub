@@ -246,8 +246,19 @@ const reviewSchema = z.object({
 })
 
 /**
- * Workspace admin reviews a submitted annotation.
- * Transitions topic: submitted → approved | rejected | revising.
+ * Workspace admin reviews a submitted annotation. This is the FINAL
+ * acceptance step in the 3-role flow (annotator → qc → admin).
+ *
+ * Allowed source states:
+ *   - 'submitted'             — admin acts directly, skipping the QC stage
+ *   - 'reviewing'             — QC was working on it but admin steps in
+ *   - 'awaiting_acceptance'   — QC has already passed it; this is the
+ *                               normal acceptance path
+ *
+ * Transitions:
+ *   approve          → 'approved'   (terminal, locks payout + IAA + webhooks)
+ *   reject           → 'rejected'   (terminal)
+ *   request_revision → 'revising'   (back to annotator)
  */
 export async function reviewAnnotation(input: z.infer<typeof reviewSchema>) {
   const parsed = reviewSchema.parse(input)
@@ -276,8 +287,14 @@ export async function reviewAnnotation(input: z.infer<typeof reviewSchema>) {
 
   const { user } = await requireWorkspaceAdmin(task.workspaceId)
 
-  if (topic.status !== 'submitted' && topic.status !== 'reviewing') {
-    throw new ConflictError(`Topic is ${topic.status} — cannot review.`)
+  if (
+    topic.status !== 'submitted' &&
+    topic.status !== 'reviewing' &&
+    topic.status !== 'awaiting_acceptance'
+  ) {
+    throw new ConflictError(
+      `Cannot accept-review an annotation whose topic is ${topic.status}.`,
+    )
   }
 
   const transition: Record<typeof parsed.decision, {

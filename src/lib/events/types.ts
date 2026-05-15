@@ -27,6 +27,7 @@ export type LabelHubEventType =
   | 'annotation.drafted'
   | 'annotation.submitted'
   | 'annotation.revised'
+  | 'annotation.qc_passed'
   | 'annotation.approved'
   | 'annotation.rejected'
   | 'annotation.review_replied'

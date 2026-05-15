@@ -17,7 +17,7 @@ import { updateProfile } from '@/lib/actions/membership'
  * through the existing /signout route handler.
  */
 
-type Role = 'admin' | 'annotator' | 'viewer'
+type Role = 'admin' | 'qc' | 'annotator' | 'viewer'
 
 interface WorkspaceMembership {
   workspaceId: string
@@ -458,6 +458,11 @@ function RoleTag({ role }: { role: Role }) {
       bg: 'var(--accent-soft)',
       fg: 'var(--accent)',
       border: 'var(--accent-line)',
+    },
+    qc: {
+      bg: 'oklch(0.94 0.04 200 / 0.5)',
+      fg: 'oklch(0.45 0.15 200)',
+      border: 'oklch(0.6 0.15 200 / 0.3)',
     },
     annotator: {
       bg: 'oklch(0.94 0 0)',

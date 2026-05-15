@@ -29,7 +29,7 @@ import { TrustBadge } from '@/components/quality/trust-badge'
  * so the SSR loader re-runs.
  */
 
-type Role = 'admin' | 'annotator' | 'viewer'
+type Role = 'admin' | 'qc' | 'annotator' | 'viewer'
 
 interface Member {
   userId: string
@@ -246,6 +246,7 @@ function InviteForm({ workspaceId }: { workspaceId: string }) {
               }}
             >
               <option value="annotator">annotator</option>
+              <option value="qc">qc (quality check)</option>
               <option value="admin">admin</option>
               <option value="viewer">viewer</option>
             </select>
@@ -400,11 +401,13 @@ function RoleMatrix() {
       className="ts-11 mono"
       style={{ color: 'var(--mute2)', lineHeight: 1.6 }}
     >
-      <strong style={{ color: 'var(--mute)' }}>roles:</strong>{' '}
-      <span style={{ color: 'var(--accent)' }}>admin</span> can manage members,
-      keys, scope, billing ·{' '}
-      <span style={{ color: 'var(--text)' }}>annotator</span> can score
-      trajectories + submit comparisons ·{' '}
+      <strong style={{ color: 'var(--mute)' }}>roles (each is a superset of the next):</strong>{' '}
+      <span style={{ color: 'var(--accent)' }}>admin</span> manages members,
+      keys, billing + does final acceptance ·{' '}
+      <span style={{ color: 'oklch(0.45 0.15 200)' }}>qc</span> does
+      quality-check (pass / 打回) on submitted annotations ·{' '}
+      <span style={{ color: 'var(--text)' }}>annotator</span> submits
+      annotations ·{' '}
       <span style={{ color: 'var(--mute)' }}>viewer</span> read-only.
     </div>
   )
@@ -524,6 +527,7 @@ function MemberRow({
               }}
             >
               <option value="admin">admin</option>
+              <option value="qc">qc</option>
               <option value="annotator">annotator</option>
               <option value="viewer">viewer</option>
             </select>
@@ -686,6 +690,13 @@ function RoleTag({ role }: { role: Role }) {
       bg: 'var(--accent-soft)',
       fg: 'var(--accent)',
       border: 'var(--accent-line)',
+    },
+    qc: {
+      // Cyan-leaning: between admin's violet and annotator's neutral, so
+      // the visual hierarchy reads admin > qc > annotator at a glance.
+      bg: 'oklch(0.94 0.04 200 / 0.5)',
+      fg: 'oklch(0.45 0.15 200)',
+      border: 'oklch(0.6 0.15 200 / 0.3)',
     },
     annotator: {
       bg: 'oklch(0.94 0 0)',

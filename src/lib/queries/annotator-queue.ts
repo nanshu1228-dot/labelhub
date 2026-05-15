@@ -74,7 +74,9 @@ export async function listMyQueueForUser(
   const limit = Math.min(opts.limit ?? 50, 200)
 
   // 1. Resolve which workspaces I can pull work from. Viewers excluded —
-  // they can't submit marks anyway, no point listing.
+  // they can't submit marks anyway, no point listing. QC + admin are
+  // included alongside annotator because both also write annotations
+  // themselves (QC for spot-check work, admin to seed gold standards).
   const memberRows = await db
     .select({
       workspaceId: workspaceMembers.workspaceId,
@@ -85,7 +87,10 @@ export async function listMyQueueForUser(
     .innerJoin(workspaces, eq(workspaces.id, workspaceMembers.workspaceId))
     .where(eq(workspaceMembers.userId, opts.userId))
   const workspaceIds = memberRows
-    .filter((r) => r.role === 'admin' || r.role === 'annotator')
+    .filter(
+      (r) =>
+        r.role === 'admin' || r.role === 'qc' || r.role === 'annotator',
+    )
     .map((r) => r.workspaceId)
     .filter((id) => !opts.workspaceId || id === opts.workspaceId)
   if (workspaceIds.length === 0) return []
@@ -361,6 +366,157 @@ export async function getMyQueueStats(opts: {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
+
+// ─── QC review queue (separate surface for the qc role) ──────────────────
+
+/**
+ * Items awaiting QC review: annotations someone else submitted whose
+ * topic is in 'submitted' or 'reviewing' state. Used by /my/qc-queue
+ * (when that page lands) and by admins who want a unified view.
+ *
+ * Excludes:
+ *   - the viewer's own annotations (no self-QC; the action rejects too)
+ *   - annotations whose topics have moved past the QC stage
+ *
+ * Only the qc + admin roles get useful results; annotator/viewer get
+ * an empty array.
+ */
+export interface QCQueueItem {
+  annotationId: string
+  trajectoryId: string
+  workspaceId: string
+  workspaceName: string
+  agentName: string
+  rootPromptPreview: string
+  submitterId: string
+  submitterEmail: string | null
+  submitterDisplayName: string | null
+  submittedAt: Date | null
+  topicStatus: 'submitted' | 'reviewing'
+  summaryPreview: string | null
+}
+
+export async function listMyQCQueue(opts: {
+  userId: string
+  workspaceId?: string
+  limit?: number
+}): Promise<QCQueueItem[]> {
+  const db = getDb()
+  const limit = Math.min(opts.limit ?? 50, 200)
+
+  // Which workspaces can I QC in?
+  const memberRows = await db
+    .select({
+      workspaceId: workspaceMembers.workspaceId,
+      role: workspaceMembers.role,
+      workspaceName: workspaces.name,
+    })
+    .from(workspaceMembers)
+    .innerJoin(workspaces, eq(workspaces.id, workspaceMembers.workspaceId))
+    .where(eq(workspaceMembers.userId, opts.userId))
+  const qcWorkspaceIds = memberRows
+    .filter((r) => r.role === 'admin' || r.role === 'qc')
+    .map((r) => r.workspaceId)
+    .filter((id) => !opts.workspaceId || id === opts.workspaceId)
+  if (qcWorkspaceIds.length === 0) return []
+  const workspaceNameById = new Map(
+    memberRows.map((r) => [r.workspaceId, r.workspaceName]),
+  )
+
+  // Pull annotations whose topic.status is submitted/reviewing in those
+  // workspaces, excluding mine. Reads through topic → task to filter
+  // by workspace boundary.
+  const { users } = await import('@/lib/db/schema')
+  const rows = await db
+    .select({
+      annotationId: annotations.id,
+      submitterId: annotations.userId,
+      submitterEmail: users.email,
+      submitterDisplayName: users.displayName,
+      submittedAt: annotations.submittedAt,
+      topicStatus: topics.status,
+      workspaceId: tasks.workspaceId,
+    })
+    .from(annotations)
+    .innerJoin(topics, eq(topics.id, annotations.topicId))
+    .innerJoin(tasks, eq(tasks.id, topics.taskId))
+    .innerJoin(users, eq(users.id, annotations.userId))
+    .where(
+      and(
+        inArray(tasks.workspaceId, qcWorkspaceIds),
+        inArray(topics.status, ['submitted', 'reviewing']),
+      ),
+    )
+    .orderBy(desc(annotations.submittedAt))
+    .limit(limit * 2) // over-fetch in case self-filter trims
+
+  const filtered = rows.filter((r) => r.submitterId !== opts.userId).slice(0, limit)
+  if (filtered.length === 0) return []
+
+  // Resolve trajectory for each annotation via step_annotations →
+  // trajectory_steps → trajectories. Reuse the cheap join we use
+  // elsewhere.
+  const annIds = filtered.map((f) => f.annotationId)
+  const stepRows = await db
+    .select({
+      annotationId: stepAnnotations.annotationId,
+      trajectoryId: trajectorySteps.trajectoryId,
+      agentName: trajectories.agentName,
+      rootPrompt: trajectories.rootPrompt,
+      summary: trajectories.summary,
+    })
+    .from(stepAnnotations)
+    .innerJoin(
+      trajectorySteps,
+      eq(trajectorySteps.id, stepAnnotations.trajectoryStepId),
+    )
+    .innerJoin(
+      trajectories,
+      eq(trajectories.id, trajectorySteps.trajectoryId),
+    )
+    .where(inArray(stepAnnotations.annotationId, annIds))
+
+  const trajByAnnotation = new Map<
+    string,
+    { trajectoryId: string; agentName: string; rootPrompt: string; summary: string | null }
+  >()
+  for (const r of stepRows) {
+    if (!trajByAnnotation.has(r.annotationId)) {
+      trajByAnnotation.set(r.annotationId, {
+        trajectoryId: r.trajectoryId,
+        agentName: r.agentName,
+        rootPrompt: r.rootPrompt,
+        summary: r.summary,
+      })
+    }
+  }
+
+  const out: QCQueueItem[] = []
+  for (const f of filtered) {
+    const traj = trajByAnnotation.get(f.annotationId)
+    if (!traj) continue // annotation has no step marks linking to a trajectory yet
+    out.push({
+      annotationId: f.annotationId,
+      trajectoryId: traj.trajectoryId,
+      workspaceId: f.workspaceId,
+      workspaceName: workspaceNameById.get(f.workspaceId) ?? 'workspace',
+      agentName: traj.agentName,
+      rootPromptPreview:
+        traj.rootPrompt.length > 180
+          ? traj.rootPrompt.slice(0, 180) + '…'
+          : traj.rootPrompt,
+      submitterId: f.submitterId,
+      submitterEmail: f.submitterEmail ?? null,
+      submitterDisplayName: f.submitterDisplayName ?? null,
+      submittedAt: f.submittedAt,
+      topicStatus: f.topicStatus as 'submitted' | 'reviewing',
+      summaryPreview: traj.summary
+        ? extractSummaryParagraph(traj.summary).slice(0, 220)
+        : null,
+    })
+  }
+  return out
+}
 
 function startOfTodayUtc(): Date {
   const d = new Date()

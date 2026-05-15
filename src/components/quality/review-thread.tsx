@@ -34,8 +34,13 @@ export function ReviewThread({
 }) {
   if (messages.length === 0) return null
 
+  // Submitter can reply when the last message is from anyone else
+  // (admin OR QC reviewer). Two reviewer messages in a row (e.g.
+  // qc_passed → admin approved) collapse — no point letting the
+  // submitter chime in mid-escalation.
   const lastFromReviewer =
-    messages.length > 0 && messages[messages.length - 1].authorRole === 'reviewer'
+    messages.length > 0 &&
+    messages[messages.length - 1].authorRole !== 'submitter'
 
   return (
     <section>
@@ -81,8 +86,14 @@ function MessageBlock({ message }: { message: ReviewThreadMessage }) {
     ReviewThreadMessage['kind'],
     { label: string; bg: string; fg: string }
   > = {
+    qc_passed: {
+      // Cyan tone matches the QC role badge palette.
+      label: '✓ QC passed',
+      bg: 'oklch(0.94 0.04 200 / 0.5)',
+      fg: 'oklch(0.45 0.15 200)',
+    },
     approved: {
-      label: '✓ approved',
+      label: '✓ accepted',
       bg: 'var(--success-soft)',
       fg: 'var(--success)',
     },
@@ -92,7 +103,7 @@ function MessageBlock({ message }: { message: ReviewThreadMessage }) {
       fg: 'var(--danger)',
     },
     revised: {
-      label: '↻ revision requested',
+      label: '↻ 打回 (revision)',
       bg: 'oklch(0.7 0.14 75 / 0.08)',
       fg: 'var(--warn)',
     },
@@ -103,6 +114,13 @@ function MessageBlock({ message }: { message: ReviewThreadMessage }) {
     },
   }
   const s = kindStyle[message.kind]
+  // Role label for the meta row — admin vs qc vs submitter.
+  const roleLabel =
+    message.authorRole === 'submitter'
+      ? 'submitter'
+      : message.authorRole === 'qc'
+        ? 'qc'
+        : 'admin'
   return (
     <div>
       <div className="flex items-center gap-2 flex-wrap mb-1">
@@ -125,10 +143,10 @@ function MessageBlock({ message }: { message: ReviewThreadMessage }) {
         >
           {message.authorDisplayName ??
             message.authorEmail?.split('@')[0] ??
-            (message.authorRole === 'reviewer' ? 'reviewer' : 'submitter')}
+            roleLabel}
         </span>
         <span className="mono ts-11" style={{ color: 'var(--mute2)' }}>
-          · {message.authorRole}
+          · {roleLabel}
         </span>
         <span
           className="mono ts-11 ml-auto"

@@ -165,7 +165,8 @@ export async function getActiveSkipsForUser(opts: {
 }
 
 /**
- * Convenience: which workspaces is the user an annotator/admin of?
+ * Convenience: which workspaces can the user pull work from?
+ * (admin / qc / annotator — viewer excluded since they can't submit.)
  * Used by the queue page to render the workspace selector.
  */
 export async function listMyAnnotatableWorkspaces(opts: {
@@ -174,7 +175,7 @@ export async function listMyAnnotatableWorkspaces(opts: {
   Array<{
     workspaceId: string
     workspaceName: string
-    role: 'admin' | 'annotator'
+    role: 'admin' | 'qc' | 'annotator'
   }>
 > {
   const db = getDb()
@@ -184,18 +185,19 @@ export async function listMyAnnotatableWorkspaces(opts: {
       workspaceId: workspaceMembers.workspaceId,
       role: workspaceMembers.role,
       workspaceName: workspaces.name,
-      adminId: workspaces.adminId,
-      deletedAt: workspaces.createdAt, // workspaces table has no deletedAt; placeholder
     })
     .from(workspaceMembers)
     .innerJoin(workspaces, eq(workspaces.id, workspaceMembers.workspaceId))
     .where(eq(workspaceMembers.userId, opts.userId))
 
   return rows
-    .filter((r) => r.role === 'admin' || r.role === 'annotator')
+    .filter(
+      (r) =>
+        r.role === 'admin' || r.role === 'qc' || r.role === 'annotator',
+    )
     .map((r) => ({
       workspaceId: r.workspaceId,
       workspaceName: r.workspaceName,
-      role: r.role as 'admin' | 'annotator',
+      role: r.role as 'admin' | 'qc' | 'annotator',
     }))
 }

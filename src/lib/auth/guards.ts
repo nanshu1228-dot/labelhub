@@ -114,7 +114,16 @@ export async function requireWorkspaceAdmin(workspaceId: string) {
 }
 
 /**
- * Membership check — any role (admin / annotator / viewer) passes.
+ * Workspace role values. Stratified — each one is a superset of the next:
+ *   admin → can do everything qc can + workspace management
+ *   qc    → can do everything annotator can + quality-check review
+ *   annotator → can submit annotations
+ *   viewer → read-only
+ */
+export type WorkspaceRole = 'admin' | 'qc' | 'annotator' | 'viewer'
+
+/**
+ * Membership check — any role passes (including viewer).
  *
  * Returns the user's role so callers can branch on it without re-querying.
  */
@@ -147,6 +156,25 @@ export async function requireWorkspaceMember(workspaceId: string) {
   return {
     user,
     workspace,
-    role: effectiveRole as 'admin' | 'annotator' | 'viewer',
+    role: effectiveRole as WorkspaceRole,
   }
+}
+
+/**
+ * QC-or-above check — admin OR qc roles pass. Used by quality-check
+ * server actions: only QC reviewers and admins can run the
+ * pass/打回 verdict on a submitted annotation.
+ *
+ * Returns { user, workspace, role } so callers can still distinguish
+ * admin from qc when they need finer-grained logic (e.g. only admin
+ * can terminally reject; QC can only request_revision).
+ */
+export async function requireWorkspaceQC(workspaceId: string) {
+  const result = await requireWorkspaceMember(workspaceId)
+  if (result.role !== 'admin' && result.role !== 'qc') {
+    throw new ForbiddenError(
+      'Quality-check review requires the qc or admin role.',
+    )
+  }
+  return result
 }
