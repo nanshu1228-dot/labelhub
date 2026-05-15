@@ -91,7 +91,7 @@ curl -sS -X POST https://labelhub-gamma.vercel.app/api/proxy/doubao/chat/complet
 | Symptom | First thing to check |
 |---|---|
 | 500 on a page | `vercel logs` for the failing function |
-| Empty dashboards | Diag endpoint at `/api/admin/diag?token=labelhub-diag-2026` — env may be missing in prod |
+| Empty dashboards | Check env via Vercel dashboard → Settings → Environment Variables. The `/api/admin/diag` endpoint exists but is intentionally disabled in prod (returns 503 unless you set `ADMIN_DIAG_TOKEN`). See `docs/SECURITY_REVIEW.md` for the rationale. |
 | Google sign-in errors | Supabase Dashboard → Auth → URL Configuration → confirm redirect URLs include `https://labelhub-gamma.vercel.app/auth/callback` |
 | Proxy 502 | Vercel env may have lost `DOUBAO_API_KEY`. Re-set + redeploy. |
 | Invite email not sending | Supabase free tier rate-limits magic-link to ~4/hour per recipient. Tell the recipient to wait, or use copy-link from UI. |
