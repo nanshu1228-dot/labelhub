@@ -1,0 +1,69 @@
+name: Security smoke
+
+# Runs security-smoke-test.ts against the live production deploy. Catches
+# regressions like "someone removed the auth gate from a workspace page"
+# the moment they hit main — far cheaper than discovering it at demo time.
+#
+# Three trigger paths:
+#   1. push to main           — after the human merges
+#   2. workflow_dispatch      — manual replay from the Actions tab
+#   3. schedule (cron)        — periodic re-check in case prod drifts
+#                               (e.g. someone toggles an env var)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    # Every 6 hours at minute 0. UTC. Light load — one full smoke takes
+    # ~30s + a 90s pre-wait when called on push.
+    - cron: '0 */6 * * *'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  smoke:
+    name: Probe prod
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund --prefer-offline
+
+      - name: Wait for Vercel deploy to settle
+        # On push, the smoke test would otherwise hit the OLD deploy and
+        # report green for a state that may already have been broken by
+        # the just-pushed commit. 90s is the typical Hobby-tier build
+        # time; the retry loop below catches longer ones.
+        if: github.event_name == 'push'
+        run: sleep 90
+
+      - name: Run security smoke (with retry)
+        # The smoke test is idempotent — every check is a GET or curl
+        # probe with no side effects. Safe to retry. We give up to 3
+        # attempts spaced 30s apart in case the deploy is slow or CDN
+        # caches are still propagating.
+        run: |
+          set +e
+          for attempt in 1 2 3; do
+            echo "── attempt $attempt of 3 ──"
+            npm run security:smoke && exit 0
+            echo ""
+            echo "smoke failed on attempt $attempt; sleeping 30s before retry"
+            sleep 30
+          done
+          echo "smoke failed after 3 attempts"
+          exit 1
+        env:
+          BASE_URL: https://labelhub-gamma.vercel.app
