@@ -9,7 +9,6 @@ import {
 import type { PairChecklistItem } from '@/lib/templates/types'
 import { dimensionGsb } from '@/lib/templates/modes/arena-gsb'
 import { TopicHeader } from './topic-header'
-import { AddCustomItemRow } from './pair-rubric-form'
 
 /**
  * Arena-GSB annotator.
@@ -31,17 +30,16 @@ type DimScore = number | null
 type DimensionsState = Record<string, { a: DimScore; b: DimScore }>
 type Verdict = 'a_better' | 'tie' | 'b_better' | null
 
-interface CustomDimension {
-  id: string
-  name: string
-  description?: string
-}
-
 const SCORE_VALUES = [1, 2, 3, 4, 5] as const
 
+/**
+ * Arena-GSB uses ONLY the dimensions admins define for the task (preset
+ * or templateConfig-overridden). Unlike pair-rubric, annotators do not
+ * add custom dimensions here — the calibration target is to make all
+ * raters score the same dimensions so cross-rater median is meaningful.
+ */
 function initialDimensions(
   spec: readonly PairChecklistItem[],
-  customDims: readonly CustomDimension[],
   payload: Record<string, unknown>,
 ): DimensionsState {
   const stored = (payload.dimensions ?? {}) as Record<
@@ -49,7 +47,7 @@ function initialDimensions(
     { a?: number; b?: number }
   >
   const out: DimensionsState = {}
-  for (const dim of [...spec, ...customDims]) {
+  for (const dim of spec) {
     const prior = stored[dim.id] ?? {}
     out[dim.id] = {
       a:
@@ -63,42 +61,6 @@ function initialDimensions(
     }
   }
   return out
-}
-
-function initialCustomDimensions(
-  payload: Record<string, unknown>,
-): CustomDimension[] {
-  const raw = payload.customDimensions
-  if (!Array.isArray(raw)) return []
-  const out: CustomDimension[] = []
-  for (const v of raw) {
-    if (!v || typeof v !== 'object') continue
-    const item = v as Record<string, unknown>
-    if (
-      typeof item.id !== 'string' ||
-      typeof item.name !== 'string' ||
-      !item.id ||
-      !item.name
-    )
-      continue
-    out.push({
-      id: item.id,
-      name: item.name,
-      description:
-        typeof item.description === 'string' ? item.description : undefined,
-    })
-  }
-  return out
-}
-
-function newCustomDimId(name: string): string {
-  const slug = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .slice(0, 24) || 'dim'
-  const rand = Math.random().toString(36).slice(2, 6)
-  return `custom_${slug}_${rand}`
 }
 
 function dimensionsToPayload(state: DimensionsState) {
@@ -161,11 +123,8 @@ export function ArenaGsbForm({
   } | null
 }) {
   const router = useRouter()
-  const [customDimensions, setCustomDimensions] = useState<CustomDimension[]>(
-    () => initialCustomDimensions(initialPayload),
-  )
   const [dimensions, setDimensions] = useState<DimensionsState>(() =>
-    initialDimensions(spec, customDimensions, initialPayload),
+    initialDimensions(spec, initialPayload),
   )
   const [verdict, setVerdict] = useState<Verdict>(() => {
     const v = initialPayload.overallVerdict
@@ -190,31 +149,9 @@ export function ArenaGsbForm({
     }))
   }
 
-  function addCustomDimension(name: string, description: string) {
-    const trimmed = name.trim()
-    if (!trimmed) return
-    const id = newCustomDimId(trimmed)
-    setCustomDimensions((prev) => [
-      ...prev,
-      { id, name: trimmed, description: description.trim() || undefined },
-    ])
-    setDimensions((prev) => ({ ...prev, [id]: { a: null, b: null } }))
-  }
-
-  function removeCustomDimension(id: string) {
-    setCustomDimensions((prev) => prev.filter((c) => c.id !== id))
-    setDimensions((prev) => {
-      const next = { ...prev }
-      delete next[id]
-      return next
-    })
-  }
-
   function payload() {
     return {
       dimensions: dimensionsToPayload(dimensions),
-      customDimensions:
-        customDimensions.length > 0 ? customDimensions : undefined,
       overallVerdict: verdict ?? undefined,
       reasoning: reasoning.trim() || undefined,
     }
@@ -351,13 +288,7 @@ export function ArenaGsbForm({
               </tr>
             </thead>
             <tbody>
-              {[
-                ...spec.map((dim) => ({ ...dim, kind: 'preset' as const })),
-                ...customDimensions.map((dim) => ({
-                  ...dim,
-                  kind: 'custom' as const,
-                })),
-              ].map((dim, idx) => {
+              {spec.map((dim, idx) => {
                 const row = dimensions[dim.id] ?? { a: null, b: null }
                 const gsb =
                   typeof row.a === 'number' && typeof row.b === 'number'
@@ -372,45 +303,14 @@ export function ArenaGsbForm({
                     }}
                   >
                     <td className="px-4 py-3 align-top">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className="ts-13"
-                          style={{ color: 'var(--text)', fontWeight: 500 }}
-                        >
-                          {dim.name}
-                        </span>
-                        {dim.kind === 'custom' && (
-                          <>
-                            <span
-                              className="ts-11 mono px-1.5 py-0.5 rounded"
-                              style={{
-                                background: 'oklch(0.7 0.14 75 / 0.15)',
-                                color: 'oklch(0.7 0.14 75)',
-                                border: '1px solid oklch(0.7 0.14 75 / 0.35)',
-                              }}
-                              title="Added by you for this topic"
-                            >
-                              custom
-                            </span>
-                            {!isReadOnly && (
-                              <button
-                                type="button"
-                                onClick={() => removeCustomDimension(dim.id)}
-                                className="ts-11 mono"
-                                style={{
-                                  background: 'transparent',
-                                  color: 'var(--mute2)',
-                                  border: 'none',
-                                  cursor: 'pointer',
-                                  padding: '2px 4px',
-                                }}
-                                title="Remove this dimension"
-                              >
-                                ×
-                              </button>
-                            )}
-                          </>
-                        )}
+                      <div
+                        className="ts-13"
+                        style={{
+                          color: 'var(--text)',
+                          fontWeight: 500,
+                        }}
+                      >
+                        {dim.name}
                       </div>
                       {dim.description && (
                         <div
@@ -455,12 +355,6 @@ export function ArenaGsbForm({
               })}
             </tbody>
           </table>
-          {!isReadOnly && (
-            <AddCustomItemRow
-              onAdd={(name, desc) => addCustomDimension(name, desc)}
-              kind="dimension"
-            />
-          )}
         </div>
 
         <div className="mt-6">
