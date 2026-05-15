@@ -4,7 +4,11 @@ import { after } from 'next/server'
 import { and, eq } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { tasks, topics, annotations, events } from '@/lib/db/schema'
-import { requireUser, requireWorkspaceAdmin } from '@/lib/auth/guards'
+import {
+  requireUser,
+  requireWorkspaceAdmin,
+  requireWorkspaceMember,
+} from '@/lib/auth/guards'
 import { fanoutWebhook } from '@/lib/webhooks/fanout'
 import {
   ConflictError,
@@ -43,21 +47,17 @@ export async function saveDraftAnnotation(
   input: z.infer<typeof saveDraftSchema>,
 ) {
   const parsed = saveDraftSchema.parse(input)
-  const user = await requireUser()
   const db = getDb()
 
+  // Resolve topic → task → workspace BEFORE the auth check so we
+  // authorize against the right workspace (defends against a malicious
+  // topicId pointing at another workspace's topic).
   const [topic] = await db
     .select()
     .from(topics)
     .where(eq(topics.id, parsed.topicId))
     .limit(1)
   if (!topic) throw new NotFoundError('Topic')
-  if (topic.assignedTo !== user.id) {
-    throw new ForbiddenError('Not your topic.')
-  }
-  if (topic.status !== 'drafting' && topic.status !== 'revising') {
-    throw new ConflictError(`Topic is ${topic.status} — drafting closed.`)
-  }
 
   const [task] = await db
     .select()
@@ -65,6 +65,27 @@ export async function saveDraftAnnotation(
     .where(eq(tasks.id, topic.taskId))
     .limit(1)
   if (!task) throw new NotFoundError('Task')
+
+  const { user } = await requireWorkspaceMember(task.workspaceId)
+
+  // Auto-claim: first save by any workspace member on an unassigned
+  // topic claims it. After that, only the claimant may save further
+  // drafts. This is the "first to start working" model — admins can
+  // pre-assign for fairness flows, but the default is grab-as-you-go.
+  if (topic.assignedTo === null) {
+    await db
+      .update(topics)
+      .set({ assignedTo: user.id })
+      .where(eq(topics.id, topic.id))
+    topic.assignedTo = user.id
+  } else if (topic.assignedTo !== user.id) {
+    throw new ForbiddenError(
+      'This topic is claimed by another annotator. Pick a different one.',
+    )
+  }
+  if (topic.status !== 'drafting' && topic.status !== 'revising') {
+    throw new ConflictError(`Topic is ${topic.status} — drafting closed.`)
+  }
 
   const [existing] = await db
     .select()
@@ -128,7 +149,6 @@ const submitSchema = z.object({
  */
 export async function submitAnnotation(input: z.infer<typeof submitSchema>) {
   const parsed = submitSchema.parse(input)
-  const user = await requireUser()
   const db = getDb()
 
   const [topic] = await db
@@ -137,12 +157,6 @@ export async function submitAnnotation(input: z.infer<typeof submitSchema>) {
     .where(eq(topics.id, parsed.topicId))
     .limit(1)
   if (!topic) throw new NotFoundError('Topic')
-  if (topic.assignedTo !== user.id) {
-    throw new ForbiddenError('Not your topic.')
-  }
-  if (topic.status !== 'drafting' && topic.status !== 'revising') {
-    throw new ConflictError(`Topic is ${topic.status} — cannot submit.`)
-  }
 
   const [task] = await db
     .select()
@@ -150,6 +164,26 @@ export async function submitAnnotation(input: z.infer<typeof submitSchema>) {
     .where(eq(tasks.id, topic.taskId))
     .limit(1)
   if (!task) throw new NotFoundError('Task')
+
+  const { user } = await requireWorkspaceMember(task.workspaceId)
+
+  // Auto-claim: same model as saveDraftAnnotation. A user who jumps
+  // straight to submit (no prior save) on an unclaimed topic still
+  // becomes the claimant.
+  if (topic.assignedTo === null) {
+    await db
+      .update(topics)
+      .set({ assignedTo: user.id })
+      .where(eq(topics.id, topic.id))
+    topic.assignedTo = user.id
+  } else if (topic.assignedTo !== user.id) {
+    throw new ForbiddenError(
+      'This topic is claimed by another annotator.',
+    )
+  }
+  if (topic.status !== 'drafting' && topic.status !== 'revising') {
+    throw new ConflictError(`Topic is ${topic.status} — cannot submit.`)
+  }
 
   const template = getTemplate(task.templateMode as TemplateMode)
   if (!template) throw new ValidationError('Template not registered.')

@@ -19,7 +19,11 @@ export type PickerTemplate = {
  * the source of truth for data shapes, this set is the source of
  * truth for "can the user actually use this mode right now".
  */
-const SHIPPED_MODES = new Set<TemplateMode>(['agent-trace-eval'])
+const SHIPPED_MODES = new Set<TemplateMode>([
+  'agent-trace-eval',
+  'pair-rubric',
+  'arena-gsb',
+])
 
 export function TemplatePicker({ templates }: { templates: PickerTemplate[] }) {
   const [selected, setSelected] = useState<TemplateMode | null>(null)
