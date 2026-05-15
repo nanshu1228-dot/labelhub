@@ -1,6 +1,6 @@
 import { and, count, desc, eq, isNull, sql } from 'drizzle-orm'
 import Link from 'next/link'
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import { getDb } from '@/lib/db/client'
 import {
   annotations,
@@ -13,19 +13,34 @@ import {
   workspaceApiKeys,
   workspaces,
 } from '@/lib/db/schema'
+import {
+  optionalUser,
+  requireWorkspaceMember,
+} from '@/lib/auth/guards'
 
 /**
  * Workspace dashboard.
  *
  * Server Component: awaits Next 16 async params, queries DB for live counts,
- * renders summary. Gracefully handles "DB not configured" so the redirect
- * from /workspaces/new still produces a useful page during local dev without
- * Supabase env.
+ * renders summary.
+ *
+ * **Access control**: signed-in workspace members only. Unauth visitors get
+ * redirected to /signin with next=this URL. Non-members get a generic 404
+ * (we deliberately don't distinguish "doesn't exist" from "not yours" so
+ * existence of a workspace doesn't leak across tenants).
  */
 export default async function WorkspacePage(
   props: PageProps<'/workspaces/[id]'>,
 ) {
   const { id } = await props.params
+
+  const me = await optionalUser()
+  if (!me) redirect(`/signin?next=/workspaces/${id}`)
+  try {
+    await requireWorkspaceMember(id)
+  } catch {
+    notFound()
+  }
 
   let workspace: typeof workspaces.$inferSelect | null = null
   let dbError: string | null = null

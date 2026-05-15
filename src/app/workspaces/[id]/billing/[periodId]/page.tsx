@@ -1,9 +1,13 @@
 import type { Metadata } from 'next'
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import Link from 'next/link'
 import { getWorkspaceById } from '@/lib/queries/workspaces'
 import { getPeriodDetail } from '@/lib/queries/billing'
 import { formatMoneyMinor } from '@/lib/billing/calculate-payout'
+import {
+  optionalUser,
+  requireWorkspaceAdmin,
+} from '@/lib/auth/guards'
 import { MarkPaidButton } from '@/components/billing/billing-dashboard'
 
 export const metadata: Metadata = {
@@ -23,6 +27,21 @@ export default async function PeriodDetailPage(
   props: PageProps<'/workspaces/[id]/billing/[periodId]'>,
 ) {
   const { id: workspaceId, periodId } = await props.params
+
+  // Admin-only — per-period detail includes annotator-level line items
+  // with amounts, which is financial PII.
+  const me = await optionalUser()
+  if (!me) {
+    redirect(
+      `/signin?next=/workspaces/${workspaceId}/billing/${periodId}`,
+    )
+  }
+  try {
+    await requireWorkspaceAdmin(workspaceId)
+  } catch {
+    notFound()
+  }
+
   const workspace = await getWorkspaceById(workspaceId)
   if (!workspace) notFound()
   const detail = await getPeriodDetail(workspaceId, periodId)

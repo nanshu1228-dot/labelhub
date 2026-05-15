@@ -1,9 +1,13 @@
 import type { Metadata } from 'next'
 import { after } from 'next/server'
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import { count, eq, desc, and, isNull } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { trajectories, trajectorySteps } from '@/lib/db/schema'
+import {
+  optionalUser,
+  requireWorkspaceMember,
+} from '@/lib/auth/guards'
 import { getWorkspaceById } from '@/lib/queries/workspaces'
 import { getTrajectoryWithSteps } from '@/lib/queries/trajectories'
 import { getTrajectoryIAA } from '@/lib/queries/iaa'
@@ -46,6 +50,20 @@ export default async function TrajectoryAnnotatePage(
 ) {
   const { id: workspaceId, trajId } = await props.params
   const searchParams = (await props.searchParams) ?? {}
+
+  // Access control: signed-in workspace members only. Annotating leaks
+  // peer marks + AI hints across tenants without this gate.
+  const me = await optionalUser()
+  if (!me) {
+    redirect(
+      `/signin?next=/workspaces/${workspaceId}/trajectories/${trajId}/annotate`,
+    )
+  }
+  try {
+    await requireWorkspaceMember(workspaceId)
+  } catch {
+    notFound()
+  }
 
   const workspace = await getWorkspaceById(workspaceId)
   if (!workspace) notFound()

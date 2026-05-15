@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { trajectories, trajectorySteps } from '@/lib/db/schema'
 import { summarizeTrajectory } from '@/lib/ai/trajectory-summarizer'
+import { checkAdminToken } from '@/lib/auth/admin-token'
 
 /**
  * POST /api/admin/backfill-summaries?token=...&limit=10&force=true
@@ -14,17 +15,16 @@ import { summarizeTrajectory } from '@/lib/ai/trajectory-summarizer'
  *
  * Bounded by `limit` per request so a single invocation stays under the
  * 60s function timeout — call repeatedly until `remaining=0`.
+ *
+ * Auth: token-gated via `ADMIN_DIAG_TOKEN` env (required, no fallback).
  */
 
 export const maxDuration = 60
 
-const ADMIN_TOKEN = process.env.ADMIN_DIAG_TOKEN ?? 'labelhub-diag-2026'
-
 export async function POST(request: NextRequest) {
+  const block = checkAdminToken(request)
+  if (block) return block
   const url = new URL(request.url)
-  if (url.searchParams.get('token') !== ADMIN_TOKEN) {
-    return NextResponse.json({ error: 'forbidden' }, { status: 403 })
-  }
   const limit = Math.min(
     Math.max(Number(url.searchParams.get('limit') ?? '5') || 5, 1),
     20,

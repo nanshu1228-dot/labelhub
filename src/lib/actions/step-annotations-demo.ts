@@ -33,20 +33,22 @@ import {
   trajectories,
   trajectorySteps,
 } from '@/lib/db/schema'
-import { AppError, ForbiddenError, NotFoundError } from '@/lib/errors'
+import { ForbiddenError, NotFoundError } from '@/lib/errors'
+import {
+  optionalUser,
+  requireWorkspaceMember,
+} from '@/lib/auth/guards'
 import { openTrajectoryForAnnotation } from './inbox'
 
-const DEMO_USER_ID = '00000000-0000-0000-0000-000000000001'
-
-function assertDemoMode(): void {
-  if (process.env.LABELHUB_DEMO_MODE !== 'true') {
-    throw new AppError(
-      'DEMO_MODE_DISABLED',
-      'Demo annotation is disabled. Set LABELHUB_DEMO_MODE=true in .env.local to enable.',
-      403,
-    )
-  }
-}
+/**
+ * SECURITY note: this file used to gate on LABELHUB_DEMO_MODE + a
+ * hardcoded DEMO_USER_ID literal — anyone in demo mode could
+ * impersonate the seed admin. Both have been removed; every export now
+ * resolves the real signed-in user via the standard auth guards.
+ *
+ * The "-demo" suffix on the file name is historical; kept to avoid
+ * breaking imports elsewhere in the tree. The behavior is real auth.
+ */
 
 // ───────────────────────────────────────────────────────────────────────
 // Add / upsert
@@ -72,8 +74,14 @@ export type MarkStepDemoInput = z.infer<typeof markSchema>
  * than creating a second mark — UI can re-save freely on rating change.
  */
 export async function markStepDemo(input: MarkStepDemoInput) {
-  assertDemoMode()
   const parsed = markSchema.parse(input)
+  // Real auth: must be a workspace member; viewers can't write marks.
+  const { user, role } = await requireWorkspaceMember(parsed.workspaceId)
+  if (role === 'viewer') {
+    throw new ForbiddenError(
+      'Viewers cannot submit step marks. Ask an admin to upgrade your role.',
+    )
+  }
   const db = getDb()
 
   // Resolve trajectory + verify it belongs to the claimed workspace.
@@ -106,7 +114,7 @@ export async function markStepDemo(input: MarkStepDemoInput) {
   const binding = await openTrajectoryForAnnotation({
     workspaceId: parsed.workspaceId,
     trajectoryId: step.trajectoryId,
-    userId: DEMO_USER_ID,
+    userId: user.id,
   })
 
   // Upsert by (annotation, step, kind).
@@ -150,7 +158,7 @@ export async function markStepDemo(input: MarkStepDemoInput) {
   await db.insert(events).values({
     type: existing ? 'step_annotation.updated' : 'step_annotation.created',
     workspaceId: parsed.workspaceId,
-    actorId: DEMO_USER_ID,
+    actorId: user.id,
     payload: {
       stepAnnotationId: row.id,
       annotationId: binding.annotationId,
@@ -197,8 +205,17 @@ export async function listMyStepAnnotationsDemo(opts: {
   workspaceId: string
   trajectoryId: string
 }): Promise<Record<string, typeof stepAnnotations.$inferSelect>> {
-  // Public on read — even in non-demo mode you can read demo annotations.
-  // The write side is what we gate.
+  // Unauth callers get empty — read-only browse path on the trajectory
+  // detail page still renders, just with no "my marks" hydration. Auth'd
+  // callers must be members of this workspace (no cross-tenant snooping
+  // via the trajectoryId).
+  const me = await optionalUser()
+  if (!me) return {}
+  try {
+    await requireWorkspaceMember(opts.workspaceId)
+  } catch {
+    return {}
+  }
   const db = getDb()
 
   // Verify trajectory belongs to the workspace before exposing marks.
@@ -209,11 +226,11 @@ export async function listMyStepAnnotationsDemo(opts: {
     .limit(1)
   if (!traj || traj.workspaceId !== opts.workspaceId) return {}
 
-  // Find the demo user's annotation row (if any). If none, no marks.
+  // Find THIS user's annotation rows (if any). If none, no marks to show.
   const allTopics = await db
     .select()
     .from(annotations)
-    .where(eq(annotations.userId, DEMO_USER_ID))
+    .where(eq(annotations.userId, me.id))
   if (allTopics.length === 0) return {}
 
   // Find the step annotations that belong to ANY of the demo user's

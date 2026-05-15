@@ -1,4 +1,5 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
+import { checkAdminToken } from '@/lib/auth/admin-token'
 
 /**
  * GET /api/admin/diag — env-presence diagnostic.
@@ -7,11 +8,11 @@ import { NextResponse } from 'next/server'
  * deploy's runtime. Used for one-off "why isn't Claude hint working"
  * debugging — read-only, never leaks the key value.
  *
- * Gated behind a query token to discourage drive-by probing. The token
- * is shared with the team out-of-band (not the API).
+ * Auth: token-gated via `ADMIN_DIAG_TOKEN` env (required). When the env
+ * var is unset, the endpoint returns 503 and refuses to serve at all —
+ * we deliberately do NOT fall back to a hardcoded value so a forgotten
+ * env doesn't silently expose the diagnostic to the world.
  */
-
-const ADMIN_TOKEN = process.env.ADMIN_DIAG_TOKEN ?? 'labelhub-diag-2026'
 
 function check(envName: string): { name: string; set: boolean; len: number } {
   const v = process.env[envName]
@@ -22,14 +23,9 @@ function check(envName: string): { name: string; set: boolean; len: number } {
   }
 }
 
-export async function GET(request: Request) {
-  const url = new URL(request.url)
-  if (url.searchParams.get('token') !== ADMIN_TOKEN) {
-    return NextResponse.json(
-      { error: 'forbidden' },
-      { status: 403 },
-    )
-  }
+export async function GET(request: NextRequest) {
+  const block = checkAdminToken(request)
+  if (block) return block
   return NextResponse.json({
     providers: [
       check('ANTHROPIC_API_KEY'),

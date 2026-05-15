@@ -1,10 +1,14 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import { getWorkspaceById } from '@/lib/queries/workspaces'
 import { listConnections } from '@/lib/proxy/connections'
 import { isVaultAvailable } from '@/lib/proxy/vault'
 import { listProviders } from '@/lib/proxy/provider-registry'
+import {
+  optionalUser,
+  requireWorkspaceAdmin,
+} from '@/lib/auth/guards'
 import { ConnectionFormClient } from '@/components/connections/connection-form-client'
 import { ConnectionRowClient } from '@/components/connections/connection-row-client'
 
@@ -24,6 +28,18 @@ export default async function ConnectionsPage(
   props: PageProps<'/workspaces/[id]/connections'>,
 ) {
   const { id: workspaceId } = await props.params
+
+  // Admin-only — provider connections hold upstream LLM API keys
+  // (vault-encrypted but still operational secrets). Even read access
+  // to the list reveals what providers are wired up.
+  const me = await optionalUser()
+  if (!me) redirect(`/signin?next=/workspaces/${workspaceId}/connections`)
+  try {
+    await requireWorkspaceAdmin(workspaceId)
+  } catch {
+    notFound()
+  }
+
   let workspaceName = 'workspace'
   let dbError: string | null = null
   let connections: Awaited<ReturnType<typeof listConnections>> = []

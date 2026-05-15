@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import { getWorkspaceById } from '@/lib/queries/workspaces'
 import { getTrajectoryWithSteps } from '@/lib/queries/trajectories'
 import { getTrajectoryIAA, type StepIAA } from '@/lib/queries/iaa'
@@ -65,18 +65,29 @@ export default async function TrajectoryDetailPage(
   let summaryModel: string | null = null
   let features: TrajectoryFeatures | null = null
 
+  // Access control: signed-in workspace members only. Trajectory detail
+  // pages expose root prompt, full step traces, AI summary, peer marks —
+  // everything except the keys. Unauth visitors get bounced to /signin;
+  // non-members get a generic 404 (don't leak existence across tenants).
+  const me = await optionalUser()
+  if (!me) {
+    redirect(
+      `/signin?next=/workspaces/${workspaceId}/trajectories/${trajId}`,
+    )
+  }
+
   try {
     const workspace = await getWorkspaceById(workspaceId)
     if (!workspace) notFound()
     workspaceName = workspace.name
 
-    const me = await optionalUser()
-    if (me) {
+    {
       try {
         const { role } = await requireWorkspaceMember(workspaceId)
         isAdmin = role === 'admin' || workspace.adminId === me.id
       } catch {
-        /* not a member — leave isAdmin = false */
+        // Not a member of this workspace — don't render anything.
+        notFound()
       }
 
       // Surface the review thread when the viewer is the submitter

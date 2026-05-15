@@ -1,12 +1,16 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import { getWorkspaceById } from '@/lib/queries/workspaces'
 import { listTrajectoriesWithStepStats } from '@/lib/queries/trajectories'
 import { listDisputeCountsByTrajectory } from '@/lib/queries/iaa'
 import { listGoldTrajectoryIds } from '@/lib/queries/gold-standards'
 import { TRAJECTORY_SOURCES, type TrajectorySource } from '@/lib/trajectories/schema'
 import type { TrajectoryFeatures } from '@/lib/trajectories/extract-features'
+import {
+  optionalUser,
+  requireWorkspaceMember,
+} from '@/lib/auth/guards'
 import { GoldBadge } from '@/components/quality/gold-badge'
 import { FeatureChips } from '@/components/trajectory/feature-chips'
 
@@ -40,6 +44,18 @@ export default async function TrajectoriesListPage(
     typeof search?.agent === 'string' && search.agent.trim().length > 0
       ? search.agent.trim().toLowerCase()
       : null
+
+  // Access control: signed-in workspace members only. The trajectory list
+  // exposes agent names, dispute counts, and AI-generated summaries —
+  // all of which would leak across tenants if anyone with the URL could
+  // hit this page.
+  const me = await optionalUser()
+  if (!me) redirect(`/signin?next=/workspaces/${workspaceId}/trajectories`)
+  try {
+    await requireWorkspaceMember(workspaceId)
+  } catch {
+    notFound()
+  }
 
   // Resolve workspace name for the breadcrumb. Tolerate missing DB so the
   // page still renders the design when developing locally without Supabase.

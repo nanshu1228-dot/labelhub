@@ -1,5 +1,6 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { reviewTrajectoryAndCache } from '@/lib/actions/trajectory-hints'
+import { checkAdminToken } from '@/lib/auth/admin-token'
 
 /**
  * POST /api/admin/compute-hints?token=...&trajectoryId=...
@@ -10,27 +11,24 @@ import { reviewTrajectoryAndCache } from '@/lib/actions/trajectory-hints'
  * cut short. This endpoint runs the same code path INSIDE the request
  * lifetime so we can:
  *
- *   - see the actual error if it fails
  *   - retry-by-curl until success
  *   - pre-seed the demo workspace before a demo
  *
- * Token-gated (ADMIN_DIAG_TOKEN env, falls back to a hardcoded demo
- * value). Returns the hint count + the actual error message on failure.
+ * Auth: token-gated via `ADMIN_DIAG_TOKEN` env (required, no fallback).
+ * Errors return a generic 500 with code only — stack traces stay in
+ * server logs, NEVER reach the client (used to leak DB schema + paths).
  */
-
-const ADMIN_TOKEN = process.env.ADMIN_DIAG_TOKEN ?? 'labelhub-diag-2026'
 
 export const maxDuration = 60
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+  const block = checkAdminToken(request)
+  if (block) return block
   const url = new URL(request.url)
-  if (url.searchParams.get('token') !== ADMIN_TOKEN) {
-    return NextResponse.json({ error: 'forbidden' }, { status: 403 })
-  }
   const trajectoryId = url.searchParams.get('trajectoryId')
   if (!trajectoryId) {
     return NextResponse.json(
-      { error: 'missing trajectoryId query param' },
+      { error: { code: 'MISSING_PARAM', message: 'missing trajectoryId' } },
       { status: 400 },
     )
   }
@@ -48,15 +46,29 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: false,
       trajectoryId,
-      error: result.error,
+      // result.error is from our own code paths (NotFound / validation
+      // failures), safe to surface. Provider errors get sanitized inside
+      // reviewTrajectoryAndCache before bubbling here.
+      error: { code: 'COMPUTE_FAILED', message: result.error },
     })
   } catch (e) {
+    // Log full stack server-side; return generic message to caller. The
+    // old behavior returned stack frames + e.message verbatim, which
+    // leaked module paths and DB constraint names.
+    // eslint-disable-next-line no-console
+    console.error(
+      '[admin/compute-hints] internal error:',
+      e instanceof Error ? e.stack ?? e.message : e,
+    )
     return NextResponse.json(
       {
         ok: false,
         trajectoryId,
-        error: e instanceof Error ? e.message : 'unknown error',
-        stack: e instanceof Error ? e.stack?.split('\n').slice(0, 5) : null,
+        error: {
+          code: 'INTERNAL',
+          message:
+            'Compute failed. Check server logs for the underlying error.',
+        },
       },
       { status: 500 },
     )
@@ -64,6 +76,6 @@ export async function POST(request: Request) {
 }
 
 // Convenience: GET also works for browser pasting.
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   return POST(request)
 }

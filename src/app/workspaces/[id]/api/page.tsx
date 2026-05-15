@@ -1,9 +1,13 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import { desc, eq } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { apiRequestLog } from '@/lib/db/schema'
+import {
+  optionalUser,
+  requireWorkspaceAdmin,
+} from '@/lib/auth/guards'
 import { getWorkspaceById } from '@/lib/queries/workspaces'
 import {
   listApiKeysWithStatus,
@@ -38,6 +42,16 @@ export default async function ApiManagementPage(
   props: PageProps<'/workspaces/[id]/api'>,
 ) {
   const { id: workspaceId } = await props.params
+
+  // Admin-only — API key prefixes + usage logs are operational secrets
+  // even though plain keys never leave the DB.
+  const me = await optionalUser()
+  if (!me) redirect(`/signin?next=/workspaces/${workspaceId}/api`)
+  try {
+    await requireWorkspaceAdmin(workspaceId)
+  } catch {
+    notFound()
+  }
 
   let workspaceName = 'workspace'
   let dbError: string | null = null

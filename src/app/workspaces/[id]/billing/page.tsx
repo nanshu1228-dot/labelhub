@@ -1,8 +1,12 @@
 import type { Metadata } from 'next'
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import Link from 'next/link'
 import { getWorkspaceById } from '@/lib/queries/workspaces'
 import { getWorkspaceBillingSummary } from '@/lib/queries/billing'
+import {
+  optionalUser,
+  requireWorkspaceAdmin,
+} from '@/lib/auth/guards'
 import { BillingDashboard } from '@/components/billing/billing-dashboard'
 
 export const metadata: Metadata = {
@@ -26,6 +30,19 @@ export default async function WorkspaceBillingPage(
   props: PageProps<'/workspaces/[id]/billing'>,
 ) {
   const { id: workspaceId } = await props.params
+
+  // Access control: workspace admin only. Billing data (line items, payouts,
+  // member wallet sums) is financial PII — never expose to annotators or
+  // non-members. Unauth → /signin, non-admin → notFound (don't leak
+  // existence to a wrong-tenant viewer).
+  const me = await optionalUser()
+  if (!me) redirect(`/signin?next=/workspaces/${workspaceId}/billing`)
+  try {
+    await requireWorkspaceAdmin(workspaceId)
+  } catch {
+    notFound()
+  }
+
   const workspace = await getWorkspaceById(workspaceId)
   if (!workspace) notFound()
   const summary = await getWorkspaceBillingSummary(workspaceId)

@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import { getWorkspaceById } from '@/lib/queries/workspaces'
 import {
   getWorkspaceIaaSummary,
@@ -46,17 +46,27 @@ export default async function DisputesPage(
   const trustByUserId: Record<string, UserTrust> = {}
   let isAdmin = false
 
+  // Access control: members only (any role can view disputes; admin
+  // features layer on with `isAdmin`). Unauth bounces to /signin;
+  // non-members get a generic 404 — don't leak existence.
+  const me = await optionalUser()
+  if (!me) redirect(`/signin?next=/workspaces/${workspaceId}/disputes`)
+  try {
+    await requireWorkspaceMember(workspaceId)
+  } catch {
+    notFound()
+  }
+
   try {
     const workspace = await getWorkspaceById(workspaceId)
     if (!workspace) notFound()
     workspaceName = workspace.name
 
-    // Resolve viewer's role — trust scores are admin-only operational data,
-    // never shown to annotators (would create perverse incentives).
-    const me = await optionalUser()
-    if (me) {
+    {
+      // Resolve viewer's role — trust scores are admin-only operational data,
+      // never shown to annotators (would create perverse incentives).
       const { role } = await requireWorkspaceMember(workspaceId)
-      isAdmin = role === 'admin' || workspace.adminId === me.id
+      isAdmin = role === 'admin' || workspace.adminId === me!.id
     }
 
     const [s, d, p, trustList] = await Promise.all([
