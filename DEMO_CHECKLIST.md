@@ -71,6 +71,21 @@ curl -sS -X POST https://labelhub-gamma.vercel.app/api/proxy/doubao/chat/complet
 - [ ] `/workspaces/00000000-.../members` — members table renders, invite
       form visible, role pills color-coded (admin = violet)
 
+## Analyze (1 min) — flagship admin surface
+
+- [ ] `/workspaces/00000000-0000-0000-0000-000000000010/analyze` — admin
+      dashboard renders with five sections: filter bar, aggregate cards
+      grid, Ask Claude box, matched-trajectories preview
+- [ ] click preset `outcome:completed` → ~30 matches; aggregate cards
+      populate (top tools, top agents, behavior patterns)
+- [ ] type a question into Ask Claude (e.g. "What patterns do these
+      completed runs share?") → response returns within ~10s with
+      diagnosis + hypotheses + clickable follow-up filters
+- [ ] click into any matched trajectory → SUMMARY card at top shows
+      AI-generated paragraph + pattern badge + keyword tags
+- [ ] click into trajectory list — every row shows feature chips
+      (outcome / loop / tool count / duration) under the agent name
+
 ## If anything breaks
 
 | Symptom | First thing to check |
