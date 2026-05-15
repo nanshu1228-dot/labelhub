@@ -179,6 +179,14 @@ export const tasks = pgTable(
     guidelinesMarkdown: text('guidelines_markdown'),
     templateMode: text('template_mode').notNull(),
     rewardConfig: jsonb('reward_config').notNull(), // shape matches templates EconomyConfig
+    /**
+     * Per-task overrides for the template (admin-customizable). Null falls
+     * back to the template's bake-in defaults. Currently used to override
+     * `pairChecklist` and `arenaDimensions` so an admin can pick which
+     * boolean checks / GSB dimensions apply to this task. See
+     * `getEffectiveTemplate()` for the merge.
+     */
+    templateConfig: jsonb('template_config'),
     status: taskStatusEnum('status').default('draft').notNull(),
     deadline: timestamp('deadline'),
     createdAt: timestamp('created_at').defaultNow().notNull(),

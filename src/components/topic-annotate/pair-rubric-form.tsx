@@ -154,7 +154,7 @@ export function PairRubricForm({
   }
 
   return (
-    <div className="max-w-[1100px] mx-auto px-6 py-8">
+    <>
       <TopicHeader
         workspaceId={workspaceId}
         workspaceName={workspaceName}
@@ -345,7 +345,7 @@ export function PairRubricForm({
           )}
         </div>
       </section>
-    </div>
+    </>
   )
 }
 

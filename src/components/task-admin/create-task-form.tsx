@@ -1,0 +1,502 @@
+'use client'
+
+import { useState, useTransition } from 'react'
+import { useRouter } from 'next/navigation'
+import Link from 'next/link'
+import { createTask } from '@/lib/actions/tasks'
+import type {
+  PairChecklistItem,
+  TemplateMode,
+} from '@/lib/templates/types'
+
+/**
+ * Admin task-creation form.
+ *
+ * The reward config defaults to a cash-per-item baseline (10 CNY per row,
+ * 1.0-1.5× quality multiplier) — admins can tweak once we add a fuller
+ * payout-config editor; for now the focus is on getting the rubric
+ * customization right since that's where mode differentiation matters.
+ *
+ * Rubric editing:
+ *   - pair-rubric / arena-gsb: shows the template's preset list as the
+ *     starting point. Admin can rename, edit descriptions, delete, or
+ *     append new items. Submit ships `templateConfig` to the server,
+ *     which validates snake_case ids + 30-item cap.
+ *   - agent-trace-eval: hides the rubric editor (the flagship's rubric
+ *     is multi-shaped and not exposed to per-task overrides yet).
+ */
+
+type EditableItem = PairChecklistItem & { _key: string }
+
+let _seq = 0
+function nextKey() {
+  _seq += 1
+  return `row_${_seq}_${Date.now()}`
+}
+
+function toEditable(items: readonly PairChecklistItem[]): EditableItem[] {
+  return items.map((i) => ({
+    id: i.id,
+    name: i.name,
+    description: i.description,
+    _key: nextKey(),
+  }))
+}
+
+export function CreateTaskForm({
+  workspaceId,
+  workspaceName,
+  templateMode,
+  templateName,
+  templateDescription,
+  defaultPairChecklist,
+  defaultArenaDimensions,
+}: {
+  workspaceId: string
+  workspaceName: string
+  templateMode: TemplateMode
+  templateName: string
+  templateDescription: string
+  defaultPairChecklist: readonly PairChecklistItem[] | null
+  defaultArenaDimensions: readonly PairChecklistItem[] | null
+}) {
+  const router = useRouter()
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [guidelines, setGuidelines] = useState('')
+  const [rewardAmount, setRewardAmount] = useState<string>('10')
+
+  const initialChecklist =
+    templateMode === 'pair-rubric'
+      ? defaultPairChecklist ?? []
+      : templateMode === 'arena-gsb'
+        ? defaultArenaDimensions ?? []
+        : []
+  const [items, setItems] = useState<EditableItem[]>(() =>
+    toEditable(initialChecklist),
+  )
+  const [error, setError] = useState<string | null>(null)
+  const [pending, startTransition] = useTransition()
+
+  const supportsRubricEditor =
+    templateMode === 'pair-rubric' || templateMode === 'arena-gsb'
+
+  const fieldLabel =
+    templateMode === 'pair-rubric' ? 'rubric items (yes/no)' : 'dimensions (1–5)'
+
+  function setItem(key: string, patch: Partial<PairChecklistItem>) {
+    setItems((prev) =>
+      prev.map((it) => (it._key === key ? { ...it, ...patch } : it)),
+    )
+  }
+  function removeItem(key: string) {
+    setItems((prev) => prev.filter((it) => it._key !== key))
+  }
+  function addItem() {
+    setItems((prev) => [
+      ...prev,
+      { _key: nextKey(), id: '', name: '', description: '' },
+    ])
+  }
+  function restoreDefaults() {
+    setItems(toEditable(initialChecklist))
+  }
+
+  function submit() {
+    const trimmedName = name.trim()
+    if (!trimmedName) {
+      setError('Task name is required.')
+      return
+    }
+    const amountNumeric = Number(rewardAmount)
+    if (!Number.isFinite(amountNumeric) || amountNumeric < 0) {
+      setError('Reward amount must be a non-negative number.')
+      return
+    }
+
+    let templateConfig:
+      | { pairChecklist?: PairChecklistItem[]; arenaDimensions?: PairChecklistItem[] }
+      | undefined
+    if (supportsRubricEditor) {
+      const cleaned: PairChecklistItem[] = []
+      for (const it of items) {
+        const idTrim = it.id.trim()
+        const nameTrim = it.name.trim()
+        if (!idTrim && !nameTrim) continue // skip empty rows
+        if (!/^[a-z][a-z0-9_]*$/.test(idTrim)) {
+          setError(
+            `Item id "${idTrim || '(blank)'}" must be lowercase snake_case (letters, digits, underscore; start with a letter).`,
+          )
+          return
+        }
+        if (!nameTrim) {
+          setError(`Item "${idTrim}" needs a display name.`)
+          return
+        }
+        cleaned.push({
+          id: idTrim,
+          name: nameTrim,
+          description: it.description?.trim() || undefined,
+        })
+      }
+      if (cleaned.length === 0) {
+        setError('Add at least one rubric item.')
+        return
+      }
+      const ids = cleaned.map((c) => c.id)
+      if (new Set(ids).size !== ids.length) {
+        setError('Rubric item ids must be unique.')
+        return
+      }
+      templateConfig =
+        templateMode === 'pair-rubric'
+          ? { pairChecklist: cleaned }
+          : { arenaDimensions: cleaned }
+      // Only ship the override if it actually differs from the preset —
+      // saves a row of JSON in the DB and is honest about "default".
+      const presetEqual =
+        cleaned.length === initialChecklist.length &&
+        cleaned.every((c, i) => {
+          const p = initialChecklist[i]
+          return (
+            p.id === c.id &&
+            p.name === c.name &&
+            (p.description ?? undefined) === c.description
+          )
+        })
+      if (presetEqual) templateConfig = undefined
+    }
+
+    setError(null)
+    startTransition(async () => {
+      try {
+        const task = await createTask({
+          workspaceId,
+          name: trimmedName,
+          description: description.trim() || undefined,
+          guidelinesMarkdown: guidelines.trim() || undefined,
+          templateMode,
+          rewardConfig: {
+            type: 'cash-per-item',
+            currency: 'CNY',
+            amount: Math.round(amountNumeric * 100), // store minor units (fen)
+            qualityMultiplierMin: 1.0,
+            qualityMultiplierMax: 1.5,
+          },
+          templateConfig,
+          phase: 1,
+        })
+        router.push(`/workspaces/${workspaceId}/tasks/${task.id}`)
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Create task failed.')
+      }
+    })
+  }
+
+  return (
+    <div>
+      <div className="flex items-center gap-3 ts-12 mono mb-3">
+        <Link
+          href={`/workspaces/${workspaceId}`}
+          className="hover:underline"
+          style={{ color: 'var(--mute)' }}
+        >
+          {workspaceName}
+        </Link>
+        <span style={{ color: 'var(--mute2)' }}>·</span>
+        <span style={{ color: 'var(--text)' }}>new task</span>
+      </div>
+      <h1
+        className="ts-22 mb-2"
+        style={{ color: 'var(--hi)', fontWeight: 600 }}
+      >
+        Create a task
+      </h1>
+      <p className="ts-13 mb-6" style={{ color: 'var(--mute)' }}>
+        Template:{' '}
+        <span className="mono" style={{ color: 'var(--accent)' }}>
+          {templateName}
+        </span>{' '}
+        — {templateDescription}
+      </p>
+
+      <section className="mb-6">
+        <div className="lbl mb-2">§ BASICS</div>
+        <Field label="Name *">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            maxLength={200}
+            placeholder="Phase 1 · Open-Domain Q&A"
+            className="w-full px-3 py-2 ts-13 rounded-md"
+            style={inputStyle}
+          />
+        </Field>
+        <Field label="Description (admin-only context)">
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={2}
+            maxLength={2000}
+            placeholder="What this task is for. Helps when you have multiple phases running."
+            className="w-full px-3 py-2 ts-13 rounded-md"
+            style={inputStyle}
+          />
+        </Field>
+        <Field label="Guidelines (shown to annotators, markdown OK)">
+          <textarea
+            value={guidelines}
+            onChange={(e) => setGuidelines(e.target.value)}
+            rows={4}
+            maxLength={50000}
+            placeholder="# How to rate&#10;Mark `yes` only when the response directly answers the prompt..."
+            className="w-full px-3 py-2 ts-13 rounded-md mono"
+            style={inputStyle}
+          />
+        </Field>
+        <Field label="Reward (CNY per item)">
+          <input
+            type="number"
+            min="0"
+            step="0.5"
+            value={rewardAmount}
+            onChange={(e) => setRewardAmount(e.target.value)}
+            className="w-32 px-3 py-2 ts-13 rounded-md mono"
+            style={inputStyle}
+          />
+        </Field>
+      </section>
+
+      {supportsRubricEditor && (
+        <section className="mb-6">
+          <div className="flex items-baseline justify-between mb-2">
+            <div className="lbl">§ {fieldLabel.toUpperCase()}</div>
+            <div className="flex items-center gap-3 ts-11 mono">
+              <button
+                type="button"
+                onClick={restoreDefaults}
+                style={{ color: 'var(--mute2)', background: 'none', border: 'none', cursor: 'pointer' }}
+              >
+                restore defaults
+              </button>
+              <button
+                type="button"
+                onClick={addItem}
+                className="ts-11 mono"
+                style={{
+                  background: 'transparent',
+                  color: 'var(--accent)',
+                  border: '1px solid var(--accent)',
+                  borderRadius: 4,
+                  padding: '2px 10px',
+                  cursor: 'pointer',
+                }}
+              >
+                + add item
+              </button>
+            </div>
+          </div>
+          <p
+            className="ts-12 mb-3"
+            style={{ color: 'var(--mute2)' }}
+          >
+            Each item is asked twice — once for model A, once for model B.
+            ID is the storage key (snake_case, never rename after rows exist).
+          </p>
+          <div
+            className="rounded-md overflow-hidden"
+            style={{
+              background: 'var(--panel)',
+              border: '1px solid var(--line)',
+            }}
+          >
+            <table className="w-full ts-13">
+              <thead>
+                <tr
+                  style={{
+                    background: 'var(--panel2)',
+                    borderBottom: '1px solid var(--line)',
+                  }}
+                >
+                  <th
+                    className="text-left px-3 py-2 mono ts-11"
+                    style={{ color: 'var(--mute)', width: 180 }}
+                  >
+                    ID
+                  </th>
+                  <th
+                    className="text-left px-3 py-2 mono ts-11"
+                    style={{ color: 'var(--mute)', width: 220 }}
+                  >
+                    NAME
+                  </th>
+                  <th
+                    className="text-left px-3 py-2 mono ts-11"
+                    style={{ color: 'var(--mute)' }}
+                  >
+                    DESCRIPTION
+                  </th>
+                  <th style={{ width: 40 }} />
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((it) => (
+                  <tr
+                    key={it._key}
+                    style={{ borderTop: '1px solid var(--line)' }}
+                  >
+                    <td className="px-3 py-2">
+                      <input
+                        value={it.id}
+                        onChange={(e) =>
+                          setItem(it._key, { id: e.target.value })
+                        }
+                        placeholder="snake_case_id"
+                        className="w-full px-2 py-1 mono ts-12"
+                        style={inlineInputStyle}
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      <input
+                        value={it.name}
+                        onChange={(e) =>
+                          setItem(it._key, { name: e.target.value })
+                        }
+                        placeholder="Display name"
+                        className="w-full px-2 py-1 ts-13"
+                        style={inlineInputStyle}
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      <input
+                        value={it.description ?? ''}
+                        onChange={(e) =>
+                          setItem(it._key, { description: e.target.value })
+                        }
+                        placeholder="Optional one-liner"
+                        className="w-full px-2 py-1 ts-13"
+                        style={inlineInputStyle}
+                      />
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <button
+                        type="button"
+                        onClick={() => removeItem(it._key)}
+                        title="Remove"
+                        className="ts-12 mono"
+                        style={{
+                          color: 'var(--danger)',
+                          background: 'transparent',
+                          border: '1px solid transparent',
+                          padding: '2px 6px',
+                          borderRadius: 4,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        ×
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {items.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={4}
+                      className="px-3 py-6 text-center ts-12 mono"
+                      style={{ color: 'var(--mute2)' }}
+                    >
+                      No items — click &quot;+ add item&quot; or &quot;restore defaults&quot;.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {error && (
+        <div
+          className="ts-12 mono mb-4 p-2 rounded"
+          style={{
+            background: 'var(--danger-soft)',
+            border: '1px solid oklch(0.55 0.2 25 / 0.35)',
+            color: 'var(--danger)',
+          }}
+        >
+          {error}
+        </div>
+      )}
+
+      <div className="flex items-center gap-3">
+        <Link
+          href={`/workspaces/${workspaceId}`}
+          className="ts-13 mono"
+          style={{
+            color: 'var(--mute)',
+            border: '1px solid var(--line)',
+            borderRadius: 6,
+            padding: '6px 14px',
+            textDecoration: 'none',
+          }}
+        >
+          cancel
+        </Link>
+        <button
+          onClick={submit}
+          disabled={pending}
+          className="ts-13 mono"
+          style={{
+            background: 'var(--accent)',
+            color: 'white',
+            border: '1px solid var(--accent)',
+            borderRadius: 6,
+            padding: '6px 14px',
+            fontWeight: 500,
+            cursor: pending ? 'not-allowed' : 'pointer',
+            opacity: pending ? 0.5 : 1,
+          }}
+        >
+          {pending ? 'creating…' : 'create task'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+const inputStyle = {
+  background: 'var(--bg)',
+  border: '1px solid var(--line)',
+  color: 'var(--text)',
+  outline: 'none',
+  fontFamily: 'var(--font-geist-sans), system-ui',
+} as const
+
+const inlineInputStyle = {
+  background: 'var(--bg)',
+  border: '1px solid var(--line)',
+  borderRadius: 4,
+  color: 'var(--text)',
+  outline: 'none',
+  fontFamily: 'var(--font-geist-sans), system-ui',
+} as const
+
+function Field({
+  label,
+  children,
+}: {
+  label: string
+  children: React.ReactNode
+}) {
+  return (
+    <label className="block mb-3">
+      <span
+        className="ts-12 mono mb-1.5 block"
+        style={{ color: 'var(--mute)' }}
+      >
+        {label}
+      </span>
+      {children}
+    </label>
+  )
+}

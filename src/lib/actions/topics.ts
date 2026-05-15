@@ -13,6 +13,7 @@ import {
 import { getTemplate } from '@/lib/templates/registry'
 import '@/lib/templates/init'
 import type { TemplateMode } from '@/lib/templates/types'
+import { uuidLike } from '@/lib/validators/uuid'
 
 /**
  * Topic Server Actions.
@@ -24,7 +25,7 @@ import type { TemplateMode } from '@/lib/templates/types'
  */
 
 const createTopicSchema = z.object({
-  taskId: z.string().uuid(),
+  taskId: uuidLike,
   /** Validated against template.itemSchema (template-specific) — accept arbitrary object here */
   itemData: z.record(z.string(), z.unknown()),
 })
@@ -66,7 +67,7 @@ export async function createTopic(input: z.infer<typeof createTopicSchema>) {
   return topic
 }
 
-const topicIdSchema = z.object({ topicId: z.string().uuid() })
+const topicIdSchema = z.object({ topicId: uuidLike })
 
 /**
  * Claim a topic for the current user.

@@ -10,6 +10,7 @@ import {
   requireWorkspaceMember,
 } from '@/lib/auth/guards'
 import { fanoutWebhook } from '@/lib/webhooks/fanout'
+import { uuidLike } from '@/lib/validators/uuid'
 import {
   ConflictError,
   ForbiddenError,
@@ -32,7 +33,7 @@ import type { TemplateMode } from '@/lib/templates/types'
  */
 
 const saveDraftSchema = z.object({
-  topicId: z.string().uuid(),
+  topicId: uuidLike,
   /** Validated against template.responseSchema only on submit, not draft */
   payload: z.record(z.string(), z.unknown()),
   claudeProposal: z.unknown().optional(),
@@ -136,7 +137,7 @@ export async function saveDraftAnnotation(
 }
 
 const submitSchema = z.object({
-  topicId: z.string().uuid(),
+  topicId: uuidLike,
   payload: z.record(z.string(), z.unknown()),
   claudeProposal: z.unknown().optional(),
   deltaSummary: z.string().max(2000).optional(),
@@ -274,7 +275,7 @@ export async function submitAnnotation(input: z.infer<typeof submitSchema>) {
 }
 
 const reviewSchema = z.object({
-  annotationId: z.string().uuid(),
+  annotationId: uuidLike,
   decision: z.enum(['approve', 'reject', 'request_revision']),
   feedback: z.string().max(2000).optional(),
 })
@@ -398,7 +399,7 @@ export async function reviewAnnotation(input: z.infer<typeof reviewSchema>) {
 // ─── Review thread — submitter replies to a reviewer's feedback ───────────
 
 const respondToReviewSchema = z.object({
-  annotationId: z.string().uuid(),
+  annotationId: uuidLike,
   message: z.string().min(1).max(4000),
 })
 

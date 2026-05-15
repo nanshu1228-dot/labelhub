@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import Link from 'next/link'
 import { notFound, redirect } from 'next/navigation'
 import { and, eq } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
@@ -10,9 +11,21 @@ import {
 import { getTopicById } from '@/lib/queries/topics'
 import { getTaskById } from '@/lib/queries/tasks'
 import { getWorkspaceById } from '@/lib/queries/workspaces'
-import { getTemplate } from '@/lib/templates/registry'
+import {
+  getAnnotationReviewContext,
+  type AnnotationReviewContext,
+} from '@/lib/queries/annotation-review'
+import {
+  getReviewThread,
+  type ReviewThreadMessage,
+} from '@/lib/queries/review-thread'
+import { getEffectiveTemplate } from '@/lib/templates/effective'
 import '@/lib/templates/init'
-import type { TemplateMode } from '@/lib/templates/types'
+import {
+  ReviewVerdictControls,
+  type ViewerRole,
+} from '@/components/quality/review-verdict-controls'
+import { ReviewThread } from '@/components/quality/review-thread'
 import { PairRubricForm } from '@/components/topic-annotate/pair-rubric-form'
 import { ArenaGsbForm } from '@/components/topic-annotate/arena-gsb-form'
 
@@ -23,35 +36,44 @@ export const metadata: Metadata = {
 /**
  * /workspaces/[id]/topics/[topicId]/annotate
  *
- * The annotation surface for the two non-trajectory modes:
- *   - `pair-rubric`  — shared boolean rubric across two model responses
- *   - `arena-gsb`    — multi-dimension 1-5 scoring across two model responses
+ * Two modes:
  *
- * Trajectory annotation has its own dedicated route under
- * `/workspaces/[id]/trajectories/[trajId]/annotate` because the data shape
- * (steps + tool providers) is fundamentally different. Topic-based modes
- * share this route because their data shape is the same envelope (prompt
- * + two responses), with the mode only differing in how the response is
- * scored.
+ *   1. NORMAL (no `?annotationId=`): the viewer is annotating themselves.
+ *      We load the viewer's own draft (or create on first save via auto-
+ *      claim) and let them edit.
  *
- * Access control: workspace-member + tenant-boundary check (topic must
- * belong to this workspace via its task).
+ *   2. REVIEW (`?annotationId=<id>`): a QC/admin reviewer wants to inspect
+ *      a specific submitter's annotation and render a verdict. We load
+ *      THAT user's payload + the topic's review-thread events, and the
+ *      form auto-goes read-only because topic.status is past `drafting`.
+ *      Verdict buttons + reply textarea render alongside.
+ *
+ * Trajectory annotation has its own dedicated route — this one only
+ * handles the topic-payload modes (pair-rubric / arena-gsb).
  */
-// Next 16 typed-routes regenerates on dev-start; we use an explicit
-// param shape here so type-check passes before that happens.
-export default async function TopicAnnotatePage(
-  props: { params: Promise<{ id: string; topicId: string }> },
-) {
+export default async function TopicAnnotatePage(props: {
+  params: Promise<{ id: string; topicId: string }>
+  searchParams?: Promise<{ annotationId?: string }>
+}) {
   const { id: workspaceId, topicId } = await props.params
+  const search = (await props.searchParams) ?? {}
+  const reviewAnnotationIdFromUrl =
+    typeof search.annotationId === 'string' ? search.annotationId : null
 
   const me = await optionalUser()
   if (!me) {
+    const qs = reviewAnnotationIdFromUrl
+      ? `?annotationId=${reviewAnnotationIdFromUrl}`
+      : ''
     redirect(
-      `/signin?next=/workspaces/${workspaceId}/topics/${topicId}/annotate`,
+      `/signin?next=/workspaces/${workspaceId}/topics/${topicId}/annotate${qs}`,
     )
   }
+
+  let viewerRole: ViewerRole
   try {
-    await requireWorkspaceMember(workspaceId)
+    const membership = await requireWorkspaceMember(workspaceId)
+    viewerRole = membership.role
   } catch {
     notFound()
   }
@@ -63,79 +85,211 @@ export default async function TopicAnnotatePage(
   if (!topic) notFound()
   const task = await getTaskById(topic.taskId)
   if (!task) notFound()
-  // Cross-tenant boundary: the URL says workspaceId, but the topic
-  // is canonically tied to a task → workspace. Reject mismatch.
   if (task.workspaceId !== workspaceId) notFound()
 
-  const template = getTemplate(task.templateMode as TemplateMode)
+  const template = getEffectiveTemplate(task.templateMode, task.templateConfig)
   if (!template) {
     throw new Error(
-      `Task uses templateMode "${task.templateMode}" which is not registered. ` +
-        `Either the mode was deleted (run migration) or templates/init.ts ` +
-        `failed to import it.`,
+      `Task uses templateMode "${task.templateMode}" which is not registered.`,
     )
   }
 
-  // Existing draft (if any) — pre-fill the form so a refresh doesn't wipe.
+  // Resolve review mode, if requested.
   const db = getDb()
-  const [draft] = await db
-    .select()
-    .from(annotations)
-    .where(
-      and(
-        eq(annotations.topicId, topicId),
-        eq(annotations.userId, me.id),
-      ),
-    )
-    .limit(1)
-  const initialPayload = (draft?.payload ?? {}) as Record<string, unknown>
+  let reviewContext: AnnotationReviewContext | null = null
+  let reviewThread: ReviewThreadMessage[] = []
+  let displayPayload: Record<string, unknown> = {}
+  let displayStatus = topic.status
 
-  // Each form renders the topic header (prompt + A + B) itself so the
-  // page-level layout stays mode-agnostic.
-  const itemData = topic.itemData as Record<string, unknown>
-
-  if (task.templateMode === 'pair-rubric') {
-    return (
-      <PairRubricForm
-        workspaceId={workspaceId}
-        topicId={topicId}
-        topicStatus={topic.status}
-        itemData={itemData}
-        checklist={template.pairChecklist ?? []}
-        initialPayload={initialPayload}
-        taskName={task.name}
-        workspaceName={workspace.name}
-      />
-    )
+  if (reviewAnnotationIdFromUrl) {
+    const ctx = await getAnnotationReviewContext({
+      annotationId: reviewAnnotationIdFromUrl,
+      workspaceId,
+    })
+    if (ctx) {
+      // Defense-in-depth: the annotation must actually belong to THIS topic
+      // (URL composition could mismatch).
+      const [submitterAnno] = await db
+        .select()
+        .from(annotations)
+        .where(eq(annotations.id, reviewAnnotationIdFromUrl))
+        .limit(1)
+      if (submitterAnno && submitterAnno.topicId === topicId) {
+        reviewContext = ctx
+        displayPayload = (submitterAnno.payload ?? {}) as Record<
+          string,
+          unknown
+        >
+        displayStatus = ctx.topicStatus
+        reviewThread = await getReviewThread({
+          annotationId: reviewAnnotationIdFromUrl,
+        })
+      }
+    }
+    // If ctx lookup failed (bad id, cross-workspace, etc.) we fall through
+    // to NORMAL mode rather than 404 — matches the trajectory page's
+    // forgiving behavior. The banner just won't render.
   }
 
-  if (task.templateMode === 'arena-gsb') {
-    return (
-      <ArenaGsbForm
-        workspaceId={workspaceId}
-        topicId={topicId}
-        topicStatus={topic.status}
-        itemData={itemData}
-        dimensions={template.arenaDimensions ?? []}
-        initialPayload={initialPayload}
-        taskName={task.name}
-        workspaceName={workspace.name}
-      />
-    )
+  if (!reviewContext) {
+    // Normal mode: load viewer's own draft.
+    const [draft] = await db
+      .select()
+      .from(annotations)
+      .where(
+        and(
+          eq(annotations.topicId, topicId),
+          eq(annotations.userId, me.id),
+        ),
+      )
+      .limit(1)
+    displayPayload = (draft?.payload ?? {}) as Record<string, unknown>
+    displayStatus = topic.status
   }
 
-  // agent-trace-eval should never hit this route — it has its own surface.
-  // If someone constructs the URL manually, bounce them to the right place.
+  // agent-trace-eval should never hit this route — bounce to the right one.
   if (task.templateMode === 'agent-trace-eval') {
-    // The topic might carry trajectoryId in itemData; if so, deep-link.
     const data = topic.itemData as { trajectoryId?: string }
     if (typeof data?.trajectoryId === 'string') {
+      const qs = reviewAnnotationIdFromUrl
+        ? `?annotationId=${reviewAnnotationIdFromUrl}`
+        : ''
       redirect(
-        `/workspaces/${workspaceId}/trajectories/${data.trajectoryId}/annotate`,
+        `/workspaces/${workspaceId}/trajectories/${data.trajectoryId}/annotate${qs}`,
       )
     }
+    notFound()
   }
 
-  // Unknown mode — bail loudly. We don't render a half-broken surface.
-  notFound()
+  const itemData = topic.itemData as Record<string, unknown>
+  const viewerIsSubmitter =
+    !!reviewContext && reviewContext.submitterId === me.id
+
+  const formNode = (() => {
+    if (task.templateMode === 'pair-rubric') {
+      return (
+        <PairRubricForm
+          workspaceId={workspaceId}
+          topicId={topicId}
+          topicStatus={displayStatus}
+          itemData={itemData}
+          checklist={template.pairChecklist ?? []}
+          initialPayload={displayPayload}
+          taskName={task.name}
+          workspaceName={workspace.name}
+        />
+      )
+    }
+    if (task.templateMode === 'arena-gsb') {
+      return (
+        <ArenaGsbForm
+          workspaceId={workspaceId}
+          topicId={topicId}
+          topicStatus={displayStatus}
+          itemData={itemData}
+          dimensions={template.arenaDimensions ?? []}
+          initialPayload={displayPayload}
+          taskName={task.name}
+          workspaceName={workspace.name}
+        />
+      )
+    }
+    return null
+  })()
+
+  if (!formNode) notFound()
+
+  return (
+    <div className="max-w-[1100px] mx-auto px-6 py-8">
+      {reviewContext && (
+        <div className="mb-4">
+          <ReviewModeBanner
+            submitter={
+              reviewContext.submitterDisplayName ??
+              reviewContext.submitterEmail?.split('@')[0] ??
+              'this annotator'
+            }
+            status={reviewContext.topicStatus}
+            workspaceId={workspaceId}
+            topicId={topicId}
+          />
+        </div>
+      )}
+
+      {reviewContext && (
+        <div className="mb-6">
+          <ReviewVerdictControls
+            annotationId={reviewContext.annotationId}
+            topicStatus={reviewContext.topicStatus}
+            viewerRole={viewerRole}
+            viewerIsSubmitter={viewerIsSubmitter}
+            submitterDisplayName={reviewContext.submitterDisplayName}
+          />
+        </div>
+      )}
+
+      {formNode}
+
+      {reviewContext && reviewThread.length > 0 && (
+        <div className="mt-8">
+          <ReviewThread
+            annotationId={reviewContext.annotationId}
+            messages={reviewThread}
+            canReply={viewerIsSubmitter}
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Tiny banner that explains why the page is read-only and links back
+ * to the user's own view of the topic. Mirrors the trajectory route's
+ * equivalent so QC/admin flows feel consistent.
+ */
+function ReviewModeBanner({
+  submitter,
+  status,
+  workspaceId,
+  topicId,
+}: {
+  submitter: string
+  status: string
+  workspaceId: string
+  topicId: string
+}) {
+  return (
+    <div
+      className="rounded-md flex items-center justify-between gap-3 px-3 py-2"
+      style={{
+        background: 'var(--accent-soft)',
+        border: '1px solid var(--accent-line)',
+      }}
+    >
+      <div className="ts-12">
+        <span className="lbl" style={{ color: 'var(--accent)' }}>
+          § REVIEW MODE
+        </span>
+        <span className="ml-2" style={{ color: 'var(--text)' }}>
+          inspecting{' '}
+          <strong style={{ color: 'var(--hi)' }}>{submitter}</strong>
+          &apos;s annotation · status{' '}
+          <span className="mono" style={{ color: 'var(--mute2)' }}>
+            {status}
+          </span>
+        </span>
+      </div>
+      <Link
+        href={`/workspaces/${workspaceId}/topics/${topicId}/annotate`}
+        className="ts-11 mono shrink-0"
+        style={{
+          color: 'var(--accent)',
+          textDecoration: 'none',
+        }}
+      >
+        exit review →
+      </Link>
+    </div>
+  )
 }

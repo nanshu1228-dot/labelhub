@@ -8,6 +8,7 @@ import { ConflictError, NotFoundError, ValidationError } from '@/lib/errors'
 import { TEMPLATE_MODES, type TemplateMode } from '@/lib/templates/types'
 import { getTemplate } from '@/lib/templates/registry'
 import '@/lib/templates/init'
+import { uuidLike } from '@/lib/validators/uuid'
 
 /**
  * Task Server Actions.
@@ -28,13 +29,39 @@ const rewardConfigSchema = z.object({
   qualityMultiplierMax: z.number().positive().optional(),
 })
 
+const checklistItemSchema = z.object({
+  /** snake_case stable storage key */
+  id: z
+    .string()
+    .min(1)
+    .max(64)
+    .regex(/^[a-z][a-z0-9_]*$/, {
+      message: 'id must be lowercase snake_case',
+    }),
+  name: z.string().min(1).max(80),
+  description: z.string().max(280).optional(),
+})
+
+const templateConfigSchema = z
+  .object({
+    pairChecklist: z.array(checklistItemSchema).min(1).max(30).optional(),
+    arenaDimensions: z.array(checklistItemSchema).min(1).max(30).optional(),
+  })
+  .optional()
+
 const createTaskSchema = z.object({
-  workspaceId: z.string().uuid(),
+  workspaceId: uuidLike,
   name: z.string().min(1).max(200),
   description: z.string().max(2000).optional(),
   guidelinesMarkdown: z.string().max(50000).optional(),
   templateMode: z.enum(TEMPLATE_MODES),
   rewardConfig: rewardConfigSchema,
+  /**
+   * Per-task overrides for the template's pair/arena lists. When omitted,
+   * the template's bake-in defaults apply. Validated against the snake_case
+   * id rule + 30-item ceiling so a bad admin input can't poison the DB.
+   */
+  templateConfig: templateConfigSchema,
   phase: z.number().int().positive().default(1),
   /** ISO 8601 datetime string */
   deadline: z.string().datetime().optional(),
@@ -64,6 +91,38 @@ export async function createTask(input: CreateTaskInput) {
     throw new ValidationError(`Template not registered: ${parsed.templateMode}`)
   }
 
+  // Reject templateConfig overrides for modes that don't use them
+  // (agent-trace-eval has its own rubric structure, not a flat checklist).
+  if (
+    parsed.templateConfig &&
+    parsed.templateMode !== 'pair-rubric' &&
+    parsed.templateMode !== 'arena-gsb'
+  ) {
+    throw new ValidationError(
+      `templateConfig is not supported for templateMode "${parsed.templateMode}".`,
+    )
+  }
+  // Sanity check: pair-rubric admins use pairChecklist; arena-gsb uses
+  // arenaDimensions. Crossing them is almost certainly a bug.
+  if (parsed.templateConfig) {
+    if (
+      parsed.templateMode === 'pair-rubric' &&
+      parsed.templateConfig.arenaDimensions
+    ) {
+      throw new ValidationError(
+        'pair-rubric tasks use templateConfig.pairChecklist, not arenaDimensions.',
+      )
+    }
+    if (
+      parsed.templateMode === 'arena-gsb' &&
+      parsed.templateConfig.pairChecklist
+    ) {
+      throw new ValidationError(
+        'arena-gsb tasks use templateConfig.arenaDimensions, not pairChecklist.',
+      )
+    }
+  }
+
   const db = getDb()
   const [task] = await db
     .insert(tasks)
@@ -74,6 +133,7 @@ export async function createTask(input: CreateTaskInput) {
       guidelinesMarkdown: parsed.guidelinesMarkdown ?? null,
       templateMode: parsed.templateMode,
       rewardConfig: parsed.rewardConfig,
+      templateConfig: parsed.templateConfig ?? null,
       status: 'draft',
       deadline: parsed.deadline ? new Date(parsed.deadline) : null,
       phase: parsed.phase,
@@ -128,7 +188,7 @@ export async function createTask(input: CreateTaskInput) {
   return task
 }
 
-const taskIdSchema = z.object({ taskId: z.string().uuid() })
+const taskIdSchema = z.object({ taskId: uuidLike })
 
 /**
  * Open a task for annotation. Must currently be `draft`.

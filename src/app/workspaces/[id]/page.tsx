@@ -247,6 +247,12 @@ export default async function WorkspacePage(
           accent={stats.trajCount > 0}
         />
         <StatTile
+          label="TASKS"
+          value="↗"
+          hint="pair-rubric / arena-gsb topics"
+          href={`/workspaces/${id}/tasks`}
+        />
+        <StatTile
           label="ANNOTATED"
           value={`${stats.markedSteps}/${stats.stepCount}`}
           hint={
