@@ -23,6 +23,11 @@ import {
   getTopicPeerConsensus,
   type TopicPeerData,
 } from '@/lib/queries/topic-peer-consensus'
+import {
+  getAnnotationAuditTimeline,
+  type TimelineEntry,
+} from '@/lib/queries/annotation-timeline'
+import { AnnotationAuditTimeline } from '@/components/quality/annotation-audit-timeline'
 import { getEffectiveTemplate } from '@/lib/templates/effective'
 import '@/lib/templates/init'
 import {
@@ -103,6 +108,7 @@ export default async function TopicAnnotatePage(props: {
   let reviewContext: AnnotationReviewContext | null = null
   let reviewThread: ReviewThreadMessage[] = []
   let peerConsensus: TopicPeerData | null = null
+  let auditTimeline: TimelineEntry[] = []
   let displayPayload: Record<string, unknown> = {}
   let displayStatus = topic.status
 
@@ -126,19 +132,25 @@ export default async function TopicAnnotatePage(props: {
           unknown
         >
         displayStatus = ctx.topicStatus
-        // Run two parallel reads — the review thread + the peer
-        // consensus (other raters' aggregated values on this topic).
-        // Peer consensus only renders in review mode (the submitter
-        // themselves shouldn't see it to avoid biasing them mid-draft).
-        const [thread, peer] = await Promise.all([
+        // Parallel reads for everything review mode needs:
+        //   - the review thread (chat-style verdict + replies)
+        //   - the peer consensus (other raters' aggregated values)
+        //   - the audit timeline (every state-change event)
+        // Peer consensus + audit timeline only renders in review mode
+        // so the active rater isn't biased mid-draft.
+        const [thread, peer, audit] = await Promise.all([
           getReviewThread({ annotationId: reviewAnnotationIdFromUrl }),
           getTopicPeerConsensus({
             topicId,
             excludeUserId: ctx.submitterId,
           }),
+          getAnnotationAuditTimeline({
+            annotationId: reviewAnnotationIdFromUrl,
+          }),
         ])
         reviewThread = thread
         peerConsensus = peer
+        auditTimeline = audit
       }
     }
     // If ctx lookup failed (bad id, cross-workspace, etc.) we fall through
@@ -265,6 +277,12 @@ export default async function TopicAnnotatePage(props: {
             messages={reviewThread}
             canReply={viewerIsSubmitter}
           />
+        </div>
+      )}
+
+      {reviewContext && auditTimeline.length > 0 && (
+        <div className="mt-8">
+          <AnnotationAuditTimeline entries={auditTimeline} />
         </div>
       )}
     </div>

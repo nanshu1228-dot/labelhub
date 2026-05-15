@@ -20,6 +20,11 @@ import { StepMarkWidget } from '@/components/trajectory/step-mark-widget'
 import { GoldPromoteClient } from '@/components/quality/gold-promote-client'
 import { ReviewThread } from '@/components/quality/review-thread'
 import { ReviewVerdictControls } from '@/components/quality/review-verdict-controls'
+import {
+  getAnnotationAuditTimeline,
+  type TimelineEntry,
+} from '@/lib/queries/annotation-timeline'
+import { AnnotationAuditTimeline } from '@/components/quality/annotation-audit-timeline'
 import { SummaryCard } from '@/components/trajectory/summary-card'
 import { getCachedSummary } from '@/lib/actions/trajectory-summary'
 import type { TrajectoryFeatures } from '@/lib/trajectories/extract-features'
@@ -67,6 +72,7 @@ export default async function TrajectoryDetailPage(
     markCount: number
   } | null = null
   let reviewThread: ReviewThreadMessage[] = []
+  let auditTimeline: TimelineEntry[] = []
   let reviewAnnotationId: string | null = null
   let viewerIsSubmitter = false
   // Review-mode-only fields, populated when ?annotationId= is present.
@@ -118,9 +124,16 @@ export default async function TrajectoryDetailPage(
           reviewContext = ctx
           reviewAnnotationId = ctx.annotationId
           viewerIsSubmitter = ctx.submitterId === me.id
-          reviewThread = await getReviewThread({
-            annotationId: ctx.annotationId,
-          }).catch(() => [])
+          const [thread, audit] = await Promise.all([
+            getReviewThread({ annotationId: ctx.annotationId }).catch(
+              () => [],
+            ),
+            getAnnotationAuditTimeline({
+              annotationId: ctx.annotationId,
+            }).catch(() => [] as TimelineEntry[]),
+          ])
+          reviewThread = thread
+          auditTimeline = audit
         }
       }
 
@@ -273,6 +286,11 @@ export default async function TrajectoryDetailPage(
                   messages={reviewThread}
                   canReply={viewerIsSubmitter}
                 />
+              </div>
+            )}
+            {reviewContext && auditTimeline.length > 0 && (
+              <div className="mb-6">
+                <AnnotationAuditTimeline entries={auditTimeline} />
               </div>
             )}
             <Body
