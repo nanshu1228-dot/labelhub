@@ -29,8 +29,20 @@ type Verdict = boolean | null
 
 type RatingsState = Record<string, { a: Verdict; b: Verdict }>
 
+/**
+ * Per-topic custom rubric items the annotator added. Each is rendered
+ * after the preset rows with a small "custom" tag + delete button.
+ * Stored alongside `ratings` so re-renders can label them.
+ */
+interface CustomItem {
+  id: string
+  name: string
+  description?: string
+}
+
 function initialRatings(
   checklist: readonly PairChecklistItem[],
+  customItems: readonly CustomItem[],
   payload: Record<string, unknown>,
 ): RatingsState {
   const ratings = (payload.ratings ?? {}) as Record<
@@ -38,12 +50,36 @@ function initialRatings(
     { a?: boolean; b?: boolean }
   >
   const out: RatingsState = {}
-  for (const item of checklist) {
+  for (const item of [...checklist, ...customItems]) {
     const prior = ratings[item.id] ?? {}
     out[item.id] = {
       a: typeof prior.a === 'boolean' ? prior.a : null,
       b: typeof prior.b === 'boolean' ? prior.b : null,
     }
+  }
+  return out
+}
+
+function initialCustomItems(payload: Record<string, unknown>): CustomItem[] {
+  const raw = payload.customItems
+  if (!Array.isArray(raw)) return []
+  const out: CustomItem[] = []
+  for (const v of raw) {
+    if (!v || typeof v !== 'object') continue
+    const item = v as Record<string, unknown>
+    if (
+      typeof item.id !== 'string' ||
+      typeof item.name !== 'string' ||
+      !item.id ||
+      !item.name
+    )
+      continue
+    out.push({
+      id: item.id,
+      name: item.name,
+      description:
+        typeof item.description === 'string' ? item.description : undefined,
+    })
   }
   return out
 }
@@ -68,6 +104,29 @@ function countComplete(state: RatingsState): { done: number; total: number } {
   return { done, total }
 }
 
+/**
+ * Generate a stable-ish id for a new custom item. Format:
+ * `custom_<slug>_<short-random>` — keeps ids snake_case-ish so they
+ * pass the rubric-id regex if anyone ever validates server-side, and
+ * randomizes the tail so two annotators adding "Tone" don't collide
+ * across raters.
+ */
+function newCustomId(name: string): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 24) || 'item'
+  const rand = Math.random().toString(36).slice(2, 6)
+  return `custom_${slug}_${rand}`
+}
+
+export interface PairPeerCellLite {
+  majority: boolean | null
+  trueVotes: number
+  falseVotes: number
+}
+
 export function PairRubricForm({
   workspaceId,
   topicId,
@@ -77,6 +136,7 @@ export function PairRubricForm({
   initialPayload,
   taskName,
   workspaceName,
+  peerConsensus,
 }: {
   workspaceId: string
   topicId: string
@@ -86,10 +146,22 @@ export function PairRubricForm({
   initialPayload: Record<string, unknown>
   taskName: string
   workspaceName: string
+  /**
+   * Peer consensus across OTHER raters on this same topic. Only passed
+   * in review mode (so the active rater isn't biased mid-draft).
+   * Renders an extra PEERS column with the majority votes per row.
+   */
+  peerConsensus?: {
+    pair: Record<string, PairPeerCellLite>
+    peerCount: number
+  } | null
 }) {
   const router = useRouter()
+  const [customItems, setCustomItems] = useState<CustomItem[]>(() =>
+    initialCustomItems(initialPayload),
+  )
   const [ratings, setRatings] = useState<RatingsState>(() =>
-    initialRatings(checklist, initialPayload),
+    initialRatings(checklist, customItems, initialPayload),
   )
   const [notes, setNotes] = useState<string>(() =>
     typeof initialPayload.notes === 'string' ? initialPayload.notes : '',
@@ -110,6 +182,38 @@ export function PairRubricForm({
     }))
   }
 
+  function addCustomItem(name: string, description: string) {
+    const trimmedName = name.trim()
+    if (!trimmedName) return
+    const id = newCustomId(trimmedName)
+    setCustomItems((prev) => [
+      ...prev,
+      {
+        id,
+        name: trimmedName,
+        description: description.trim() || undefined,
+      },
+    ])
+    setRatings((prev) => ({ ...prev, [id]: { a: null, b: null } }))
+  }
+
+  function removeCustomItem(id: string) {
+    setCustomItems((prev) => prev.filter((c) => c.id !== id))
+    setRatings((prev) => {
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
+  }
+
+  function buildPayload() {
+    return {
+      ratings: ratingsToPayload(ratings),
+      customItems: customItems.length > 0 ? customItems : undefined,
+      notes: notes.trim() || undefined,
+    }
+  }
+
   function saveDraft() {
     if (isReadOnly) return
     setError(null)
@@ -117,10 +221,7 @@ export function PairRubricForm({
       try {
         await saveDraftAnnotation({
           topicId,
-          payload: {
-            ratings: ratingsToPayload(ratings),
-            notes: notes.trim() || undefined,
-          },
+          payload: buildPayload(),
         })
         setSavedAt(new Date())
       } catch (e) {
@@ -140,10 +241,7 @@ export function PairRubricForm({
       try {
         await submitAnnotation({
           topicId,
-          payload: {
-            ratings: ratingsToPayload(ratings),
-            notes: notes.trim() || undefined,
-          },
+          payload: buildPayload(),
         })
         router.push(`/my/queue`)
         router.refresh()
@@ -204,10 +302,25 @@ export function PairRubricForm({
                 >
                   MODEL B
                 </th>
+                {peerConsensus && peerConsensus.peerCount > 0 && (
+                  <th
+                    className="px-4 py-2.5 mono ts-11 text-center"
+                    style={{ color: 'var(--mute)', width: 160 }}
+                    title={`Aggregated from ${peerConsensus.peerCount} other rater${peerConsensus.peerCount === 1 ? '' : 's'} on this topic`}
+                  >
+                    PEERS · {peerConsensus.peerCount}
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody>
-              {checklist.map((item, idx) => (
+              {[
+                ...checklist.map((item) => ({ ...item, kind: 'preset' as const })),
+                ...customItems.map((item) => ({
+                  ...item,
+                  kind: 'custom' as const,
+                })),
+              ].map((item, idx) => (
                 <tr
                   key={item.id}
                   style={{
@@ -215,11 +328,45 @@ export function PairRubricForm({
                   }}
                 >
                   <td className="px-4 py-3 align-top">
-                    <div
-                      className="ts-13"
-                      style={{ color: 'var(--text)', fontWeight: 500 }}
-                    >
-                      {item.name}
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="ts-13"
+                        style={{ color: 'var(--text)', fontWeight: 500 }}
+                      >
+                        {item.name}
+                      </span>
+                      {item.kind === 'custom' && (
+                        <>
+                          <span
+                            className="ts-11 mono px-1.5 py-0.5 rounded"
+                            style={{
+                              background: 'oklch(0.7 0.14 75 / 0.15)',
+                              color: 'oklch(0.7 0.14 75)',
+                              border: '1px solid oklch(0.7 0.14 75 / 0.35)',
+                            }}
+                            title="Added by you for this topic"
+                          >
+                            custom
+                          </span>
+                          {!isReadOnly && (
+                            <button
+                              type="button"
+                              onClick={() => removeCustomItem(item.id)}
+                              className="ts-11 mono"
+                              style={{
+                                background: 'transparent',
+                                color: 'var(--mute2)',
+                                border: 'none',
+                                cursor: 'pointer',
+                                padding: '2px 4px',
+                              }}
+                              title="Remove this item"
+                            >
+                              ×
+                            </button>
+                          )}
+                        </>
+                      )}
                     </div>
                     {item.description && (
                       <div
@@ -246,10 +393,26 @@ export function PairRubricForm({
                       sideColor="oklch(0.7 0.18 30)"
                     />
                   </td>
+                  {peerConsensus && peerConsensus.peerCount > 0 && (
+                    <td className="px-4 py-3 text-center align-middle">
+                      <PeerPairCell
+                        aCell={peerConsensus.pair[`${item.id}|a`]}
+                        bCell={peerConsensus.pair[`${item.id}|b`]}
+                        myA={ratings[item.id]?.a ?? null}
+                        myB={ratings[item.id]?.b ?? null}
+                      />
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
           </table>
+          {!isReadOnly && (
+            <AddCustomItemRow
+              onAdd={(name, desc) => addCustomItem(name, desc)}
+              kind="rubric"
+            />
+          )}
         </div>
 
         <div className="mt-4">
@@ -403,6 +566,187 @@ function YesNoToggle({
       >
         no
       </button>
+    </div>
+  )
+}
+
+/**
+ * Per-row peer-consensus chip for pair-rubric. Shows the majority of
+ * each side as a compact "A:✓3/✗1  B:✗4/✓0" microstat. When the
+ * submitter's value (myA/myB) disagrees with the peer majority, that
+ * side renders in danger color so the reviewer can spot drift instantly.
+ */
+function PeerPairCell({
+  aCell,
+  bCell,
+  myA,
+  myB,
+}: {
+  aCell?: PairPeerCellLite
+  bCell?: PairPeerCellLite
+  myA: boolean | null
+  myB: boolean | null
+}) {
+  if (!aCell && !bCell) {
+    return (
+      <span className="ts-11 mono" style={{ color: 'var(--mute2)' }}>
+        —
+      </span>
+    )
+  }
+  const sideStat = (cell: PairPeerCellLite | undefined, my: boolean | null, label: string) => {
+    if (!cell) return null
+    const drifted =
+      typeof my === 'boolean' && cell.majority !== null && my !== cell.majority
+    const color = drifted ? 'var(--danger)' : 'var(--mute)'
+    return (
+      <span
+        className="mono ts-11"
+        style={{ color }}
+        title={`${label}: ${cell.trueVotes} yes / ${cell.falseVotes} no among peers${drifted ? ' — submitter disagrees with majority' : ''}`}
+      >
+        {label}:{cell.trueVotes}✓/{cell.falseVotes}✗
+      </span>
+    )
+  }
+  return (
+    <div className="flex items-center justify-center gap-2">
+      {sideStat(aCell, myA, 'A')}
+      {sideStat(bCell, myB, 'B')}
+    </div>
+  )
+}
+
+/**
+ * Inline "+ add custom rubric/dimension" row. Renders as a collapsed
+ * "+ add" chip until clicked; expands to name + description inputs.
+ * Resets after each add so the annotator can keep adding without
+ * scrolling.
+ */
+export function AddCustomItemRow({
+  onAdd,
+  kind,
+}: {
+  onAdd: (name: string, description: string) => void
+  kind: 'rubric' | 'dimension'
+}) {
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState('')
+  const [desc, setDesc] = useState('')
+
+  function submit() {
+    if (!name.trim()) return
+    onAdd(name.trim(), desc.trim())
+    setName('')
+    setDesc('')
+    // Leave the row open so multiple adds are quick.
+  }
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="mono ts-12 mt-2"
+        style={{
+          background: 'transparent',
+          color: 'var(--accent)',
+          border: '1px dashed oklch(0.6 0.18 280 / 0.4)',
+          borderRadius: 5,
+          padding: '6px 12px',
+          cursor: 'pointer',
+        }}
+      >
+        + add {kind} item (only for this topic)
+      </button>
+    )
+  }
+
+  return (
+    <div
+      className="rounded-md p-3 mt-2"
+      style={{
+        background: 'var(--bg)',
+        border: '1px dashed oklch(0.6 0.18 280 / 0.4)',
+      }}
+    >
+      <div className="flex items-center gap-2 mb-2">
+        <span
+          className="lbl"
+          style={{ color: 'var(--accent)' }}
+        >
+          + NEW {kind.toUpperCase()} (for this topic only)
+        </span>
+        <button
+          type="button"
+          onClick={() => {
+            setOpen(false)
+            setName('')
+            setDesc('')
+          }}
+          className="ts-11 mono ml-auto"
+          style={{
+            color: 'var(--mute2)',
+            background: 'transparent',
+            border: 'none',
+            cursor: 'pointer',
+          }}
+        >
+          cancel
+        </button>
+      </div>
+      <input
+        type="text"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder={
+          kind === 'rubric'
+            ? 'e.g. "code compiles" — short label, will be a yes/no check'
+            : 'e.g. "rhyme scheme" — short label, will be scored 1–5'
+        }
+        maxLength={80}
+        className="w-full px-3 py-1.5 ts-13 rounded-md mb-2"
+        style={{
+          background: 'var(--bg)',
+          border: '1px solid var(--line)',
+          color: 'var(--text)',
+          outline: 'none',
+        }}
+      />
+      <input
+        type="text"
+        value={desc}
+        onChange={(e) => setDesc(e.target.value)}
+        placeholder="description (optional) — what specifically does this check mean?"
+        maxLength={280}
+        className="w-full px-3 py-1.5 ts-12 rounded-md mb-2"
+        style={{
+          background: 'var(--bg)',
+          border: '1px solid var(--line)',
+          color: 'var(--text)',
+          outline: 'none',
+        }}
+      />
+      <div className="flex items-center justify-end">
+        <button
+          type="button"
+          onClick={submit}
+          disabled={!name.trim()}
+          className="ts-12 mono"
+          style={{
+            background: 'var(--accent)',
+            color: 'white',
+            border: '1px solid var(--accent)',
+            borderRadius: 5,
+            padding: '4px 12px',
+            fontWeight: 500,
+            cursor: name.trim() ? 'pointer' : 'not-allowed',
+            opacity: name.trim() ? 1 : 0.5,
+          }}
+        >
+          add
+        </button>
+      </div>
     </div>
   )
 }

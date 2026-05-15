@@ -79,6 +79,29 @@ const responseSchema = z.object({
     z.string(),
     z.object({ a: z.boolean(), b: z.boolean() }),
   ),
+  /**
+   * Optional rubric items the ANNOTATOR added on the fly for this topic.
+   *
+   * Each topic-prompt is different ("rate code quality" vs "rate poem
+   * style") and the admin's preset list can't cover every angle. Letting
+   * the annotator append per-topic items captures that signal — and
+   * since each addition uses its own id, the IAA query just sees it as a
+   * unilateral mark (no penalty for being the only rater).
+   *
+   * Stored alongside `ratings` so re-renders can label the items;
+   * downstream consumers (analytics, refiner) can join on id when
+   * multiple raters happened to add the same id.
+   */
+  customItems: z
+    .array(
+      z.object({
+        id: z.string().min(1).max(64),
+        name: z.string().min(1).max(80),
+        description: z.string().max(280).optional(),
+      }),
+    )
+    .max(20)
+    .optional(),
   /** Optional overall notes — useful when none of the rubric items cover
    *  what the annotator wants to flag. */
   notes: z.string().max(2000).optional(),

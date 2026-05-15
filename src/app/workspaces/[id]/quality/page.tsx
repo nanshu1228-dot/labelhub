@@ -226,7 +226,7 @@ async function QualityContent({
           />
         </>
       )}
-      <TrustLeaderboard rows={trust} />
+      <TrustLeaderboard workspaceId={workspaceId} rows={trust} />
     </div>
   )
 }
@@ -852,12 +852,18 @@ function CalibrationLeaderboard({
 
 // ─── Trust leaderboard ───────────────────────────────────────────────────
 
-function TrustLeaderboard({ rows }: { rows: UserTrust[] }) {
+function TrustLeaderboard({
+  workspaceId,
+  rows,
+}: {
+  workspaceId: string
+  rows: UserTrust[]
+}) {
   return (
     <section>
       <SectionHeader
         title="TRUST"
-        hint={`${rows.length} rater${rows.length === 1 ? '' : 's'} · admin verdicts override peer consensus where available`}
+        hint={`${rows.length} rater${rows.length === 1 ? '' : 's'} · admin verdicts override peer consensus where available · click name to drill`}
       />
       {rows.length === 0 ? (
         <EmptyLeaderboardCard message="No annotation activity in this workspace yet." />
@@ -894,8 +900,17 @@ function TrustLeaderboard({ rows }: { rows: UserTrust[] }) {
                     borderTop: idx === 0 ? 'none' : '1px solid var(--line)',
                   }}
                 >
-                  <td className="p-3" style={{ color: 'var(--hi)' }}>
-                    {r.displayName ?? r.userId.slice(0, 8)}
+                  <td className="p-3">
+                    <Link
+                      href={`/workspaces/${workspaceId}/quality/raters/${r.userId}`}
+                      className="hover:underline"
+                      style={{
+                        color: 'var(--hi)',
+                        textDecoration: 'none',
+                      }}
+                    >
+                      {r.displayName ?? r.userId.slice(0, 8)}
+                    </Link>
                   </td>
                   <td className="p-3">
                     <SourceTag source={r.source} />

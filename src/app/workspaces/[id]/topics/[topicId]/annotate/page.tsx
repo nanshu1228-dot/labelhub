@@ -19,6 +19,10 @@ import {
   getReviewThread,
   type ReviewThreadMessage,
 } from '@/lib/queries/review-thread'
+import {
+  getTopicPeerConsensus,
+  type TopicPeerData,
+} from '@/lib/queries/topic-peer-consensus'
 import { getEffectiveTemplate } from '@/lib/templates/effective'
 import '@/lib/templates/init'
 import {
@@ -98,6 +102,7 @@ export default async function TopicAnnotatePage(props: {
   const db = getDb()
   let reviewContext: AnnotationReviewContext | null = null
   let reviewThread: ReviewThreadMessage[] = []
+  let peerConsensus: TopicPeerData | null = null
   let displayPayload: Record<string, unknown> = {}
   let displayStatus = topic.status
 
@@ -121,9 +126,19 @@ export default async function TopicAnnotatePage(props: {
           unknown
         >
         displayStatus = ctx.topicStatus
-        reviewThread = await getReviewThread({
-          annotationId: reviewAnnotationIdFromUrl,
-        })
+        // Run two parallel reads — the review thread + the peer
+        // consensus (other raters' aggregated values on this topic).
+        // Peer consensus only renders in review mode (the submitter
+        // themselves shouldn't see it to avoid biasing them mid-draft).
+        const [thread, peer] = await Promise.all([
+          getReviewThread({ annotationId: reviewAnnotationIdFromUrl }),
+          getTopicPeerConsensus({
+            topicId,
+            excludeUserId: ctx.submitterId,
+          }),
+        ])
+        reviewThread = thread
+        peerConsensus = peer
       }
     }
     // If ctx lookup failed (bad id, cross-workspace, etc.) we fall through
@@ -177,6 +192,11 @@ export default async function TopicAnnotatePage(props: {
           initialPayload={displayPayload}
           taskName={task.name}
           workspaceName={workspace.name}
+          peerConsensus={
+            peerConsensus && peerConsensus.mode === 'pair-rubric'
+              ? { pair: peerConsensus.pair, peerCount: peerConsensus.peerCount }
+              : null
+          }
         />
       )
     }
@@ -191,6 +211,14 @@ export default async function TopicAnnotatePage(props: {
           initialPayload={displayPayload}
           taskName={task.name}
           workspaceName={workspace.name}
+          peerConsensus={
+            peerConsensus && peerConsensus.mode === 'arena-gsb'
+              ? {
+                  arena: peerConsensus.arena,
+                  peerCount: peerConsensus.peerCount,
+                }
+              : null
+          }
         />
       )
     }

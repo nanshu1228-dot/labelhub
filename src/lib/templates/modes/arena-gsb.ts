@@ -79,6 +79,25 @@ const responseSchema = z.object({
    * Submit-time check: every dimension declared on the template MUST appear.
    */
   dimensions: z.record(z.string(), dimensionScoreSchema),
+  /**
+   * Annotator-added dimensions for this specific topic. Open-ended GSB
+   * cases where the preset 5 dimensions don't cover an axis the rater
+   * cares about (e.g. "rhyme scheme" for a poem). Each item is scored on
+   * the same 1-5 scale via `dimensions[item.id]`.
+   *
+   * Same shape as the pair-rubric customItems; kept as a separate
+   * optional field so the renderer can label them as custom.
+   */
+  customDimensions: z
+    .array(
+      z.object({
+        id: z.string().min(1).max(64),
+        name: z.string().min(1).max(80),
+        description: z.string().max(280).optional(),
+      }),
+    )
+    .max(20)
+    .optional(),
   /** Overall verdict — not derived from dim scores because the annotator's
    *  weighting might disagree with a naive sum. */
   overallVerdict: z.enum(['a_better', 'tie', 'b_better']),
