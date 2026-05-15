@@ -138,7 +138,9 @@ describe('rubric — Mark helpers', () => {
 
 describe('registry — rubric integration', () => {
   const baseTemplate = (rubric: RubricSpec): PlatformTemplate => ({
-    mode: 'arena-battle',
+    // Placeholder mode — see registry.test.ts for the convention. Cast
+    // because TemplateMode is union-of-literals, not extensible.
+    mode: '__test_rubric_integration__' as PlatformTemplate['mode'],
     name: 'Rubric Test',
     description: 'test',
     itemSchema: z.object({}),

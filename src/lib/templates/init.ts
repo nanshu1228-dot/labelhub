@@ -8,12 +8,8 @@
  * Adding a new mode: write `./modes/<name>.ts` that calls `registerTemplate`,
  * then add a `import './modes/<name>'` line below.
  */
-import './modes/classic-survey'
-import './modes/pair-annotation'
-import './modes/arena-battle'
-import './modes/token-economy'
-import './modes/game-mode'
-import './modes/apprentice-mode'
+import './modes/pair-rubric'
+import './modes/arena-gsb'
 import './modes/agent-trace-eval' // flagship
 
 export {}

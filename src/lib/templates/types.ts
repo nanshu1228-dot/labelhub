@@ -15,14 +15,25 @@ import { rubricSpecSchema } from './rubric'
  * Single source of truth for template modes — both the runtime array (for Zod enums,
  * registry iteration) and the compile-time union (for type narrowing).
  */
+/**
+ * The three shipping template modes.
+ *
+ * Old modes (classic-survey / pair-annotation / arena-battle / token-economy /
+ * game-mode / apprentice-mode) were removed in the 3-mode consolidation
+ * on 2026-05-15 — the surface area was bigger than the user research justified.
+ */
 export const TEMPLATE_MODES = [
-  'classic-survey', // Xpert-style: prompt + multi-model responses + rubric scoring
-  'pair-annotation', // Innovation #1: AI proposes, human curates, delta captured
-  'arena-battle', // LMSYS-style: two models compete, human judges
-  'token-economy', // Optional crypto-flavor: stake reputation, earn tokens
-  'game-mode', // Streaks, leagues, leaderboards
-  'apprentice-mode', // Personalized AI partner that learns the user
-  'agent-trace-eval', // FLAGSHIP: evaluate agent trajectories — tool calls, reasoning, path choice
+  /** Two-model Q&A with a SHARED boolean rubric — each rubric item gets a
+   *  yes/no verdict against BOTH model A and model B. Ideal for factual
+   *  questions where the rubric checks are objective. */
+  'pair-rubric',
+  /** Two-model arena with MULTI-DIMENSION 1-5 scoring — each dimension
+   *  gets a 1-5 score for each model, GSB winner is auto-derived.
+   *  Ideal for subjective / open-ended generation. */
+  'arena-gsb',
+  /** FLAGSHIP: evaluate full agent trajectories — tool calls, reasoning,
+   *  path choice. Per-step + per-trajectory rubric. */
+  'agent-trace-eval',
 ] as const
 
 export type TemplateMode = (typeof TEMPLATE_MODES)[number]
@@ -108,6 +119,26 @@ export const uiHintsSchema = z.object({
 export type UIHints = z.infer<typeof uiHintsSchema>
 
 /**
+ * Pair-comparison checklist item — used by `pair-rubric` (each item is
+ * a yes/no check) and `arena-gsb` (each item is a 1-5 scoring dimension).
+ *
+ * Both modes ask the SAME question against BOTH model A and model B, so the
+ * shape is identical — only the scale (boolean vs 1-5) differs, and that
+ * lives in the template's `responseSchema`.
+ *
+ * The `id` is the storage key inside `annotations.payload.ratings[id]`
+ * (or `.dimensions[id]`) — never rename after rows exist.
+ */
+export interface PairChecklistItem {
+  /** Stable machine ID, snake_case. Used as storage key. */
+  id: string
+  /** Human label shown next to the input. */
+  name: string
+  /** Optional one-liner shown under the label. */
+  description?: string
+}
+
+/**
  * A complete platform template.
  * Item/response schemas are `ZodTypeAny` so each mode defines its own data shape.
  */
@@ -124,15 +155,31 @@ export interface PlatformTemplate {
   /**
    * Rubric — per-step and per-trajectory questions the annotator answers.
    *
-   * Optional because not every template is trajectory-shaped. Trace-eval and
-   * pair-annotation use it; classic-survey uses `itemSchema` instead because
-   * its items aren't sequences.
+   * Used by `agent-trace-eval` (trajectory-shaped). Pair templates use
+   * `pairChecklist` / `arenaDimensions` instead because the shape is
+   * different: each item is asked against TWO responses (A and B), not
+   * against a single step.
    *
    * When present, the annotation UI is driven entirely off this spec — no
-   * hardcoded question lists anywhere in React. Adding a new question is a
-   * one-line edit to the template, no UI change needed.
+   * hardcoded question lists anywhere in React.
    */
   rubric?: RubricSpec
+
+  /**
+   * Default boolean-checklist items for `pair-rubric` mode. Each item is
+   * asked yes/no against BOTH model A and model B (so each row produces 2
+   * booleans). When tasks.templateConfig overrides this list, those win.
+   * Stored under `responseSchema.ratings[item.id] = { a: bool, b: bool }`.
+   */
+  pairChecklist?: readonly PairChecklistItem[]
+
+  /**
+   * Default 1-5 dimensions for `arena-gsb` mode. Same shape as pairChecklist
+   * but scored 1-5 per model. Per-dimension GSB winner derives from the
+   * delta; overall verdict is recorded separately on the response.
+   * Stored under `responseSchema.dimensions[item.id] = { a: 1..5, b: 1..5 }`.
+   */
+  arenaDimensions?: readonly PairChecklistItem[]
 
   workflow: readonly WorkflowStage[]
   perfBudget: PerfBudget

@@ -3,8 +3,14 @@ import { z } from 'zod'
 import { registerTemplate, getTemplate } from './registry'
 import type { PlatformTemplate, TemplateMode } from './types'
 
+/**
+ * Tests use placeholder mode strings cast to TemplateMode to exercise the
+ * validation guard without clobbering the real templates registered by
+ * init.ts. The cast is the standard escape hatch — these test templates
+ * never get registered against a shipping mode name.
+ */
 const base = (overrides: Partial<PlatformTemplate> = {}): PlatformTemplate => ({
-  mode: 'arena-battle' as TemplateMode,
+  mode: '__test_mode_default__' as TemplateMode,
   name: 'Test Template',
   description: 'test',
   itemSchema: z.object({}),
@@ -24,16 +30,16 @@ const base = (overrides: Partial<PlatformTemplate> = {}): PlatformTemplate => ({
 describe('Template registry — perf budget enforcement', () => {
   it('accepts a small grid without virtualization', () => {
     expect(() =>
-      registerTemplate(base({ mode: 'arena-battle' })),
+      registerTemplate(base({ mode: '__test_small_grid__' as TemplateMode })),
     ).not.toThrow()
-    expect(getTemplate('arena-battle')).toBeDefined()
+    expect(getTemplate('__test_small_grid__' as TemplateMode)).toBeDefined()
   })
 
   it('REJECTS 1000-item grid without virtualization (the 50-rubric-jank failure mode)', () => {
     expect(() =>
       registerTemplate(
         base({
-          mode: 'token-economy',
+          mode: '__test_large_no_virt__' as TemplateMode,
           perfBudget: {
             maxItemsPerCell: 1000,
             virtualizationRequired: false, // bad: would jank past ~50 rows
@@ -49,7 +55,7 @@ describe('Template registry — perf budget enforcement', () => {
     expect(() =>
       registerTemplate(
         base({
-          mode: 'game-mode',
+          mode: '__test_no_atomic__' as TemplateMode,
           perfBudget: {
             maxItemsPerCell: 200,
             virtualizationRequired: true,
@@ -65,7 +71,7 @@ describe('Template registry — perf budget enforcement', () => {
     expect(() =>
       registerTemplate(
         base({
-          mode: 'apprentice-mode',
+          mode: '__test_safe_contract__' as TemplateMode,
           perfBudget: {
             maxItemsPerCell: 1000,
             virtualizationRequired: true,

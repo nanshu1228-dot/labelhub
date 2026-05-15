@@ -5,7 +5,7 @@ import {
   type PickerTemplate,
 } from '@/components/workspaces/template-picker'
 import { listTemplates } from '@/lib/templates/registry'
-import '@/lib/templates/init' // side-effect: registers all 6 modes
+import '@/lib/templates/init' // side-effect: registers the 3 shipping modes
 import { optionalUser } from '@/lib/auth/guards'
 
 export const metadata: Metadata = {

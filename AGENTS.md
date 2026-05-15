@@ -7,7 +7,10 @@ This version has breaking changes — APIs, conventions, and file structure may 
 ## LabelHub — agent quick reference
 
 ### Project elevator pitch
-LabelHub is an **AI-native, self-evolving annotation platform for the LLM era**. It captures the *teaching signal* (delta between AI proposals and human corrections), not just labels. One engine powers many template modes (classic survey, pair annotation, arena battle, token economy, etc.).
+LabelHub is an **AI-native, self-evolving annotation platform for the LLM era**. It captures the *teaching signal* (delta between AI proposals and human corrections), not just labels. One engine powers three template modes:
+- **`pair-rubric`** — two-model Q&A with shared yes/no rubric
+- **`arena-gsb`** — two-model multi-dimension 1-5 scoring, GSB-style
+- **`agent-trace-eval`** — flagship trajectory eval with per-step + per-trajectory rubric
 
 ### Five architectural pillars
 1. **Local-First** — all writes hit IndexedDB first (`src/lib/local-store`), then sync. Survives offline.
