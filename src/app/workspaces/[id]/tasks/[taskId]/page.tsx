@@ -11,6 +11,7 @@ import { getWorkspaceById } from '@/lib/queries/workspaces'
 import { getEffectiveTemplate } from '@/lib/templates/effective'
 import '@/lib/templates/init'
 import { AddTopicForm } from '@/components/task-admin/add-topic-form'
+import { BulkUploadForm } from '@/components/task-admin/bulk-upload-form'
 import { PublishTaskButton } from '@/components/task-admin/publish-task-button'
 import type { TemplateMode } from '@/lib/templates/types'
 
@@ -193,7 +194,10 @@ export default async function TaskDetailPage(props: {
 
       {isAdmin && (
         <section className="mb-8">
-          <div className="lbl mb-2">§ ADD A TOPIC</div>
+          <div className="flex items-baseline justify-between mb-2">
+            <div className="lbl">§ ADD A TOPIC</div>
+            <BulkUploadForm taskId={taskId} />
+          </div>
           <AddTopicForm
             workspaceId={workspaceId}
             taskId={taskId}

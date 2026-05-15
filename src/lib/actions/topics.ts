@@ -30,6 +30,20 @@ const createTopicSchema = z.object({
   itemData: z.record(z.string(), z.unknown()),
 })
 
+const createTopicsBatchSchema = z.object({
+  taskId: uuidLike,
+  /** Up to 100 items per call. Each is validated against template.itemSchema. */
+  items: z
+    .array(z.record(z.string(), z.unknown()))
+    .min(1)
+    .max(100),
+})
+
+export interface CreateTopicsBatchResult {
+  created: number
+  failed: Array<{ index: number; error: string }>
+}
+
 export async function createTopic(input: z.infer<typeof createTopicSchema>) {
   const parsed = createTopicSchema.parse(input)
   const db = getDb()
@@ -65,6 +79,81 @@ export async function createTopic(input: z.infer<typeof createTopicSchema>) {
   })
 
   return topic
+}
+
+/**
+ * Bulk-create topics from an array of item payloads.
+ *
+ * Used by the admin "paste JSON" / "upload CSV" surface. Each item is
+ * validated against the template's itemSchema individually so a single
+ * bad row doesn't kill the rest — we report per-index errors and commit
+ * the good rows.
+ *
+ * Auth: workspace admin only (same gate as createTopic). Returns a
+ * summary the UI can render row-by-row.
+ */
+export async function createTopicsBatch(
+  input: z.infer<typeof createTopicsBatchSchema>,
+): Promise<CreateTopicsBatchResult> {
+  const parsed = createTopicsBatchSchema.parse(input)
+  const db = getDb()
+
+  const [task] = await db
+    .select()
+    .from(tasks)
+    .where(eq(tasks.id, parsed.taskId))
+    .limit(1)
+  if (!task) throw new NotFoundError('Task')
+
+  const { user } = await requireWorkspaceAdmin(task.workspaceId)
+
+  const template = getTemplate(task.templateMode as TemplateMode)
+  if (!template) throw new ValidationError('Template not registered.')
+
+  const failed: Array<{ index: number; error: string }> = []
+  const toInsert: Array<{ taskId: string; itemData: unknown; status: 'drafting' }> = []
+
+  for (let i = 0; i < parsed.items.length; i++) {
+    const item = parsed.items[i]
+    try {
+      const validated = template.itemSchema.parse(item)
+      toInsert.push({
+        taskId: parsed.taskId,
+        itemData: validated,
+        status: 'drafting',
+      })
+    } catch (e) {
+      const msg =
+        e instanceof z.ZodError
+          ? e.issues.map((x) => `${x.path.join('.') || 'item'}: ${x.message}`).join('; ')
+          : e instanceof Error
+            ? e.message
+            : 'unknown validation error'
+      failed.push({ index: i, error: msg })
+    }
+  }
+
+  if (toInsert.length === 0) {
+    return { created: 0, failed }
+  }
+
+  // Single batched INSERT for the valid rows. drizzle's `.values(array)`
+  // generates one statement so this is one round-trip even for 100 rows.
+  const inserted = await db.insert(topics).values(toInsert).returning({
+    id: topics.id,
+  })
+
+  // One event per topic so the audit log reflects the right granularity.
+  await db.insert(events).values(
+    inserted.map((row) => ({
+      type: 'topic.created',
+      workspaceId: task.workspaceId,
+      actorId: user.id,
+      payload: { topicId: row.id, taskId: task.id, viaBatch: true },
+    })),
+  )
+
+  return { created: inserted.length, failed }
 }
 
 const topicIdSchema = z.object({ topicId: uuidLike })

@@ -1,10 +1,12 @@
 import 'server-only'
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import {
   annotations,
   events,
   stepAnnotations,
+  tasks,
+  topics,
   trajectories,
   trajectorySteps,
   users,
@@ -268,6 +270,228 @@ export async function getWorkspacePeerTrust(
   return out
 }
 
+// ─── Source 3: pair / arena peer consensus ───────────────────────────────
+
+/**
+ * Peer-consensus trust for the pair-rubric and arena-gsb modes.
+ *
+ * Trajectory peer trust reads step_annotations because trajectory marks
+ * are one-rating-per-step. Pair / arena annotations are different: each
+ * topic produces a payload with multiple (rubricId|dimId, side)
+ * judgments. We treat each (rubricId|dimId, side) cell as one
+ * alignment data point.
+ *
+ * Alignment rule per row:
+ *   - pair-rubric  (boolean): rater aligned with the MAJORITY of others'
+ *                              booleans on the same (rubricId, side).
+ *                              Tie among others → unilateral (skipped).
+ *   - arena-gsb    (1-5):     rater aligned when |their - median(others)| ≤ 1
+ *                              (same tolerance as step_annotations peer trust).
+ *
+ * Same Bayesian prior as the trajectory peer source so the discriminated
+ * union row stays uniform — UI doesn't care whether the peer signal came
+ * from steps or from pair/arena payloads.
+ */
+export async function getWorkspacePairPeerTrust(
+  workspaceId: string,
+): Promise<Extract<UserTrust, { source: 'peer' }>[]> {
+  const db = getDb()
+
+  type Row = {
+    annotationId: string
+    userId: string
+    displayName: string | null
+    topicId: string
+    templateMode: string
+    payload: unknown
+  }
+  const rows: Row[] = await db
+    .select({
+      annotationId: annotations.id,
+      userId: annotations.userId,
+      displayName: users.displayName,
+      topicId: annotations.topicId,
+      templateMode: tasks.templateMode,
+      payload: annotations.payload,
+    })
+    .from(annotations)
+    .innerJoin(topics, eq(topics.id, annotations.topicId))
+    .innerJoin(tasks, eq(tasks.id, topics.taskId))
+    .innerJoin(users, eq(users.id, annotations.userId))
+    .where(
+      and(
+        eq(tasks.workspaceId, workspaceId),
+        isNotNull(annotations.submittedAt),
+        or(
+          eq(tasks.templateMode, 'pair-rubric'),
+          eq(tasks.templateMode, 'arena-gsb'),
+        ),
+      ),
+    )
+
+  type Cell =
+    | { kind: 'bool'; value: boolean }
+    | { kind: 'num'; value: number }
+
+  // Build per-(topicId, mode, dimOrRubricId, side) buckets so we can compute
+  // peer consensus excluding the rater themselves.
+  type BucketKey = string
+  type CellEntry = {
+    userId: string
+    cell: Cell
+    displayName: string | null
+  }
+  const bucket = new Map<BucketKey, CellEntry[]>()
+  // De-duplicate to ONE annotation per (topic, user) — the latest one wins.
+  // Submitted annotations are immutable, so dup-by-user shouldn't happen
+  // in practice, but defensive: prefer the lexicographically last id.
+  const dedupKey = (topicId: string, userId: string) =>
+    `${topicId}|${userId}`
+  const latestByUser = new Map<string, Row>()
+  for (const r of rows) {
+    const k = dedupKey(r.topicId, r.userId)
+    const prev = latestByUser.get(k)
+    if (!prev || r.annotationId > prev.annotationId) latestByUser.set(k, r)
+  }
+
+  for (const r of latestByUser.values()) {
+    const payload = (r.payload ?? {}) as Record<string, unknown>
+
+    if (r.templateMode === 'pair-rubric') {
+      const ratings = (payload.ratings ?? {}) as Record<
+        string,
+        { a?: unknown; b?: unknown }
+      >
+      for (const [rubricId, v] of Object.entries(ratings)) {
+        if (typeof v.a === 'boolean') {
+          const key = `${r.topicId}|pair|${rubricId}|a`
+          const list = bucket.get(key) ?? []
+          list.push({
+            userId: r.userId,
+            cell: { kind: 'bool', value: v.a },
+            displayName: r.displayName,
+          })
+          bucket.set(key, list)
+        }
+        if (typeof v.b === 'boolean') {
+          const key = `${r.topicId}|pair|${rubricId}|b`
+          const list = bucket.get(key) ?? []
+          list.push({
+            userId: r.userId,
+            cell: { kind: 'bool', value: v.b },
+            displayName: r.displayName,
+          })
+          bucket.set(key, list)
+        }
+      }
+    } else if (r.templateMode === 'arena-gsb') {
+      const dims = (payload.dimensions ?? {}) as Record<
+        string,
+        { a?: unknown; b?: unknown }
+      >
+      for (const [dimId, v] of Object.entries(dims)) {
+        if (typeof v.a === 'number') {
+          const key = `${r.topicId}|arena|${dimId}|a`
+          const list = bucket.get(key) ?? []
+          list.push({
+            userId: r.userId,
+            cell: { kind: 'num', value: v.a },
+            displayName: r.displayName,
+          })
+          bucket.set(key, list)
+        }
+        if (typeof v.b === 'number') {
+          const key = `${r.topicId}|arena|${dimId}|b`
+          const list = bucket.get(key) ?? []
+          list.push({
+            userId: r.userId,
+            cell: { kind: 'num', value: v.b },
+            displayName: r.displayName,
+          })
+          bucket.set(key, list)
+        }
+      }
+    }
+  }
+
+  // For each bucket, judge alignment for each member against the
+  // majority/median of the OTHERS in the same bucket.
+  type Accum = {
+    aligned: number
+    diverged: number
+    unilateral: number
+    displayName: string | null
+  }
+  const byUser = new Map<string, Accum>()
+  const initAcc = (
+    userId: string,
+    displayName: string | null,
+  ): Accum => {
+    const existing = byUser.get(userId)
+    if (existing) return existing
+    const a: Accum = {
+      aligned: 0,
+      diverged: 0,
+      unilateral: 0,
+      displayName,
+    }
+    byUser.set(userId, a)
+    return a
+  }
+
+  for (const list of bucket.values()) {
+    if (list.length < 2) {
+      for (const e of list) initAcc(e.userId, e.displayName).unilateral++
+      continue
+    }
+    for (const e of list) {
+      const others = list.filter((o) => o.userId !== e.userId)
+      const acc = initAcc(e.userId, e.displayName)
+      if (e.cell.kind === 'bool') {
+        // Majority vote of the others' booleans.
+        const trueCount = others.filter(
+          (o) => o.cell.kind === 'bool' && o.cell.value === true,
+        ).length
+        const falseCount = others.length - trueCount
+        if (trueCount === falseCount) {
+          acc.unilateral++ // tie among others — no clean consensus
+          continue
+        }
+        const majority = trueCount > falseCount
+        if (e.cell.value === majority) acc.aligned++
+        else acc.diverged++
+      } else {
+        // Numeric median of the others.
+        const otherNums = others
+          .map((o) => (o.cell.kind === 'num' ? o.cell.value : null))
+          .filter((x): x is number => x !== null)
+        if (otherNums.length === 0) {
+          acc.unilateral++
+          continue
+        }
+        const m = median(otherNums)
+        if (Math.abs(e.cell.value - m) <= PEER_TOLERANCE) acc.aligned++
+        else acc.diverged++
+      }
+    }
+  }
+
+  const out: Extract<UserTrust, { source: 'peer' }>[] = []
+  for (const [userId, a] of byUser) {
+    out.push({
+      source: 'peer',
+      userId,
+      displayName: a.displayName,
+      aligned: a.aligned,
+      diverged: a.diverged,
+      unilateral: a.unilateral,
+      score: smoothed(a.aligned, a.diverged),
+    })
+  }
+  out.sort((a, b) => b.score - a.score)
+  return out
+}
+
 // ─── Unified query: admin preferred, peer fallback ────────────────────────
 
 /**
@@ -282,13 +506,54 @@ export async function getWorkspacePeerTrust(
 export async function getWorkspaceTrust(
   workspaceId: string,
 ): Promise<UserTrust[]> {
-  const [adminScores, peerScores] = await Promise.all([
+  const [adminScores, trajPeerScores, pairPeerScores] = await Promise.all([
     getWorkspaceApprovalTrust(workspaceId),
     getWorkspacePeerTrust(workspaceId),
+    getWorkspacePairPeerTrust(workspaceId),
   ])
   const byUser = new Map<string, UserTrust>()
-  // Seed with peer first; admin overrides.
-  for (const p of peerScores) byUser.set(p.userId, p)
+  // Merge peer sources additively: a user with peer signal from BOTH
+  // trajectory step_annotations AND pair-mode payloads gets the union
+  // of their alignment events. This is conservative — more samples =
+  // tighter posterior, all on the same prior.
+  const peerMerged = new Map<
+    string,
+    {
+      aligned: number
+      diverged: number
+      unilateral: number
+      displayName: string | null
+    }
+  >()
+  for (const list of [trajPeerScores, pairPeerScores]) {
+    for (const p of list) {
+      const prev = peerMerged.get(p.userId)
+      if (prev) {
+        prev.aligned += p.aligned
+        prev.diverged += p.diverged
+        prev.unilateral += p.unilateral
+      } else {
+        peerMerged.set(p.userId, {
+          aligned: p.aligned,
+          diverged: p.diverged,
+          unilateral: p.unilateral,
+          displayName: p.displayName,
+        })
+      }
+    }
+  }
+  for (const [userId, m] of peerMerged) {
+    byUser.set(userId, {
+      source: 'peer',
+      userId,
+      displayName: m.displayName,
+      aligned: m.aligned,
+      diverged: m.diverged,
+      unilateral: m.unilateral,
+      score: smoothed(m.aligned, m.diverged),
+    })
+  }
+  // Admin overrides (authoritative).
   for (const a of adminScores) byUser.set(a.userId, a)
   return [...byUser.values()].sort((a, b) => b.score - a.score)
 }
