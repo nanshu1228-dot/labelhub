@@ -17,6 +17,12 @@ import { isAnyProviderConfigured } from '@/lib/ai/client'
 import { RefinerActionClient } from '@/components/disputes/refiner-action-client'
 import { PatchActionsClient } from '@/components/disputes/patch-actions-client'
 import { TrustBadge } from '@/components/quality/trust-badge'
+import {
+  getPairOrArenaIAA,
+  type PairRubricRow,
+  type ArenaDimensionRow,
+  type ArenaOverallRow,
+} from '@/lib/queries/pair-iaa'
 
 export const metadata: Metadata = {
   title: 'Disputes — LabelHub',
@@ -39,10 +45,17 @@ export default async function DisputesPage(
 ) {
   const { id: workspaceId } = await props.params
   let workspaceName = 'workspace'
+  let workspaceMode = 'agent-trace-eval'
   let dbError: string | null = null
   let summary: Awaited<ReturnType<typeof getWorkspaceIaaSummary>> | null = null
   let disputes: Awaited<ReturnType<typeof listTopDisputes>> = []
   let patches: Awaited<ReturnType<typeof listRecentPatches>> = []
+  let pairIaa: {
+    mode: 'pair-rubric' | 'arena-gsb' | 'unsupported'
+    pairRubric: PairRubricRow[]
+    arenaDimensions: ArenaDimensionRow[]
+    arenaOverall: ArenaOverallRow | null
+  } | null = null
   const trustByUserId: Record<string, UserTrust> = {}
   let isAdmin = false
 
@@ -61,6 +74,7 @@ export default async function DisputesPage(
     const workspace = await getWorkspaceById(workspaceId)
     if (!workspace) notFound()
     workspaceName = workspace.name
+    workspaceMode = workspace.templateMode
 
     {
       // Resolve viewer's role — trust scores are admin-only operational data,
@@ -69,17 +83,22 @@ export default async function DisputesPage(
       isAdmin = role === 'admin' || workspace.adminId === me!.id
     }
 
-    const [s, d, p, trustList] = await Promise.all([
+    const [s, d, p, trustList, pair] = await Promise.all([
       getWorkspaceIaaSummary(workspaceId),
       listTopDisputes({ workspaceId, limit: 20 }),
       listRecentPatches(workspaceId, 20),
       isAdmin
         ? getWorkspaceTrust(workspaceId).catch(() => [] as UserTrust[])
         : Promise.resolve([] as UserTrust[]),
+      getPairOrArenaIAA({
+        workspaceId,
+        templateMode: workspace.templateMode,
+      }),
     ])
     summary = s
     disputes = d
     patches = p
+    pairIaa = pair
     for (const t of trustList) trustByUserId[t.userId] = t
   } catch (e) {
     dbError = e instanceof Error ? e.message : String(e)
@@ -111,6 +130,12 @@ export default async function DisputesPage(
           <div className="flex flex-col gap-10">
             {summary && <IaaSummary summary={summary} />}
 
+            {pairIaa && pairIaa.mode !== 'unsupported' && (
+              <PairIaaPanels iaa={pairIaa} />
+            )}
+
+            {workspaceMode === 'agent-trace-eval' && (
+              <>
             <section>
               <SectionHeader
                 title="TOP DISPUTED STEPS"
@@ -178,6 +203,8 @@ export default async function DisputesPage(
                 </ul>
               )}
             </section>
+              </>
+            )}
           </div>
         )}
       </main>
@@ -620,6 +647,259 @@ function DbError({ message }: { message: string }) {
       >
         {message}
       </pre>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Pair-rubric / arena-gsb IAA panels. Renders when the workspace's
+// templateMode is one of those — disagreement signals derived from
+// `annotations.payload` (not step_annotations).
+
+function PairIaaPanels({
+  iaa,
+}: {
+  iaa: {
+    mode: 'pair-rubric' | 'arena-gsb' | 'unsupported'
+    pairRubric: PairRubricRow[]
+    arenaDimensions: ArenaDimensionRow[]
+    arenaOverall: ArenaOverallRow | null
+  }
+}) {
+  if (iaa.mode === 'pair-rubric') {
+    return (
+      <section>
+        <SectionHeader
+          title="RUBRIC DISAGREEMENT · YES/NO PER MODEL"
+          hint={
+            iaa.pairRubric.length === 0
+              ? 'no multi-rater data yet'
+              : `${iaa.pairRubric.length} rubric${iaa.pairRubric.length === 1 ? '' : 's'} tracked`
+          }
+        />
+        {iaa.pairRubric.length === 0 ? (
+          <PairEmpty kind="rubric" />
+        ) : (
+          <AgreementTable
+            rows={iaa.pairRubric.map((r) => ({
+              key: r.rubricId,
+              label: r.rubricId,
+              multi: r.multiRaterTopics,
+              disputed: r.disputedTopics,
+              rate: r.agreementRate,
+            }))}
+            unitLabel="topic"
+          />
+        )}
+      </section>
+    )
+  }
+  if (iaa.mode === 'arena-gsb') {
+    return (
+      <>
+        <section>
+          <SectionHeader
+            title="DIMENSION DISAGREEMENT · 1-5 PER MODEL"
+            hint={
+              iaa.arenaDimensions.length === 0
+                ? 'no multi-rater data yet'
+                : `${iaa.arenaDimensions.length} dimension${iaa.arenaDimensions.length === 1 ? '' : 's'} tracked`
+            }
+          />
+          {iaa.arenaDimensions.length === 0 ? (
+            <PairEmpty kind="dimension" />
+          ) : (
+            <AgreementTable
+              rows={iaa.arenaDimensions.map((r) => ({
+                key: r.dimensionId,
+                label: r.dimensionId,
+                multi: r.multiRaterTopics,
+                disputed: r.disputedTopics,
+                rate: r.agreementRate,
+              }))}
+              unitLabel="topic"
+            />
+          )}
+        </section>
+        {iaa.arenaOverall && (
+          <section>
+            <SectionHeader
+              title="OVERALL VERDICT AGREEMENT"
+              hint={`${iaa.arenaOverall.multiRaterTopics} multi-rater topic${iaa.arenaOverall.multiRaterTopics === 1 ? '' : 's'}`}
+            />
+            <OverallVerdictPanel overall={iaa.arenaOverall} />
+          </section>
+        )}
+      </>
+    )
+  }
+  return null
+}
+
+function AgreementTable({
+  rows,
+  unitLabel,
+}: {
+  rows: Array<{
+    key: string
+    label: string
+    multi: number
+    disputed: number
+    rate: number | null
+  }>
+  unitLabel: string
+}) {
+  return (
+    <div
+      className="rounded-md overflow-hidden"
+      style={{
+        background: 'var(--panel)',
+        border: '1px solid var(--line)',
+      }}
+    >
+      <table className="w-full ts-13">
+        <thead>
+          <tr
+            style={{
+              background: 'var(--panel2)',
+              borderBottom: '1px solid var(--line)',
+            }}
+          >
+            <th
+              className="text-left px-4 py-2 mono ts-11"
+              style={{ color: 'var(--mute)' }}
+            >
+              ID
+            </th>
+            <th
+              className="px-4 py-2 mono ts-11 text-center"
+              style={{ color: 'var(--mute)', width: 140 }}
+            >
+              MULTI-RATER {unitLabel.toUpperCase()}S
+            </th>
+            <th
+              className="px-4 py-2 mono ts-11 text-center"
+              style={{ color: 'var(--mute)', width: 100 }}
+            >
+              DISPUTED
+            </th>
+            <th
+              className="px-4 py-2 mono ts-11 text-center"
+              style={{ color: 'var(--mute)', width: 100 }}
+            >
+              AGREEMENT
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, idx) => (
+            <tr
+              key={r.key}
+              style={{
+                borderTop: idx === 0 ? 'none' : '1px solid var(--line)',
+              }}
+            >
+              <td
+                className="px-4 py-2 mono ts-12"
+                style={{ color: 'var(--text)' }}
+              >
+                {r.label}
+              </td>
+              <td
+                className="px-4 py-2 mono ts-12 text-center"
+                style={{ color: 'var(--mute)' }}
+              >
+                {r.multi}
+              </td>
+              <td
+                className="px-4 py-2 mono ts-12 text-center"
+                style={{
+                  color: r.disputed > 0 ? 'var(--danger)' : 'var(--mute)',
+                }}
+              >
+                {r.disputed}
+              </td>
+              <td
+                className="px-4 py-2 mono ts-12 text-center"
+                style={{
+                  color:
+                    r.rate === null
+                      ? 'var(--mute2)'
+                      : r.rate >= 0.8
+                        ? 'oklch(0.65 0.18 200)'
+                        : r.rate >= 0.5
+                          ? 'oklch(0.7 0.14 75)'
+                          : 'var(--danger)',
+                  fontWeight: 600,
+                }}
+              >
+                {r.rate === null ? '—' : `${Math.round(r.rate * 100)}%`}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function OverallVerdictPanel({
+  overall,
+}: {
+  overall: ArenaOverallRow
+}) {
+  const total =
+    overall.byVerdict.a_better +
+    overall.byVerdict.tie +
+    overall.byVerdict.b_better
+  const rate =
+    overall.multiRaterTopics === 0
+      ? null
+      : 1 - overall.disputedTopics / overall.multiRaterTopics
+  return (
+    <div
+      className="rounded-md p-4 grid grid-cols-1 md:grid-cols-4 gap-4"
+      style={{
+        background: 'var(--panel)',
+        border: '1px solid var(--line)',
+      }}
+    >
+      <Tile
+        label="AGREEMENT"
+        value={rate === null ? '—' : `${Math.round(rate * 100)}%`}
+        hint="multi-rater topics where every rater picked the same verdict"
+      />
+      <Tile
+        label="A_BETTER VOTES"
+        value={overall.byVerdict.a_better.toString()}
+        hint={total > 0 ? `${Math.round((overall.byVerdict.a_better / total) * 100)}% of all` : '—'}
+      />
+      <Tile
+        label="TIE VOTES"
+        value={overall.byVerdict.tie.toString()}
+        hint={total > 0 ? `${Math.round((overall.byVerdict.tie / total) * 100)}% of all` : '—'}
+      />
+      <Tile
+        label="B_BETTER VOTES"
+        value={overall.byVerdict.b_better.toString()}
+        hint={total > 0 ? `${Math.round((overall.byVerdict.b_better / total) * 100)}% of all` : '—'}
+      />
+    </div>
+  )
+}
+
+function PairEmpty({ kind }: { kind: 'rubric' | 'dimension' }) {
+  return (
+    <div
+      className="rounded-md px-4 py-6 text-center ts-13 mono"
+      style={{
+        background: 'var(--panel)',
+        border: '1px dashed var(--line)',
+        color: 'var(--mute2)',
+      }}
+    >
+      No {kind} disagreement data yet — IAA needs at least two
+      annotators to submit on the same topic.
     </div>
   )
 }

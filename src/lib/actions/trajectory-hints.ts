@@ -28,10 +28,11 @@ import { z } from 'zod'
 import { and, eq } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { trajectories, trajectorySteps, events } from '@/lib/db/schema'
-import { NotFoundError } from '@/lib/errors'
+import { ForbiddenError, NotFoundError } from '@/lib/errors'
 import { reviewTrajectory, type TrajectoryReview } from '@/lib/ai/trajectory-reviewer'
 import { logAICall } from '@/lib/ai/quota'
 import { uuidLike } from '@/lib/validators/uuid'
+import { requireWorkspaceMember } from '@/lib/auth/guards'
 
 /**
  * Flattened hint shape — exactly what the annotator UI expects.
@@ -133,6 +134,15 @@ export async function reviewTrajectoryAndCache(
     )
     .limit(1)
   if (!traj) throw new NotFoundError('Trajectory')
+  // Defense-in-depth: even though /api/admin/compute-hints route gates
+  // this call with ADMIN_DIAG_TOKEN, the function is also exported as a
+  // Server Action ('use server' at top of file). Any authed client could
+  // hit it directly and burn LLM quota — bounce non-members here.
+  try {
+    await requireWorkspaceMember(traj.workspaceId)
+  } catch {
+    throw new ForbiddenError('Not a member of this workspace.')
+  }
 
   const stepRows = await db
     .select({

@@ -67,6 +67,10 @@ const EXPECTED_GUARDS: Record<string, RegExp> = {
   'ai.ts': /require(WorkspaceAdmin|WorkspaceMember)\(/,
   // Demo-mode gated — pattern is an env check rather than a guard call.
   'guideline-refiner.ts': /LABELHUB_DEMO_MODE/,
+  // Phase-5 hardening: previously-naked helpers now self-defend.
+  'inbox.ts': /requireWorkspaceMember\(/,
+  'trajectory-summary.ts': /requireWorkspaceMember\(/,
+  'trajectory-hints.ts': /requireWorkspaceMember\(/,
 }
 
 /**
@@ -80,17 +84,6 @@ const EXPECTED_GUARDS: Record<string, RegExp> = {
 const ALLOWED_NO_GUARD: Set<string> = new Set([
   // Supabase auth bridge — sign-in/up flows don't have workspace context.
   'auth.ts',
-  // Internal helper modules — called from properly-guarded action wrappers
-  // (e.g. annotate-marks.ts which guards with requireWorkspaceMember).
-  // NOTE: these are 'use server' modules and therefore reachable as Server
-  // Actions even when only intended as internal helpers. The cross-tenant
-  // boundary check inside the helper (`if traj.workspaceId !== opts.workspaceId`)
-  // is the second line of defense; the caller's guard is the first.
-  // TODO: tighten by adding requireUser() at entry to each helper for
-  // defense-in-depth — tracked separately.
-  'inbox.ts',
-  'trajectory-summary.ts',
-  'trajectory-hints.ts',
 ])
 
 describe('Server-action guard presence', () => {

@@ -19,7 +19,8 @@ import { z } from 'zod'
 import { eq } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { trajectories, trajectorySteps } from '@/lib/db/schema'
-import { NotFoundError } from '@/lib/errors'
+import { ForbiddenError, NotFoundError } from '@/lib/errors'
+import { requireWorkspaceMember } from '@/lib/auth/guards'
 import {
   summarizeTrajectory,
   type TrajectorySummary,
@@ -44,12 +45,22 @@ export async function summarizeTrajectoryAndCache(
   const parsed = inputSchema.parse(input)
   const db = getDb()
 
+  // Resolve workspace from trajectory FIRST, then membership-check —
+  // defense-in-depth so an authed-but-not-member user can't burn LLM
+  // tokens by triggering summaries cross-workspace. The original design
+  // delegated auth to the calling page; this guard ensures the Server
+  // Action endpoint itself is safe even when called directly.
   const [traj] = await db
     .select()
     .from(trajectories)
     .where(eq(trajectories.id, parsed.trajectoryId))
     .limit(1)
   if (!traj) throw new NotFoundError('Trajectory')
+  try {
+    await requireWorkspaceMember(traj.workspaceId)
+  } catch {
+    throw new ForbiddenError('Not a member of this workspace.')
+  }
 
   // Cache hit: return stored summary.
   if (!parsed.force && traj.summary) {
@@ -129,12 +140,24 @@ export async function scheduleSummaryIfMissing(input: {
 }): Promise<void> {
   const parsed = inputSchema.parse(input)
   const db = getDb()
+  // Same defense as summarizeTrajectoryAndCache: resolve workspace
+  // before doing anything, then bounce non-members. We don't surface
+  // the trajectory's existence on auth failure (silent skip).
   const [traj] = await db
-    .select({ id: trajectories.id, summary: trajectories.summary })
+    .select({
+      id: trajectories.id,
+      summary: trajectories.summary,
+      workspaceId: trajectories.workspaceId,
+    })
     .from(trajectories)
     .where(eq(trajectories.id, parsed.trajectoryId))
     .limit(1)
   if (!traj || traj.summary) return
+  try {
+    await requireWorkspaceMember(traj.workspaceId)
+  } catch {
+    return // silent — this is a fire-and-forget; auth fail = skip
+  }
   await summarizeTrajectoryAndCache(parsed).catch((e) => {
     // eslint-disable-next-line no-console
     console.warn(
@@ -185,6 +208,21 @@ export async function getCachedSummary(
   trajectoryId: string,
 ): Promise<TrajectorySummary | null> {
   const db = getDb()
+  // Defense-in-depth: this is a 'use server' export, so reachable as a
+  // Server Action endpoint from any authed client. The cached summary
+  // itself isn't high-stakes data but the access path doubles as an
+  // existence probe across workspaces. Bounce non-members.
+  const [trajForAuth] = await db
+    .select({ workspaceId: trajectories.workspaceId })
+    .from(trajectories)
+    .where(eq(trajectories.id, trajectoryId))
+    .limit(1)
+  if (!trajForAuth) return null
+  try {
+    await requireWorkspaceMember(trajForAuth.workspaceId)
+  } catch {
+    return null
+  }
   const [traj] = await db
     .select({ summary: trajectories.summary })
     .from(trajectories)

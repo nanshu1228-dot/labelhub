@@ -29,7 +29,8 @@ import {
   topics,
   trajectories,
 } from '@/lib/db/schema'
-import { NotFoundError } from '@/lib/errors'
+import { ForbiddenError, NotFoundError } from '@/lib/errors'
+import { requireWorkspaceMember } from '@/lib/auth/guards'
 
 // `'use server'` files can only export async functions, so this constant
 // stays module-local. Anyone outside this module reads it implicitly via
@@ -181,8 +182,25 @@ export interface InboxBinding {
 export async function openTrajectoryForAnnotation(opts: {
   workspaceId: string
   trajectoryId: string
+  /**
+   * The user whose annotation row is being opened. Kept in the signature
+   * for backwards compatibility with existing callers — but the function
+   * now VERIFIES this matches the authenticated user. A caller passing
+   * someone else's id gets a ForbiddenError. This blocks the
+   * Server-Action attack surface ("forge userId, get someone else's
+   * draft").
+   */
   userId: string
 }): Promise<InboxBinding> {
+  // Self-defend even though current callers already auth: this is a
+  // 'use server' export so reachable as a Server Action endpoint.
+  const { user } = await requireWorkspaceMember(opts.workspaceId)
+  if (opts.userId !== user.id) {
+    throw new ForbiddenError(
+      'opts.userId must match the authenticated user.',
+    )
+  }
+
   const db = getDb()
   const [traj] = await db
     .select({
@@ -197,16 +215,16 @@ export async function openTrajectoryForAnnotation(opts: {
     throw new NotFoundError('Trajectory') // don't leak existence cross-workspace
   }
 
-  const task = await getOrCreateInboxTask(opts.workspaceId, opts.userId)
+  const task = await getOrCreateInboxTask(opts.workspaceId, user.id)
   const topic = await getOrCreateInboxTopic({
     taskId: task.id,
     trajectoryId: opts.trajectoryId,
     workspaceId: opts.workspaceId,
-    actorId: opts.userId,
+    actorId: user.id,
   })
   const annotation = await getOrCreateMyAnnotation({
     topicId: topic.id,
-    userId: opts.userId,
+    userId: user.id,
   })
 
   return {

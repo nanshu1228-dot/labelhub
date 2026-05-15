@@ -7,6 +7,10 @@ import {
   getMyQueueStats,
 } from '@/lib/queries/annotator-queue'
 import { listMyAnnotatableWorkspaces } from '@/lib/actions/queue'
+import {
+  listMyTopicQueueForUser,
+  type TopicQueueItem,
+} from '@/lib/queries/topic-queue'
 
 export const metadata: Metadata = {
   title: 'My Queue — LabelHub',
@@ -40,7 +44,7 @@ export default async function MyQueuePage(props: {
   const me = await optionalUser()
   if (!me) redirect('/signin?next=/my/queue')
 
-  const [workspaces, queue, stats] = await Promise.all([
+  const [workspaces, queue, stats, topicQueue] = await Promise.all([
     listMyAnnotatableWorkspaces({ userId: me.id }),
     listMyQueueForUser({
       userId: me.id,
@@ -50,6 +54,11 @@ export default async function MyQueuePage(props: {
     getMyQueueStats({
       userId: me.id,
       workspaceId: workspaceFilter,
+    }),
+    listMyTopicQueueForUser({
+      userId: me.id,
+      workspaceId: workspaceFilter,
+      limit: 50,
     }),
   ])
 
@@ -78,9 +87,98 @@ export default async function MyQueuePage(props: {
           activeWorkspaceId={workspaceFilter ?? null}
         />
 
-        <QueueList items={queue} />
+        {topicQueue.length > 0 && (
+          <section className="mb-6">
+            <div className="lbl mb-2">§ TOPICS · PAIR-RUBRIC / ARENA-GSB</div>
+            <TopicQueueList items={topicQueue} />
+          </section>
+        )}
+
+        <section>
+          {topicQueue.length > 0 && (
+            <div className="lbl mb-2">§ TRAJECTORIES</div>
+          )}
+          <QueueList items={queue} />
+        </section>
       </div>
     </main>
+  )
+}
+
+function TopicQueueList({ items }: { items: TopicQueueItem[] }) {
+  return (
+    <ul className="flex flex-col gap-3">
+      {items.map((item) => {
+        const accent =
+          item.state === 'mine'
+            ? 'oklch(0.7 0.14 75 / 0.4)'
+            : item.state === 'submitted'
+              ? 'oklch(0.55 0 0 / 0.4)'
+              : 'var(--line)'
+        const stateLabel =
+          item.state === 'mine'
+            ? 'resume'
+            : item.state === 'submitted'
+              ? 'submitted'
+              : 'claim'
+        const stateColor =
+          item.state === 'mine'
+            ? 'oklch(0.7 0.14 75)'
+            : item.state === 'submitted'
+              ? 'var(--mute2)'
+              : 'oklch(0.65 0.18 200)'
+        return (
+          <li key={item.topicId}>
+            <Link
+              href={`/workspaces/${item.workspaceId}/topics/${item.topicId}/annotate`}
+              className="block rounded-xl p-4"
+              style={{
+                background: 'var(--panel)',
+                border: `1px solid ${accent}`,
+                textDecoration: 'none',
+                transition: 'border-color 120ms',
+              }}
+            >
+              <div className="flex items-baseline justify-between gap-3 mb-2">
+                <div className="ts-12 mono" style={{ color: 'var(--mute2)' }}>
+                  {item.workspaceName} · {item.taskName}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span
+                    className="mono ts-11 px-2 py-0.5 rounded"
+                    style={{
+                      background: 'oklch(0.6 0.18 280 / 0.1)',
+                      color: 'var(--accent)',
+                      border: '1px solid oklch(0.6 0.18 280 / 0.25)',
+                    }}
+                  >
+                    {item.templateMode.toUpperCase()}
+                  </span>
+                  <span
+                    className="mono ts-11"
+                    style={{ color: stateColor, fontWeight: 600 }}
+                  >
+                    {stateLabel}
+                  </span>
+                </div>
+              </div>
+              <p
+                className="ts-13"
+                style={{ color: 'var(--text)', lineHeight: 1.5 }}
+              >
+                {item.promptPreview}
+              </p>
+              <div
+                className="ts-11 mono mt-2"
+                style={{ color: 'var(--mute2)' }}
+              >
+                status {item.topicStatus} · {item.createdAt.toISOString().slice(0, 10)}
+              </div>
+            </Link>
+          </li>
+        )
+      })}
+    </ul>
   )
 }
 
@@ -216,14 +314,16 @@ function QueueList({
         }}
       >
         <h3 className="ts-16" style={{ color: 'var(--hi)', fontWeight: 500 }}>
-          You&apos;re all caught up
+          No trajectories
         </h3>
         <p
           className="ts-13 mt-2 mx-auto"
-          style={{ color: 'var(--mute)', maxWidth: 380 }}
+          style={{ color: 'var(--mute)', maxWidth: 420 }}
         >
-          No trajectories awaiting your annotation. New captures will land
-          here automatically — refresh in a few minutes.
+          Nothing from agent-trace-eval workspaces awaiting your annotation.
+          If you&apos;re in a pair-rubric or arena-gsb workspace, topics show
+          up in the section above instead. Otherwise — refresh after a new
+          capture lands.
         </p>
       </div>
     )

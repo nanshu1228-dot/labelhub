@@ -7,6 +7,7 @@ import {
   apiRequestLog,
   events,
   stepAnnotations,
+  tasks,
   topics,
   trajectories,
   trajectorySteps,
@@ -50,6 +51,9 @@ export default async function WorkspacePage(
     apiKeyCount: number
     eventCount: number
     markedSteps: number
+    taskCount: number
+    topicCount: number
+    submittedAnnotations: number
     last: { ts: Date; agent: string; id: string } | null
   } = {
     trajCount: 0,
@@ -57,6 +61,9 @@ export default async function WorkspacePage(
     apiKeyCount: 0,
     eventCount: 0,
     markedSteps: 0,
+    taskCount: 0,
+    topicCount: 0,
+    submittedAnnotations: 0,
     last: null,
   }
   let recentEvents: Array<{
@@ -75,13 +82,16 @@ export default async function WorkspacePage(
       .limit(1)
     workspace = rows[0] ?? null
     if (workspace) {
-      // Six small parallel COUNT queries — fast even on Postgres pooler.
+      // Small parallel COUNT queries — fast even on Postgres pooler.
       const [
         [trajRow],
         [stepRow],
         [keyRow],
         [evtRow],
         [markedRow],
+        [taskRow],
+        [topicRow],
+        [submittedRow],
         latestList,
       ] = await Promise.all([
         db
@@ -136,6 +146,26 @@ export default async function WorkspacePage(
             ),
           ),
         db
+          .select({ n: count() })
+          .from(tasks)
+          .where(eq(tasks.workspaceId, id)),
+        db
+          .select({ n: count() })
+          .from(topics)
+          .innerJoin(tasks, eq(topics.taskId, tasks.id))
+          .where(eq(tasks.workspaceId, id)),
+        db
+          .select({ n: count() })
+          .from(annotations)
+          .innerJoin(topics, eq(topics.id, annotations.topicId))
+          .innerJoin(tasks, eq(tasks.id, topics.taskId))
+          .where(
+            and(
+              eq(tasks.workspaceId, id),
+              sql`${annotations.submittedAt} is not null`,
+            ),
+          ),
+        db
           .select({
             id: trajectories.id,
             ts: trajectories.createdAt,
@@ -170,6 +200,9 @@ export default async function WorkspacePage(
         apiKeyCount: keyRow?.n ?? 0,
         eventCount: evtRow?.n ?? 0,
         markedSteps: markedRow?.n ?? 0,
+        taskCount: taskRow?.n ?? 0,
+        topicCount: topicRow?.n ?? 0,
+        submittedAnnotations: submittedRow?.n ?? 0,
         last: latestList[0]
           ? {
               id: latestList[0].id,
@@ -248,9 +281,14 @@ export default async function WorkspacePage(
         />
         <StatTile
           label="TASKS"
-          value="↗"
-          hint="pair-rubric / arena-gsb topics"
+          value={stats.taskCount.toString()}
+          hint={
+            stats.taskCount === 0
+              ? 'create your first task'
+              : `${stats.topicCount} topic${stats.topicCount === 1 ? '' : 's'} total`
+          }
           href={`/workspaces/${id}/tasks`}
+          accent={stats.taskCount > 0}
         />
         <StatTile
           label="ANNOTATED"
@@ -330,7 +368,13 @@ export default async function WorkspacePage(
         />
       </div>
 
-      {stats.trajCount === 0 && (
+      {/*
+        Mode-aware onboarding. Trajectory mode wants the SDK / capture /
+        annotate path; pair-rubric and arena-gsb want create-task /
+        add-topics / publish. We branch on workspace.templateMode and
+        show the right CTAs.
+      */}
+      {workspace.templateMode === 'agent-trace-eval' && stats.trajCount === 0 && (
         <div className="mt-10">
           <div
             className="lh-mono lh-caption mb-3"
@@ -366,6 +410,52 @@ export default async function WorkspacePage(
           </div>
         </div>
       )}
+
+      {(workspace.templateMode === 'pair-rubric' ||
+        workspace.templateMode === 'arena-gsb') &&
+        stats.taskCount === 0 && (
+          <div className="mt-10">
+            <div
+              className="lh-mono lh-caption mb-3"
+              style={{
+                color: 'oklch(0.6 0.18 280)',
+                letterSpacing: '0.06em',
+              }}
+            >
+              § GET STARTED · 3 STEPS
+            </div>
+            <div
+              className="grid grid-cols-1 md:grid-cols-3 gap-3"
+              style={{ maxWidth: 900 }}
+            >
+              <NextStepCard
+                n={1}
+                done={stats.taskCount > 0}
+                title="Create your first task"
+                body={
+                  workspace.templateMode === 'pair-rubric'
+                    ? 'Pick which yes/no rubric items annotators will answer. Five sensible presets ship by default — add your own or trim the list.'
+                    : 'Pick the GSB dimensions annotators score on a 1–5 scale. Five sensible defaults ship; customize per task.'
+                }
+                href={`/workspaces/${id}/tasks/new`}
+              />
+              <NextStepCard
+                n={2}
+                done={stats.topicCount > 0}
+                title="Add topics (prompt + 2 model responses)"
+                body="Open the task detail page and paste in prompts with each model's answer. One row per pair-comparison."
+                href={`/workspaces/${id}/tasks`}
+              />
+              <NextStepCard
+                n={3}
+                done={stats.submittedAnnotations > 0}
+                title="Publish + share with annotators"
+                body="Hit publish so topics show up in /my/queue for every member. The first annotator to click claims the row."
+                href={`/workspaces/${id}/tasks`}
+              />
+            </div>
+          </div>
+        )}
 
       {stats.last && (
         <div className="mt-10">
