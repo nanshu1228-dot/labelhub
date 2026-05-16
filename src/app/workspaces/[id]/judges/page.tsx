@@ -33,6 +33,15 @@ export default async function JudgesPage(props: {
   const workspace = await getWorkspaceById(workspaceId)
   if (!workspace) notFound()
 
+  // v1 limitation: judge runs sample from pair-rubric / arena-gsb
+  // annotations only — trajectory mode has a richer payload shape we
+  // haven't built a runner for yet. Surface this up-front so admins
+  // who navigated here directly don't waste time setting up a judge
+  // that can never run successfully.
+  const isUnsupportedMode =
+    workspace.templateMode !== 'pair-rubric' &&
+    workspace.templateMode !== 'arena-gsb'
+
   const judges = await listJudgesForWorkspace(workspaceId)
 
   return (
@@ -73,22 +82,50 @@ export default async function JudgesPage(props: {
               automated pipelines.
             </p>
           </div>
-          <Link
-            href={`/workspaces/${workspaceId}/judges/new`}
-            className="ts-13 mono"
+          {!isUnsupportedMode && (
+            <Link
+              href={`/workspaces/${workspaceId}/judges/new`}
+              className="ts-13 mono"
+              style={{
+                background: 'var(--accent)',
+                color: 'white',
+                border: '1px solid var(--accent)',
+                borderRadius: 6,
+                padding: '8px 14px',
+                fontWeight: 500,
+                textDecoration: 'none',
+              }}
+            >
+              + new judge
+            </Link>
+          )}
+        </div>
+
+        {isUnsupportedMode && (
+          <div
+            className="rounded-md p-3 mb-4"
             style={{
-              background: 'var(--accent)',
-              color: 'white',
-              border: '1px solid var(--accent)',
-              borderRadius: 6,
-              padding: '8px 14px',
-              fontWeight: 500,
-              textDecoration: 'none',
+              background: 'var(--warn-soft)',
+              border: '1px solid oklch(0.6 0.14 75 / 0.4)',
             }}
           >
-            + new judge
-          </Link>
-        </div>
+            <div
+              className="lbl"
+              style={{ color: 'oklch(0.55 0.14 75)' }}
+            >
+              § JUDGES NOT SUPPORTED FOR {workspace.templateMode.toUpperCase()}
+            </div>
+            <p className="ts-13 mt-1" style={{ color: 'var(--text)' }}>
+              LLM judges currently grade pair-rubric and arena-gsb
+              annotations — the runner doesn&apos;t handle the
+              trajectory payload shape yet. This workspace is in{' '}
+              <span className="mono">{workspace.templateMode}</span>{' '}
+              mode, so creating a judge here would have nothing to run
+              on. Track the work in the backlog under{' '}
+              <span className="mono">trajectory-judge v2</span>.
+            </p>
+          </div>
+        )}
 
         {judges.length === 0 ? (
           <div

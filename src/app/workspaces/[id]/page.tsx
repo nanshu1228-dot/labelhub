@@ -368,12 +368,14 @@ export default async function WorkspacePage(
           hint="gold standards · trust · calibration"
           href={`/workspaces/${id}/quality`}
         />
-        <StatTile
-          label="JUDGES"
-          value="⚖"
-          hint="configure LLM judges · measure agreement"
-          href={`/workspaces/${id}/judges`}
-        />
+        {workspace.templateMode !== 'agent-trace-eval' && (
+          <StatTile
+            label="JUDGES"
+            value="⚖"
+            hint="configure LLM judges · measure agreement"
+            href={`/workspaces/${id}/judges`}
+          />
+        )}
         <StatTile
           label="ANALYZE"
           value="◔"

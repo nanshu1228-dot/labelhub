@@ -282,14 +282,25 @@ export async function createTopicsBatch(
     })),
   )
 
-  // Optional difficulty estimation per row. We deliberately do this
-  // sequentially (one AI call at a time) rather than fan-out parallel
-  // — keeps the daily quota check honest and avoids hammering the
-  // upstream provider. For a 100-row batch this can take ~3-5 minutes;
-  // an async/background mode is a future refinement.
+  // Optional difficulty estimation per row. Sequential rather than
+  // parallel — keeps daily quota accounting honest and avoids
+  // hammering the upstream provider.
+  //
+  // Cap: AUTO_ESTIMATE_BATCH_CAP. Above this, we estimate the FIRST
+  // N rows and leave the rest with null difficulty (admin can run a
+  // separate re-estimate action later). Without this, a 100-row
+  // bulk-upload with auto-estimate on burns 100 AI calls silently —
+  // surprises the admin and risks blowing the daily quota gate
+  // half-way through (the rest of the topics would just silently
+  // skip with a warning each).
+  //
+  // 20 is the same cap LLM-as-Judge uses for sync runs; we keep the
+  // numbers aligned so admins have one mental model.
   if (parsed.autoEstimateDifficulty && inserted.length > 0) {
-    for (let i = 0; i < inserted.length; i++) {
-      const row = inserted[i]
+    const AUTO_ESTIMATE_BATCH_CAP = 20
+    const toEstimate = inserted.slice(0, AUTO_ESTIMATE_BATCH_CAP)
+    for (let i = 0; i < toEstimate.length; i++) {
+      const row = toEstimate[i]
       // Map the insert-row back to the validated item by index — they
       // were appended in lockstep above.
       const item = toInsert[i].itemData as Record<string, unknown>
@@ -309,6 +320,21 @@ export async function createTopicsBatch(
             difficultyAt: new Date(),
           })
           .where(eq(topics.id, row.id))
+      }
+    }
+    // If the batch was capped, expose that as a softFailure-style row
+    // so the UI can tell the admin: "20 of 100 got difficulty; the
+    // other 80 are unestimated — run the re-estimate action later."
+    if (inserted.length > AUTO_ESTIMATE_BATCH_CAP) {
+      for (
+        let i = AUTO_ESTIMATE_BATCH_CAP;
+        i < inserted.length;
+        i++
+      ) {
+        failed.push({
+          index: -1,
+          error: `topic ${inserted[i].id.slice(0, 8)}: auto-estimate skipped (batch over ${AUTO_ESTIMATE_BATCH_CAP}-row AI cap; estimate later)`,
+        })
       }
     }
   }

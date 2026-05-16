@@ -92,7 +92,14 @@ export async function approveAnnotation(
   }
 
   const [topicRow] = await db
-    .select({ taskId: topics.taskId })
+    .select({
+      taskId: topics.taskId,
+      // Phase-8 follow-up: pull the AI-estimated difficulty so the
+      // pricing engine can apply the per-topic multiplier on top of
+      // the rater's trust score. Null = topic wasn't auto-estimated
+      // and the pricing engine treats it as 1.00× (no adjustment).
+      difficulty: topics.difficulty,
+    })
     .from(topics)
     .where(eq(topics.id, annRow.topicId))
     .limit(1)
@@ -142,9 +149,14 @@ export async function approveAnnotation(
   const trustScore = trustRow?.score ?? 0.5
 
   // ── 4. Compute the line via pure pricing engine ───────────────────
+  // `difficulty` from the topic flows in here — without it the engine
+  // would silently fall back to the 1.00× multiplier and the whole
+  // adaptive-pricing feature would be inert. Pre-Phase-8 topics have
+  // null difficulty (still 1.00×, no surprise).
   const pricing = calculatePayoutLineItem({
     economy,
     trustScore,
+    difficulty: topicRow.difficulty,
     bonusAmountMinor: parsed.bonusAmountMinor,
     penaltyAmountMinor: parsed.penaltyAmountMinor,
   })
@@ -201,6 +213,9 @@ export async function approveAnnotation(
   }
 
   // ── 7. Emit event ─────────────────────────────────────────────────
+  // Audit the full multiplier stack so the "why this amount" UI can
+  // reconstruct it without re-running the pricing engine: quality
+  // (trust-based) × difficulty (AI-estimated) × base.
   await db.insert(events).values({
     type: created ? 'payout_line_item.created' : 'payout_line_item.updated',
     workspaceId: taskRow.workspaceId,
@@ -212,6 +227,9 @@ export async function approveAnnotation(
       userId: annRow.userId,
       totalAmountMinor: pricing.totalAmountMinor,
       currency: pricing.currency,
+      qualityMultiplierBp: pricing.qualityMultiplierBp,
+      difficultyMultiplierBp: pricing.difficultyMultiplierBp,
+      topicDifficulty: topicRow.difficulty ?? null,
       isBillable: pricing.isBillable,
     },
   })

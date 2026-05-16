@@ -14,6 +14,8 @@ import { getTrajectoryIAA } from '@/lib/queries/iaa'
 import { readMyAnnotatorMarks } from '@/lib/actions/annotate-marks'
 import { scheduleHintsIfMissing, type CachedClaudeHint } from '@/lib/actions/trajectory-hints'
 import { getTemplate } from '@/lib/templates/registry'
+import { getEffectiveTemplate } from '@/lib/templates/effective'
+import { tasks } from '@/lib/db/schema'
 import '@/lib/templates/init'
 import {
   TrajectoryAnnotator,
@@ -74,9 +76,36 @@ export default async function TrajectoryAnnotatePage(
   // letting `/workspaces/A/trajectories/<id-from-B>` work.
   if (bundle.trajectory.workspaceId !== workspaceId) notFound()
 
-  // Resolve the rubric. For now every trajectory uses the flagship trace-eval
-  // rubric. When templates become per-workspace, look up by workspace.templateMode.
-  const template = getTemplate('agent-trace-eval')
+  // Resolve the rubric. Pull the parent task's templateConfig so any
+  // per-task rubric override (Phase-7 trajectory NL→rubric feature)
+  // takes effect — otherwise the admin-generated rubric is silently
+  // ignored and raters see the unmodified template default.
+  //
+  // Trajectory rows may have a null taskId (legacy / direct proxy
+  // captures that never got auto-binned into the Inbox task). In that
+  // case there's no override to merge — fall back to the registered
+  // template's defaults.
+  let template = bundle.trajectory.taskId
+    ? await (async () => {
+        const db = getDb()
+        const [taskRow] = await db
+          .select({
+            templateMode: tasks.templateMode,
+            templateConfig: tasks.templateConfig,
+          })
+          .from(tasks)
+          .where(eq(tasks.id, bundle.trajectory.taskId!))
+          .limit(1)
+        if (!taskRow) return undefined
+        return getEffectiveTemplate(
+          taskRow.templateMode,
+          taskRow.templateConfig,
+        )
+      })()
+    : undefined
+  // Final fallback when (no task) or (task lookup failed) — use the
+  // shipped agent-trace-eval default.
+  if (!template) template = getTemplate('agent-trace-eval')
   if (!template?.rubric) {
     // Misconfiguration — surfaced as a hard error rather than rendering an
     // empty annotation surface.

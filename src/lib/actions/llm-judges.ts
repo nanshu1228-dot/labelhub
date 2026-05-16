@@ -34,6 +34,7 @@ import {
   llmJudges,
   tasks,
   topics,
+  workspaces,
 } from '@/lib/db/schema'
 import { requireWorkspaceAdmin } from '@/lib/auth/guards'
 import { uuidLike } from '@/lib/validators/uuid'
@@ -64,6 +65,22 @@ export async function createJudge(
   const parsed = createJudgeSchema.parse(input)
   const { user } = await requireWorkspaceAdmin(parsed.workspaceId)
   const db = getDb()
+
+  // Server-side mode gate: the runner can only score pair-rubric and
+  // arena-gsb annotations today. Refuse creation on trajectory
+  // workspaces so admins don't end up with a judge that never runs.
+  // The UI also disables the create form, but defense in depth.
+  const [ws] = await db
+    .select({ templateMode: workspaces.templateMode })
+    .from(workspaces)
+    .where(eq(workspaces.id, parsed.workspaceId))
+    .limit(1)
+  if (!ws) throw new NotFoundError('Workspace')
+  if (ws.templateMode !== 'pair-rubric' && ws.templateMode !== 'arena-gsb') {
+    throw new ValidationError(
+      `LLM judges only support pair-rubric and arena-gsb workspaces today (got ${ws.templateMode}). Trajectory-judge v2 is on the backlog.`,
+    )
+  }
 
   const [row] = await db
     .insert(llmJudges)
