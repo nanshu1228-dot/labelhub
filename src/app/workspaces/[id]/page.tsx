@@ -369,6 +369,12 @@ export default async function WorkspacePage(
           href={`/workspaces/${id}/quality`}
         />
         <StatTile
+          label="JUDGES"
+          value="⚖"
+          hint="configure LLM judges · measure agreement"
+          href={`/workspaces/${id}/judges`}
+        />
+        <StatTile
           label="ANALYZE"
           value="◔"
           hint="filter + aggregate + ask Claude"

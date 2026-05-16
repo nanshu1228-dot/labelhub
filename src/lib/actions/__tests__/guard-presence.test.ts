@@ -73,6 +73,8 @@ const EXPECTED_GUARDS: Record<string, RegExp> = {
   'draft-feedback.ts': /requireWorkspaceMember\(/,
   // NL → rubric generator — admin only (template_config is admin-managed).
   'template-generator.ts': /requireWorkspaceAdmin\(/,
+  // LLM-as-Judge config + runs — admin only (cost + visibility).
+  'llm-judges.ts': /requireWorkspaceAdmin\(/,
   // Notification read-state mutations — caller's own inbox only;
   // requireUser plus a userId WHERE clause defends against forged ids.
   'notifications.ts': /requireUser\(/,
