@@ -157,54 +157,13 @@ html[data-lang="zh"] .lh-h4 { letter-spacing: 0.005em; }
 .lang-btn.on::after { content:""; position:absolute; left: 8px; right: 8px; bottom: -3px; height: 1px; background: oklch(0.6 0.18 280); }
 
 /* ───────────────────────────────────────────────────────────────────────────
-   Template cards
+   Template cards — kept utilities only (per-card mini-vis CSS for the
+   removed Classic / Token / Game / Apprentice cards was deleted along
+   with their JSX in the 6→3 modes refactor).
 ─────────────────────────────────────────────────────────────────────────── */
-/* Card 1 — rubric */
-.rubric { display: grid; grid-template-columns: 32px repeat(4, 1fr); gap: 2px; }
-.rubric-cell { height: 18px; background: oklch(0.18 0 0); border-radius: 2px; }
-.rubric-cell.h { background: oklch(0.22 0 0); }
-.rubric-cell.on { background: oklch(0.6 0.18 280); }
-.rubric-cell.lbl { background: transparent; font-family: var(--font-geist-mono), monospace; color: oklch(0.42 0 0); font-size: 10px; display:flex; align-items:center; justify-content:flex-end; padding-right: 4px; }
-.rubric-cell.col { background: transparent; font-family: var(--font-geist-mono), monospace; color: oklch(0.42 0 0); font-size: 10px; display:flex; align-items:center; justify-content:center; height: 14px; }
-
-/* Card 2 — pair */
-.pair-canvas { position: relative; height: 130px; overflow: hidden; }
-.pair-trail { position: absolute; height: 1px; background: linear-gradient(90deg, transparent, oklch(0.32 0 0), transparent); }
-.pair-trail.violet { background: linear-gradient(90deg, transparent, oklch(0.6 0.18 280 / 0.6), transparent); }
-.cursor { position: absolute; width: 14px; height: 14px; }
-.cursor svg { width: 100%; height: 100%; }
-.pair-target { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); width: 6px; height: 6px; border-radius: 50%; background: oklch(0.78 0 0); box-shadow: 0 0 0 4px oklch(0.6 0.18 280 / 0.12); }
-
-/* Card 3 — arena */
-.arena { display: grid; grid-template-columns: 1fr 24px 1fr; align-items: stretch; gap: 0; }
-.arena-side { border: 1px solid oklch(0.22 0 0); border-radius: 8px; padding: 10px; height: 84px; display: flex; flex-direction: column; justify-content: space-between; }
-.arena-side.win { border-color: oklch(0.6 0.18 280 / 0.5); background: oklch(0.6 0.18 280 / 0.06); }
-.vs { display: flex; align-items: center; justify-content: center; color: oklch(0.42 0 0); font-family: var(--font-geist-mono), monospace; font-size: 11px; }
 .vote-bar { height: 4px; border-radius: 2px; background: oklch(0.22 0 0); overflow: hidden; display: flex; }
 .vote-bar .a { background: oklch(0.6 0.18 280); }
 .vote-bar .b { background: oklch(0.42 0 0); }
-
-/* Card 4 — ledger */
-.ledger-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; height: 22px; font-family: var(--font-geist-mono), monospace; font-size: 11px; }
-.ledger-row .dot { width: 6px; height: 6px; border-radius: 50%; background: oklch(0.32 0 0); }
-.ledger-row.up .dot { background: oklch(0.6 0.18 280); }
-.ledger-bar { height: 1px; background: oklch(0.22 0 0); }
-.ledger-row .amt { color: oklch(0.78 0 0); }
-.ledger-row.up .amt { color: oklch(0.6 0.18 280); }
-.ledger-row .lbl { color: oklch(0.55 0 0); }
-
-/* Card 5 — chips */
-.chip-tiles { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
-.chip { aspect-ratio: 1/1; border-radius: 4px; background: oklch(0.18 0 0); border: 1px solid oklch(0.22 0 0); }
-.chip.done { background: oklch(0.22 0 0); border-color: oklch(0.27 0 0); }
-.chip.streak { background: oklch(0.6 0.18 280); border-color: oklch(0.6 0.18 280); }
-.chip.today { background: oklch(0.18 0 0); border: 1px dashed oklch(0.6 0.18 280 / 0.7); }
-
-/* Card 6 — chat */
-.bub { font-size: 12px; padding: 7px 10px; border-radius: 8px; max-width: 88%; line-height: 1.4; }
-.bub.you { background: oklch(0.22 0 0); color: oklch(0.85 0 0); margin-left: auto; border-bottom-right-radius: 2px; }
-.bub.ai { background: transparent; border: 1px solid oklch(0.22 0 0); color: oklch(0.72 0 0); border-bottom-left-radius: 2px; }
-.bub .accent { color: oklch(0.6 0.18 280); }
 
 .mode-tag { font-family: var(--font-geist-mono), monospace; font-size: 11px; font-weight: 600; color: oklch(0.55 0 0); letter-spacing: 0.06em; text-transform: uppercase; }
 .badge { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 500; font-family: var(--font-geist-mono), monospace; color: oklch(0.7 0 0); border: 1px solid oklch(0.27 0 0); padding: 2px 7px; border-radius: 5px; letter-spacing: 0.02em; }
@@ -273,10 +232,7 @@ html[data-lang="zh"] .lh-h4 { letter-spacing: 0.005em; }
 .rise.d2 { animation-delay: 120ms; }
 .rise.d3 { animation-delay: 180ms; }
 
-@keyframes pair-a { 0% { transform: translate(0, 0); } 100% { transform: translate(96px, 36px); } }
-@keyframes pair-b { 0% { transform: translate(0, 0); } 100% { transform: translate(-96px, -36px); } }
-.cursor-a { animation: pair-a 4.5s cubic-bezier(.45, .05, .55, .95) infinite alternate; }
-.cursor-b { animation: pair-b 4.5s cubic-bezier(.45, .05, .55, .95) infinite alternate; }
+/* (pair-a / pair-b cursor-walk keyframes removed with the old CardPair) */
 
 /* ═══════════════════════════════════════════════════════════════════════
    App surfaces — LIGHT mode
