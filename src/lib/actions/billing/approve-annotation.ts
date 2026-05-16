@@ -26,7 +26,7 @@
  */
 
 import { z } from 'zod'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 import { revalidatePath } from 'next/cache'
 import { getDb } from '@/lib/db/client'
 import {
@@ -46,6 +46,7 @@ import {
 } from '@/lib/billing/calculate-payout'
 import { economyConfigSchema, type EconomyConfig } from '@/lib/templates/types'
 import { ensureActivePeriod } from '@/lib/billing/active-period'
+import { readTrustStatus } from '@/lib/actions/trust-status'
 
 const inputSchema = z.object({
   annotationId: uuidLike,
@@ -122,6 +123,22 @@ export async function approveAnnotation(
   // workspace — admin-of-A can't approve work in workspace B.
   const { user: actor } = await requireWorkspaceAdmin(taskRow.workspaceId)
 
+  // Phase-9: refuse to create a payout line when the SUBMITTER is in
+  // 'suspended' state. The annotation row is still preserved (so the
+  // teaching signal isn't lost), but no money flows. Admin lifts the
+  // suspension and re-runs approve to bill.
+  const submitterStatus = await readTrustStatus({
+    userId: annRow.userId,
+    workspaceId: taskRow.workspaceId,
+  })
+  if (submitterStatus === 'suspended') {
+    throw new AppError(
+      'SUBMITTER_SUSPENDED',
+      "The submitter's trust status is 'suspended' — payouts halted. Restore status to 'active' first, then re-approve.",
+      403,
+    )
+  }
+
   // ── 2. Parse the task's economy config ────────────────────────────
   const economyParse = economyConfigSchema.safeParse(taskRow.rewardConfig)
   if (!economyParse.success) {
@@ -134,19 +151,38 @@ export async function approveAnnotation(
   const economy: EconomyConfig = economyParse.data
 
   // ── 3. Trust score on this task's template mode ───────────────────
-  // Default 0.5 (mid) when the annotator has no history yet — fair entry
-  // point, matches the trust_scores default seeded in the table.
+  // Prefer the WORKSPACE-SCOPED persistent row (Phase-9). Older rows
+  // with NULL workspace_id are the legacy global scores from before
+  // workspace scoping; they're a fine fallback if the per-workspace
+  // row hasn't been materialized yet (e.g. brand-new rater whose
+  // verdict hasn't fired the recompute hook yet). Default 0.5 when
+  // neither exists — same as the original behavior.
   const [trustRow] = await db
     .select({ score: trustScores.score })
     .from(trustScores)
     .where(
       and(
         eq(trustScores.userId, annRow.userId),
+        eq(trustScores.workspaceId, taskRow.workspaceId),
         eq(trustScores.taskType, taskRow.templateMode),
       ),
     )
     .limit(1)
-  const trustScore = trustRow?.score ?? 0.5
+  let trustScore = trustRow?.score
+  if (trustScore == null) {
+    const [legacyRow] = await db
+      .select({ score: trustScores.score })
+      .from(trustScores)
+      .where(
+        and(
+          eq(trustScores.userId, annRow.userId),
+          isNull(trustScores.workspaceId),
+          eq(trustScores.taskType, taskRow.templateMode),
+        ),
+      )
+      .limit(1)
+    trustScore = legacyRow?.score ?? 0.5
+  }
 
   // ── 4. Compute the line via pure pricing engine ───────────────────
   // `difficulty` from the topic flows in here — without it the engine

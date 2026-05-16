@@ -322,9 +322,14 @@ function QuickLinksRow() {
       label: 'My earnings',
       hint: 'pending + paid · per-period breakdown',
     },
+    {
+      href: '/my/quality',
+      label: 'My quality',
+      hint: 'trend + areas to focus · 🪄 AI Coach',
+    },
   ]
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 -mt-4">
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 -mt-4">
       {links.map((l) => (
         <Link
           key={l.href}

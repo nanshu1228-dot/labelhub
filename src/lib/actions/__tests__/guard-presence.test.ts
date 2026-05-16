@@ -75,6 +75,10 @@ const EXPECTED_GUARDS: Record<string, RegExp> = {
   'template-generator.ts': /requireWorkspaceAdmin\(/,
   // LLM-as-Judge config + runs — admin only (cost + visibility).
   'llm-judges.ts': /requireWorkspaceAdmin\(/,
+  // Trust lifecycle — admin only (probation/suspend are sensitive).
+  'trust-status.ts': /requireWorkspaceAdmin\(/,
+  // AI Coach — annotator's own data, requireUser is the right gate.
+  'trust-coach.ts': /requireUser\(/,
   // Notification read-state mutations — caller's own inbox only;
   // requireUser plus a userId WHERE clause defends against forged ids.
   'notifications.ts': /requireUser\(/,

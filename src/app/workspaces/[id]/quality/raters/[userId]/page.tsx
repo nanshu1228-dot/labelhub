@@ -12,6 +12,8 @@ import {
   type RaterSpeedStats,
 } from '@/lib/queries/rater-drilldown'
 import { formatElapsed } from '@/lib/queries/annotation-time'
+import { readTrustStatus } from '@/lib/actions/trust-status'
+import { TrustStatusControls } from '@/components/quality/trust-status-controls'
 
 export const metadata: Metadata = {
   title: 'Rater calibration — LabelHub',
@@ -54,7 +56,10 @@ export default async function RaterDrilldownPage(props: {
   const workspace = await getWorkspaceById(workspaceId)
   if (!workspace) notFound()
 
-  const drill = await getRaterDrilldown({ userId, workspaceId })
+  const [drill, trustStatus] = await Promise.all([
+    getRaterDrilldown({ userId, workspaceId }),
+    readTrustStatus({ userId, workspaceId }),
+  ])
   if (!drill) notFound()
 
   return (
@@ -116,6 +121,23 @@ export default async function RaterDrilldownPage(props: {
               }
             />
           </div>
+        </section>
+
+        <section className="mb-8">
+          <div className="flex items-baseline justify-between mb-2">
+            <div className="lbl">§ TRUST STATUS</div>
+            <StatusChip status={trustStatus} />
+          </div>
+          <TrustStatusControls
+            workspaceId={workspaceId}
+            userId={userId}
+            currentStatus={trustStatus}
+            raterName={
+              drill.displayName ??
+              drill.email?.split('@')[0] ??
+              drill.userId.slice(0, 8)
+            }
+          />
         </section>
 
         <SpeedSection speed={drill.speed} />
@@ -211,6 +233,45 @@ function Stat({
  * e.g. fresh deploy before any annotation finished post-rollout), we
  * collapse to a friendly empty state instead of showing four '—' tiles.
  */
+/**
+ * Compact chip echoing the rater's trust lifecycle state next to the
+ * §TRUST STATUS section header. Colors carry the urgency — active is
+ * neutral, probation is amber (admin reviewing closely), suspended is
+ * danger red.
+ */
+function StatusChip({ status }: { status: 'active' | 'probation' | 'suspended' }) {
+  const palette = {
+    active: {
+      fg: 'oklch(0.5 0.13 150)',
+      bg: 'oklch(0.5 0.13 150 / 0.12)',
+      label: 'active',
+    },
+    probation: {
+      fg: 'oklch(0.55 0.14 75)',
+      bg: 'oklch(0.6 0.14 75 / 0.15)',
+      label: 'probation',
+    },
+    suspended: {
+      fg: 'var(--danger)',
+      bg: 'var(--danger-soft)',
+      label: 'suspended',
+    },
+  }[status]
+  return (
+    <span
+      className="mono ts-11 px-2 py-0.5 rounded"
+      style={{
+        background: palette.bg,
+        color: palette.fg,
+        border: `1px solid ${palette.fg}55`,
+        fontWeight: 600,
+      }}
+    >
+      {palette.label}
+    </span>
+  )
+}
+
 function SpeedSection({ speed }: { speed: RaterSpeedStats }) {
   if (speed.measuredCount === 0) {
     return (

@@ -119,6 +119,28 @@ export const workspaceMembers = pgTable(
     /** Who invited this user (null for the workspace creator). */
     invitedBy: uuid('invited_by').references(() => users.id),
     joinedAt: timestamp('joined_at').defaultNow().notNull(),
+    /**
+     * Trust lifecycle state (Phase-9). Orthogonal to `role` — role
+     * gates what surfaces a user can SEE, trustStatus gates what
+     * they can DO on those surfaces:
+     *   'active'     — default. Can claim topics, earn payouts.
+     *   'probation'  — can claim + submit, but admin reviews every
+     *                   verdict before payout (extra QC scrutiny).
+     *                   Admin sets this when trust drops below
+     *                   threshold or after a critical violation.
+     *   'suspended'  — cannot claim new topics; existing drafts can
+     *                   still be submitted (so they aren't lost) but
+     *                   payouts halt. Reversible by admin.
+     * Stored as plain text + an in-code enum (no pg enum) to avoid
+     * a migration when we add 'banned' or 'graduated' later. */
+    trustStatus: text('trust_status').default('active').notNull(),
+    /** Free-form reason the admin gave when changing status — surfaced
+     *  to the rater verbatim in their /my/quality page. */
+    trustStatusReason: text('trust_status_reason'),
+    /** When the current status started — null for default 'active'. */
+    trustStatusAt: timestamp('trust_status_at'),
+    /** Who flipped the status (admin id). Null for default 'active'. */
+    trustStatusBy: uuid('trust_status_by').references(() => users.id),
   },
   (table) => ({
     wsUserUniq: uniqueIndex('ws_members_ws_user_uniq').on(
@@ -329,13 +351,43 @@ export const trustScores = pgTable(
     userId: uuid('user_id')
       .references(() => users.id)
       .notNull(),
+    /**
+     * Workspace scope. Pre-Phase-9 the column didn't exist and trust
+     * was per-(user × templateMode) GLOBAL. Now it's per-(user ×
+     * workspace × templateMode) so a rater calibrated in one
+     * workspace doesn't carry that prior into a different team's
+     * task. Nullable for the brief migration window — readers
+     * fall back to live query when null. New writes always set it.
+     */
+    workspaceId: uuid('workspace_id').references(() => workspaces.id),
     taskType: text('task_type').notNull(), // template mode
-    score: real('score').notNull().default(0.5), // 0-1, TrustAL-inspired
+    /** Bayesian-smoothed raw rate ∈ [0, 1]. Same formula the live
+     *  trust-consensus query uses; persisted so the hot read path
+     *  doesn't have to re-scan events on every admin page load. */
+    score: real('score').notNull().default(0.5),
+    /**
+     * EWMA-weighted score with 14-day half-life. Older approvals
+     * count less. When a previously-trusted rater starts diverging,
+     * `decayedScore` drops faster than `score` does — admins watch
+     * the gap as a drift signal. Null on freshly-created rows;
+     * filled on first recompute.
+     */
+    decayedScore: real('decayed_score'),
     sampleCount: integer('sample_count').default(0).notNull(),
+    /** Total approved verdicts seen — for "X of Y approved" context. */
+    approvedCount: integer('approved_count').default(0).notNull(),
+    /** Total rejected verdicts seen — pairs with approvedCount. */
+    rejectedCount: integer('rejected_count').default(0).notNull(),
     lastUpdated: timestamp('last_updated').defaultNow().notNull(),
   },
   (table) => ({
     userTaskIdx: index('trust_user_task_idx').on(table.userId, table.taskType),
+    /** New scoped unique — at most one row per (user, workspace, mode). */
+    userWsTaskUniq: uniqueIndex('trust_user_ws_task_uniq').on(
+      table.userId,
+      table.workspaceId,
+      table.taskType,
+    ),
   }),
 )
 

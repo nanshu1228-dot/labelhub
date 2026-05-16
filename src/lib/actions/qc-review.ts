@@ -48,6 +48,7 @@ import {
 } from '@/lib/errors'
 import { fanoutWebhook } from '@/lib/webhooks/fanout'
 import { emitNotification } from '@/lib/notifications/emit'
+import { recomputeAndPersistTrust } from '@/lib/quality/trust-recompute'
 
 const qcReviewSchema = z.object({
   annotationId: z.string().uuid(),
@@ -206,6 +207,18 @@ export async function qcReviewAnnotation(
     }).catch((e) => {
       // eslint-disable-next-line no-console
       console.warn('webhook fanout failed (qc-review):', e)
+    }),
+  )
+
+  // Phase-9: same persistent-trust refresh as the admin verdict path.
+  after(() =>
+    recomputeAndPersistTrust({
+      userId: annotation.userId,
+      workspaceId: task.workspaceId,
+      taskType: task.templateMode,
+    }).catch((e) => {
+      // eslint-disable-next-line no-console
+      console.warn('[trust] recompute failed (qc-review)', e)
     }),
   )
 

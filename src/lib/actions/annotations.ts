@@ -11,6 +11,8 @@ import {
 } from '@/lib/auth/guards'
 import { fanoutWebhook } from '@/lib/webhooks/fanout'
 import { emitNotification } from '@/lib/notifications/emit'
+import { recomputeAndPersistTrust } from '@/lib/quality/trust-recompute'
+import { readTrustStatus } from '@/lib/actions/trust-status'
 import { uuidLike } from '@/lib/validators/uuid'
 import {
   ConflictError,
@@ -69,6 +71,22 @@ export async function saveDraftAnnotation(
   if (!task) throw new NotFoundError('Task')
 
   const { user } = await requireWorkspaceMember(task.workspaceId)
+
+  // Phase-9 lifecycle gate: suspended raters can't claim NEW topics
+  // but can still finish drafts they already own (we don't want to
+  // destroy in-flight work when admin pauses access). The check is
+  // skipped when the topic is already assigned to them.
+  if (topic.assignedTo !== user.id) {
+    const status = await readTrustStatus({
+      userId: user.id,
+      workspaceId: task.workspaceId,
+    })
+    if (status === 'suspended') {
+      throw new ForbiddenError(
+        'Your access to this workspace is paused. Check /my/quality for context.',
+      )
+    }
+  }
 
   // Auto-claim: first save by any workspace member on an unassigned
   // topic claims it. After that, only the claimant may save further
@@ -193,6 +211,20 @@ export async function submitAnnotation(input: z.infer<typeof submitSchema>) {
   if (!task) throw new NotFoundError('Task')
 
   const { user } = await requireWorkspaceMember(task.workspaceId)
+
+  // Phase-9 lifecycle gate: same as save — suspended users can finish
+  // pre-claimed drafts but can't acquire new ones via straight-submit.
+  if (topic.assignedTo !== user.id) {
+    const status = await readTrustStatus({
+      userId: user.id,
+      workspaceId: task.workspaceId,
+    })
+    if (status === 'suspended') {
+      throw new ForbiddenError(
+        'Your access to this workspace is paused. Check /my/quality for context.',
+      )
+    }
+  }
 
   // Auto-claim: same model as saveDraftAnnotation. A user who jumps
   // straight to submit (no prior save) on an unclaimed topic still
@@ -456,6 +488,21 @@ export async function reviewAnnotation(input: z.infer<typeof reviewSchema>) {
     }).catch((e) => {
       // eslint-disable-next-line no-console
       console.warn('webhook fanout failed', e)
+    }),
+  )
+
+  // Phase-9: refresh the persisted trust row for this submitter ×
+  // workspace × templateMode. Runs after the response so verdict
+  // latency stays unchanged; failures are silently swallowed since
+  // the live-derived query is still the fallback truth.
+  after(() =>
+    recomputeAndPersistTrust({
+      userId: annotation.userId,
+      workspaceId: task.workspaceId,
+      taskType: task.templateMode,
+    }).catch((e) => {
+      // eslint-disable-next-line no-console
+      console.warn('[trust] recompute failed', e)
     }),
   )
 
