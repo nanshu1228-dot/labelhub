@@ -74,8 +74,10 @@ const EXPECTED_GUARDS: Record<string, RegExp> = {
   // Notification read-state mutations — caller's own inbox only;
   // requireUser plus a userId WHERE clause defends against forged ids.
   'notifications.ts': /requireUser\(/,
-  // Demo-mode gated — pattern is an env check rather than a guard call.
-  'guideline-refiner.ts': /LABELHUB_DEMO_MODE/,
+  // Demo-mode gated AND requires signed-in user (Phase-6 audit fix —
+  // previously billed quota to a sentinel UUID so every caller shared
+  // one pool). Both guards must remain present.
+  'guideline-refiner.ts': /requireUser\(/,
   // Phase-5 hardening: previously-naked helpers now self-defend.
   'inbox.ts': /requireWorkspaceMember\(/,
   'trajectory-summary.ts': /requireWorkspaceMember\(/,

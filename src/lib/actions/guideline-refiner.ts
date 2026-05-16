@@ -30,6 +30,7 @@ import {
 import { isAnyProviderConfigured } from '@/lib/ai/client'
 import { listTopDisputes } from '@/lib/queries/iaa'
 import { assertWithinDailyAIQuota, logAICall } from '@/lib/ai/quota'
+import { requireUser } from '@/lib/auth/guards'
 import { AppError, NotFoundError, ValidationError } from '@/lib/errors'
 
 const REFINER_INPUT = z.object({
@@ -74,6 +75,15 @@ export async function refineGuidelinesDemo(
     )
   }
   const parsed = REFINER_INPUT.parse(input)
+
+  // Phase-6 audit response: previously this action used a hardcoded
+  // sentinel UUID for quota accounting (`00000000-...0001`), so every
+  // caller — anonymous or signed-in — shared a single 100/day pool.
+  // Now we require a real signed-in user and bill the quota to them.
+  // The action stays demo-mode-gated (LABELHUB_DEMO_MODE), but at
+  // least each caller has their own daily budget instead of a single
+  // shared global one.
+  const me = await requireUser()
   const db = getDb()
 
   // 1. Resolve workspace + templateMode so we branch to the right
@@ -186,8 +196,9 @@ export async function refineGuidelinesDemo(
   const inboxTask = targetTask // back-compat alias for the rest of the function
 
   // 4. Quota check — refiner is the most expensive AI feature we have.
-  // Demo mode uses the seeded demo admin as the bookkeeping actor.
-  const quotaUserId = '00000000-0000-0000-0000-000000000001'
+  // Charged against the calling user (post-Phase-6) so each user has
+  // their own 100/day budget instead of sharing a global sentinel pool.
+  const quotaUserId = me.id
   await assertWithinDailyAIQuota(quotaUserId)
 
   // 5. Ask Claude for the patch

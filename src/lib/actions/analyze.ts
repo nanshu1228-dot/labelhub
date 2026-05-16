@@ -139,6 +139,12 @@ function pickSampleRows(rows: AnalyzeRow[], n: number): AnalyzeRow[] {
 /**
  * Read-only helper used by the /analyze page server component to load
  * the filtered rows + aggregates without invoking the LLM.
+ *
+ * Input validation: workspaceId is parsed through `uuidLike` and the
+ * filter string is bounded to 400 chars. The auth guard would catch a
+ * malformed UUID downstream (workspace lookup fails → notFound), but
+ * fail-fast here gives a cleaner error AND prevents arbitrary strings
+ * from reaching the filter parser.
  */
 export async function loadAnalyzeView(opts: {
   workspaceId: string
@@ -148,10 +154,11 @@ export async function loadAnalyzeView(opts: {
   rows: AnalyzeRow[]
   aggregates: AnalyzeAggregates
 }> {
-  await requireWorkspaceAdmin(opts.workspaceId)
-  const filter = parseFilter(opts.filterString)
+  const parsed = analyzeViewInputSchema.parse(opts)
+  await requireWorkspaceAdmin(parsed.workspaceId)
+  const filter = parseFilter(parsed.filterString)
   const rows = await listTrajectoriesByFilter({
-    workspaceId: opts.workspaceId,
+    workspaceId: parsed.workspaceId,
     filter,
     limit: 500,
   })
@@ -161,3 +168,8 @@ export async function loadAnalyzeView(opts: {
     aggregates: computeAggregates(rows),
   }
 }
+
+const analyzeViewInputSchema = z.object({
+  workspaceId: uuidLike,
+  filterString: z.string().max(400),
+})

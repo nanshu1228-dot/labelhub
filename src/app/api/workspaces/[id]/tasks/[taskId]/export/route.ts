@@ -45,6 +45,22 @@ export async function GET(
   const formatRaw = url.searchParams.get('format')?.toLowerCase() ?? 'json'
   const format: 'json' | 'csv' = formatRaw === 'csv' ? 'csv' : 'json'
 
+  // Phase-6 security audit response: cap the export. Default + max are
+  // 50k rows — generous for any realistic annotation workload, but
+  // bounded so a single GET can't OOM the serverless function. Admins
+  // who need more pass `?limit=N` (still capped) and `?offset=N` to
+  // paginate.
+  const DEFAULT_EXPORT_LIMIT = 50_000
+  const MAX_EXPORT_LIMIT = 50_000
+  const limitParam = Number(url.searchParams.get('limit') ?? '')
+  const limit = Number.isFinite(limitParam) && limitParam > 0
+    ? Math.min(limitParam, MAX_EXPORT_LIMIT)
+    : DEFAULT_EXPORT_LIMIT
+  const offsetParam = Number(url.searchParams.get('offset') ?? '0')
+  const offset = Number.isFinite(offsetParam) && offsetParam > 0
+    ? offsetParam
+    : 0
+
   let status = 200
   let errorCode: string | null = null
   let userId: string | null = null
@@ -68,6 +84,9 @@ export async function GET(
     }
 
     // Load every submitted annotation in this task + the submitter info.
+    // Bounded by `limit` + `offset` (defaulted above to 50k/0) so a
+    // huge task can't OOM the serverless function — the audit event
+    // records the row count we returned vs. whether more exists.
     const rows = await db
       .select({
         annotationId: annotations.id,
@@ -91,6 +110,9 @@ export async function GET(
           isNotNull(annotations.submittedAt),
         ),
       )
+      .orderBy(annotations.submittedAt)
+      .limit(limit)
+      .offset(offset)
 
     // For trajectory mode, pull all step_annotations in one shot and
     // index them by annotationId. Skip for pair/arena (no step marks).

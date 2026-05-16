@@ -19,7 +19,7 @@ import { z } from 'zod'
 import { revalidatePath } from 'next/cache'
 import { and, eq, isNull, sql } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
-import { notifications } from '@/lib/db/schema'
+import { events, notifications } from '@/lib/db/schema'
 import { requireUser } from '@/lib/auth/guards'
 import { uuidLike } from '@/lib/validators/uuid'
 
@@ -67,7 +67,30 @@ export async function markAllNotificationsRead(): Promise<{
     .where(
       and(eq(notifications.userId, me.id), isNull(notifications.readAt)),
     )
-    .returning({ id: notifications.id })
+    .returning({
+      id: notifications.id,
+      workspaceId: notifications.workspaceId,
+    })
+
+  // Phase-6 audit event — sensitive admin / annotator actions should
+  // all be reconstructible from the events log. Bulk-clearing the
+  // inbox is low-risk but completes the audit trail. Group by
+  // workspaceId since `events.workspace_id` is NOT NULL — one row per
+  // workspace touched, carrying that workspace's slice of the count.
+  if (rows.length > 0) {
+    const byWorkspace = new Map<string, number>()
+    for (const r of rows) {
+      byWorkspace.set(r.workspaceId, (byWorkspace.get(r.workspaceId) ?? 0) + 1)
+    }
+    await db.insert(events).values(
+      Array.from(byWorkspace.entries()).map(([workspaceId, marked]) => ({
+        type: 'notification.bulk_mark_read',
+        workspaceId,
+        actorId: me.id,
+        payload: { marked },
+      })),
+    )
+  }
 
   try {
     revalidatePath('/my/inbox')

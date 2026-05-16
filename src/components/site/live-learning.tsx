@@ -255,8 +255,9 @@ function FeedRow({
       <span
         className="lh-body-sm col-span-8"
         style={{ color: 'oklch(0.78 0 0)' }}
-        dangerouslySetInnerHTML={{ __html: html }}
-      />
+      >
+        {renderFeedSpans(html)}
+      </span>
       <span
         className="lh-mono lh-caption col-span-2 text-right"
         style={{ color: mutedDelta ? 'oklch(0.55 0 0)' : 'oklch(0.6 0.18 280)' }}
@@ -265,4 +266,95 @@ function FeedRow({
       </span>
     </div>
   )
+}
+
+/**
+ * Tiny safe renderer for the constrained "<span class=...style=...>text</span>"
+ * pattern used by the LiveLearning i18n strings.
+ *
+ * Replaces the previous `dangerouslySetInnerHTML` (Phase-6 security audit
+ * called this out — currently safe because i18n values are hardcoded, but
+ * an open invitation to break later when someone passes user-controlled
+ * input). The new path:
+ *
+ *   1. Recognizes ONLY <span class="..." style="..."> ... </span>
+ *      with `class` and `style` attribute values restricted to a
+ *      character class that can't contain quotes / brackets.
+ *   2. Anything outside that pattern is rendered as a plain text node
+ *      (React already escapes < > & in plain strings — no XSS surface).
+ *   3. HTML entities the i18n strings rely on (&ldquo;, &rdquo;, etc.)
+ *      get decoded by `decodeBasicEntities` before rendering.
+ *
+ * If the i18n shape ever needs richer markup (anchors, code blocks),
+ * extend this — but DO NOT reintroduce dangerouslySetInnerHTML.
+ */
+function renderFeedSpans(s: string): React.ReactNode {
+  const SPAN_RE = /<span\s+(?:class="([^"<>]*)"\s+)?(?:style="([^"<>]*)"\s*)?>([^<]*)<\/span>/g
+  const out: React.ReactNode[] = []
+  let last = 0
+  let m: RegExpExecArray | null
+  let key = 0
+  while ((m = SPAN_RE.exec(s)) !== null) {
+    if (m.index > last) {
+      out.push(decodeBasicEntities(s.slice(last, m.index)))
+    }
+    const className = m[1] || undefined
+    const styleStr = m[2] || ''
+    const text = decodeBasicEntities(m[3])
+    out.push(
+      <span
+        key={`s${key++}`}
+        className={className}
+        style={parseSafeStyle(styleStr)}
+      >
+        {text}
+      </span>,
+    )
+    last = SPAN_RE.lastIndex
+  }
+  if (last < s.length) {
+    out.push(decodeBasicEntities(s.slice(last)))
+  }
+  return out
+}
+
+/** Decode the small set of HTML entities the i18n strings actually use. */
+function decodeBasicEntities(s: string): string {
+  return s
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&ldquo;/g, '“')
+    .replace(/&rdquo;/g, '”')
+    .replace(/&lsquo;/g, '‘')
+    .replace(/&rsquo;/g, '’')
+}
+
+/**
+ * Parse a tiny subset of CSS declarations from the i18n strings into a
+ * React style object. Whitelist of properties so a future i18n change
+ * that adds `background:url(javascript:...)` or `expression(...)`
+ * never reaches the DOM. Currently the strings only use `color`.
+ */
+function parseSafeStyle(s: string): React.CSSProperties | undefined {
+  if (!s) return undefined
+  const ALLOWED = new Set<keyof React.CSSProperties>(['color'])
+  const out: Record<string, string> = {}
+  for (const decl of s.split(';')) {
+    const [propRaw, ...valParts] = decl.split(':')
+    const prop = propRaw?.trim()
+    const val = valParts.join(':').trim()
+    if (!prop || !val) continue
+    if (!ALLOWED.has(prop as keyof React.CSSProperties)) continue
+    // Reject anything with parens that aren't simple oklch / rgb / hsl.
+    // The i18n values are all `oklch(...)`; we whitelist that prefix.
+    if (val.includes('(') && !/^(oklch|rgb|hsl|rgba|hsla)\(/.test(val)) {
+      continue
+    }
+    if (val.includes('url(') || val.includes('expression(')) continue
+    out[prop] = val
+  }
+  return out as React.CSSProperties
 }

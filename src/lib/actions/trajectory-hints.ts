@@ -30,7 +30,7 @@ import { getDb } from '@/lib/db/client'
 import { trajectories, trajectorySteps, events } from '@/lib/db/schema'
 import { ForbiddenError, NotFoundError } from '@/lib/errors'
 import { reviewTrajectory, type TrajectoryReview } from '@/lib/ai/trajectory-reviewer'
-import { logAICall } from '@/lib/ai/quota'
+import { assertWithinDailyAIQuota, logAICall } from '@/lib/ai/quota'
 import { uuidLike } from '@/lib/validators/uuid'
 import { requireWorkspaceMember } from '@/lib/auth/guards'
 
@@ -138,11 +138,20 @@ export async function reviewTrajectoryAndCache(
   // this call with ADMIN_DIAG_TOKEN, the function is also exported as a
   // Server Action ('use server' at top of file). Any authed client could
   // hit it directly and burn LLM quota — bounce non-members here.
+  let memberUserId: string
   try {
-    await requireWorkspaceMember(traj.workspaceId)
+    const { user } = await requireWorkspaceMember(traj.workspaceId)
+    memberUserId = user.id
   } catch {
     throw new ForbiddenError('Not a member of this workspace.')
   }
+
+  // Cost gate — every other AI helper in the codebase calls
+  // assertWithinDailyAIQuota BEFORE the Claude invocation. This one was
+  // missing it; the security audit flagged it as an unlimited-spend
+  // vector for any workspace member. Caps to AI_DAILY_LIMIT_PER_USER
+  // (default 100/day) like the rest.
+  await assertWithinDailyAIQuota(memberUserId)
 
   const stepRows = await db
     .select({
@@ -196,8 +205,13 @@ export async function reviewTrajectoryAndCache(
     })
     .where(eq(trajectories.id, parsed.trajectoryId))
 
+  // Bill the call to the actual workspace member who triggered it
+  // (not the sentinel demo actor) so the daily quota check above
+  // sees consistent accounting. The previous sentinel UUID let
+  // quota grow unbounded for any one user since their own log rows
+  // weren't counted.
   await logAICall({
-    userId: '00000000-0000-0000-0000-000000000001', // demo system actor
+    userId: memberUserId,
     feature: 'trajectory-hints',
     model,
     inputTokens,

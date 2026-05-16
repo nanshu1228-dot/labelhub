@@ -51,7 +51,24 @@ export async function GET(request: NextRequest) {
     apiKeyId = auth.apiKeyId
 
     const url = new URL(request.url)
-    const trajectoryId = url.searchParams.get('trajectory_id') ?? undefined
+    const trajectoryIdRaw = url.searchParams.get('trajectory_id') ?? undefined
+    // Phase-6 audit response: validate UUID shape on the trajectory_id
+    // query param before it flows into the query layer. Auth would
+    // still catch a cross-workspace forge attempt, but failing fast on
+    // shape gives a cleaner 400 + protects the downstream code from
+    // arbitrary string input.
+    const trajectoryId =
+      trajectoryIdRaw && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trajectoryIdRaw)
+        ? trajectoryIdRaw
+        : trajectoryIdRaw
+          ? (() => {
+              throw new AppError(
+                'BAD_TRAJECTORY_ID',
+                'trajectory_id must be a UUID',
+                400,
+              )
+            })()
+          : undefined
     const statusParam = url.searchParams.get('status') ?? undefined
     const since = url.searchParams.get('since') ?? undefined
     const until = url.searchParams.get('until') ?? undefined

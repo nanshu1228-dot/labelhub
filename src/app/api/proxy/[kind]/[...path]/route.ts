@@ -30,6 +30,16 @@ import { injectScopeForFamily } from '@/lib/proxy/inject-scope'
 import { resolveTopicScope } from '@/lib/queries/topic-scope'
 
 /**
+ * Default per-connection rate limit when none is configured. Set to 60
+ * req/min (1 req/sec sustained) — high enough that legitimate clients
+ * never trip it but low enough that a leaked / forgotten key on an
+ * unconfigured connection can't burn through token budget in seconds.
+ * Admins who need higher throughput set `rateLimitRpm` on the
+ * connection row explicitly.
+ */
+const DEFAULT_PROXY_RPM_FLOOR = 60
+
+/**
  * Catch-all proxy route — `POST /api/proxy/<kind>/<...path>`
  *
  * Replaces the per-provider route files. Every registered provider in
@@ -151,11 +161,22 @@ export async function POST(
     // provider; the per-key limit caps any individual API key (e.g. a
     // third-party integration we don't fully trust). Both checked off the
     // same logged row.
-    if (conn.connectionId && conn.rateLimitRpm) {
+    //
+    // Phase-6 security audit hardening: previously this block was guarded
+    // by `conn.rateLimitRpm` truthy — if a connection was registered
+    // without an explicit RPM (or RPM=0), the limit check was SKIPPED
+    // ENTIRELY. A leaked API key against such a connection meant unlimited
+    // upstream spend. Now we apply a default floor (DEFAULT_PROXY_RPM_FLOOR
+    // = 60 req/min) so every connection has SOME cap, even if admin
+    // didn't set one. Admins who genuinely need higher throughput set
+    // rateLimitRpm explicitly; the default just rules out the runaway
+    // case.
+    if (conn.connectionId) {
+      const effectiveLimit = conn.rateLimitRpm ?? DEFAULT_PROXY_RPM_FLOOR
       const apiKeyRpm = await getApiKeyRpm(auth.apiKeyId)
       const allow = await recordCallAndCheckRpm({
         connectionId: conn.connectionId,
-        limit: conn.rateLimitRpm,
+        limit: effectiveLimit,
         apiKeyId: auth.apiKeyId,
         apiKeyLimit: apiKeyRpm,
       })
@@ -163,7 +184,7 @@ export async function POST(
         const msg =
           allow.scope === 'api-key'
             ? `API key exceeded its own ${apiKeyRpm} req/min cap. Retry after ${allow.retryAfterSeconds}s.`
-            : `Workspace exceeded ${conn.rateLimitRpm} req/min for this ${providerDef.label} connection. Retry after ${allow.retryAfterSeconds}s.`
+            : `Workspace exceeded ${effectiveLimit} req/min for this ${providerDef.label} connection. Retry after ${allow.retryAfterSeconds}s.`
         throw new AppError('RATE_LIMITED', msg, 429)
       }
     }
