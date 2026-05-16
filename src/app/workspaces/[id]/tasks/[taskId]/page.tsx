@@ -126,8 +126,48 @@ export default async function TaskDetailPage(props: {
             topics{' '}
             <span style={{ color: 'var(--text)' }}>{topics.length}</span>
           </span>
+          <Link
+            href={`/workspaces/${workspaceId}/tasks/${taskId}/guidelines`}
+            className="ts-12 mono"
+            style={{
+              color: 'var(--accent)',
+              textDecoration: 'none',
+            }}
+          >
+            guidelines →
+          </Link>
           {isAdmin && (
-            <span className="ml-auto">
+            <span className="ml-auto flex items-center gap-2">
+              <a
+                href={`/api/workspaces/${workspaceId}/tasks/${taskId}/export?format=json`}
+                className="ts-12 mono"
+                style={{
+                  background: 'transparent',
+                  color: 'var(--mute)',
+                  border: '1px solid var(--line)',
+                  borderRadius: 5,
+                  padding: '4px 10px',
+                  textDecoration: 'none',
+                }}
+                title="Download all submitted annotations as JSON"
+              >
+                ↓ json
+              </a>
+              <a
+                href={`/api/workspaces/${workspaceId}/tasks/${taskId}/export?format=csv`}
+                className="ts-12 mono"
+                style={{
+                  background: 'transparent',
+                  color: 'var(--mute)',
+                  border: '1px solid var(--line)',
+                  borderRadius: 5,
+                  padding: '4px 10px',
+                  textDecoration: 'none',
+                }}
+                title="Download all submitted annotations as CSV"
+              >
+                ↓ csv
+              </a>
               <PublishTaskButton taskId={taskId} status={task.status} />
             </span>
           )}
