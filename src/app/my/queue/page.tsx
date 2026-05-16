@@ -65,19 +65,35 @@ export default async function MyQueuePage(props: {
   return (
     <main className="app-light min-h-screen px-6 py-8" style={{ background: 'var(--bg)' }}>
       <div className="mx-auto max-w-[960px]">
-        <div className="mb-6">
-          <div className="lbl mb-2">§ MY QUEUE</div>
-          <h1 className="ts-32" style={{ color: 'var(--hi)' }}>
-            What&apos;s next
-          </h1>
-          <p
-            className="ts-13 mt-1"
-            style={{ color: 'var(--mute)', maxWidth: 640 }}
+        <div className="mb-6 flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <div className="lbl mb-2">§ MY QUEUE</div>
+            <h1 className="ts-32" style={{ color: 'var(--hi)' }}>
+              What&apos;s next
+            </h1>
+            <p
+              className="ts-13 mt-1"
+              style={{ color: 'var(--mute)', maxWidth: 640 }}
+            >
+              Ranked by where your mark will move the needle most — open
+              disputes first, then your drafts, then peer-rated, then
+              fresh captures.
+            </p>
+          </div>
+          <Link
+            href="/my/submissions"
+            className="ts-12 mono shrink-0"
+            style={{
+              background: 'var(--panel)',
+              color: 'var(--mute)',
+              border: '1px solid var(--line)',
+              borderRadius: 6,
+              padding: '6px 12px',
+              textDecoration: 'none',
+            }}
           >
-            Ranked by where your mark will move the needle most — open
-            disputes first, then your drafts, then peer-rated, then fresh
-            captures.
-          </p>
+            history →
+          </Link>
         </div>
 
         <StatsRow stats={stats} />

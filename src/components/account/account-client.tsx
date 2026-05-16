@@ -44,7 +44,12 @@ export function AccountClient({
         </h1>
       </div>
 
-      {workspaces.length > 0 && <QueueCTA />}
+      {workspaces.length > 0 && (
+        <>
+          <QueueCTA />
+          <QuickLinksRow />
+        </>
+      )}
 
       <ProfileSection email={email} initialDisplayName={displayName} />
 
@@ -61,6 +66,65 @@ export function AccountClient({
  * "what should I work on" surface. Skipped for users with zero
  * memberships (the empty-state below is their starting point).
  */
+/**
+ * Quick-access row under the queue CTA. Points to the two secondary
+ * annotator-facing pages: submission history and earnings. Both are
+ * read-only personal views, useful from the account hub.
+ */
+function QuickLinksRow() {
+  const links = [
+    {
+      href: '/my/submissions',
+      label: 'My submissions',
+      hint: 'work history · approve / reject / 打回',
+    },
+    {
+      href: '/my/earnings',
+      label: 'My earnings',
+      hint: 'pending + paid · per-period breakdown',
+    },
+  ]
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 -mt-4">
+      {links.map((l) => (
+        <Link
+          key={l.href}
+          href={l.href}
+          className="block rounded-md p-3"
+          style={{
+            background: 'var(--panel)',
+            border: '1px solid var(--line)',
+            textDecoration: 'none',
+            transition: 'border-color 120ms',
+          }}
+        >
+          <div className="flex items-center justify-between">
+            <span
+              className="ts-13"
+              style={{ color: 'var(--hi)', fontWeight: 500 }}
+            >
+              {l.label}
+            </span>
+            <span
+              className="ts-13 mono"
+              style={{ color: 'var(--mute2)' }}
+              aria-hidden
+            >
+              →
+            </span>
+          </div>
+          <p
+            className="ts-12 mono mt-0.5"
+            style={{ color: 'var(--mute2)' }}
+          >
+            {l.hint}
+          </p>
+        </Link>
+      ))}
+    </div>
+  )
+}
+
 function QueueCTA() {
   return (
     <Link

@@ -6,6 +6,7 @@ import {
   stepAnnotations,
   tasks,
   topics,
+  workspaces,
 } from '@/lib/db/schema'
 
 /**
@@ -50,6 +51,90 @@ export async function listSubmittedAnnotationsForTask(
     .orderBy(desc(annotations.submittedAt))
     .limit(limit)
     .offset(opts?.offset ?? 0)
+}
+
+/**
+ * Annotator's full submission history across every workspace they
+ * belong to. Joins workspace + task + topic so the UI can render each
+ * row with `workspaceName · taskName · topicId` breadcrumb without N+1
+ * fetches.
+ *
+ * Returns BOTH submitted (status != drafting) AND in-progress drafts so
+ * the page can split them into "submitted" vs "in flight" sections.
+ */
+export interface MySubmissionRow {
+  annotationId: string
+  topicId: string
+  taskId: string
+  taskName: string
+  templateMode: string
+  workspaceId: string
+  workspaceName: string
+  topicStatus: string
+  /** ISO when the user submitted (null if still drafting). */
+  submittedAt: Date | null
+  /** ISO when the draft was first created. */
+  createdAt: Date | null
+  /** Payload preview — first 200 chars of stringified payload. */
+  payloadPreview: string
+}
+
+export async function listMyAllSubmissions(opts: {
+  userId: string
+  /** Optional workspace filter; when omitted spans every workspace. */
+  workspaceId?: string
+  limit?: number
+}): Promise<MySubmissionRow[]> {
+  const db = getDb()
+  const limit = Math.min(opts.limit ?? 100, 500)
+  const conds = [eq(annotations.userId, opts.userId)]
+  const rows = await db
+    .select({
+      annotationId: annotations.id,
+      topicId: annotations.topicId,
+      taskId: tasks.id,
+      taskName: tasks.name,
+      templateMode: tasks.templateMode,
+      workspaceId: tasks.workspaceId,
+      workspaceName: workspaces.name,
+      topicStatus: topics.status,
+      submittedAt: annotations.submittedAt,
+      payload: annotations.payload,
+    })
+    .from(annotations)
+    .innerJoin(topics, eq(annotations.topicId, topics.id))
+    .innerJoin(tasks, eq(topics.taskId, tasks.id))
+    .innerJoin(workspaces, eq(tasks.workspaceId, workspaces.id))
+    .where(
+      opts.workspaceId
+        ? and(...conds, eq(tasks.workspaceId, opts.workspaceId))
+        : and(...conds),
+    )
+    .orderBy(desc(annotations.submittedAt))
+    .limit(limit)
+
+  return rows.map((r) => {
+    const payload = (r.payload ?? {}) as Record<string, unknown>
+    let preview = ''
+    try {
+      preview = JSON.stringify(payload).slice(0, 200)
+    } catch {
+      preview = '(unparseable)'
+    }
+    return {
+      annotationId: r.annotationId,
+      topicId: r.topicId,
+      taskId: r.taskId,
+      taskName: r.taskName,
+      templateMode: r.templateMode,
+      workspaceId: r.workspaceId,
+      workspaceName: r.workspaceName,
+      topicStatus: r.topicStatus,
+      submittedAt: r.submittedAt ?? null,
+      createdAt: r.submittedAt ?? null, // annotations table has no createdAt; submittedAt is the closest
+      payloadPreview: preview,
+    }
+  })
 }
 
 /**
