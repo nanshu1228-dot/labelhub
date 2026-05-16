@@ -73,9 +73,9 @@ export const DICT = {
     live_feed_1:
       'Your labels improved <span style="color: oklch(0.92 0 0);">factuality</span> 78% → 81%',
     live_feed_2:
-      'Pair-Annotation session moved <span style="color: oklch(0.92 0 0);">Olympiad math</span> +2.1%',
+      'Pair-Rubric session moved <span style="color: oklch(0.92 0 0);">Olympiad math</span> +2.1%',
     live_feed_3:
-      'Apprentice learned a new rubric rule: <span class="lh-mono" style="color: oklch(0.92 0 0);">&ldquo;cite step 3&rdquo;</span>',
+      'Guideline refiner learned a new rule: <span class="lh-mono" style="color: oklch(0.92 0 0);">&ldquo;cite step 3&rdquo;</span>',
     live_feed_4:
       '<span class="lh-mono" style="color: oklch(0.92 0 0);">24</span> annotators contributed to medical Q&A · last 1h',
     footer_tagline: 'Capture the teaching, not just the label.',
@@ -158,9 +158,9 @@ export const DICT = {
     live_feed_h: '影响信息流',
     live_feed_1: '你的标注让<span style="color: oklch(0.92 0 0);">事实性</span>从 78% → 81%',
     live_feed_2:
-      '双人标注使 <span style="color: oklch(0.92 0 0);">奥数</span>提升 +2.1%',
+      'Pair-Rubric 标注使 <span style="color: oklch(0.92 0 0);">奥数</span>提升 +2.1%',
     live_feed_3:
-      '学徒学习到新规则：<span class="lh-mono" style="color: oklch(0.92 0 0);">「引用第 3 步」</span>',
+      '指南细化器学习到新规则：<span class="lh-mono" style="color: oklch(0.92 0 0);">「引用第 3 步」</span>',
     live_feed_4:
       '过去 1 小时 · <span class="lh-mono" style="color: oklch(0.92 0 0);">24</span> 名标注者贡献于医学问答',
     footer_tagline: '标的是答案，记的是教学。',

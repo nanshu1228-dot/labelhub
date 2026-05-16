@@ -11,7 +11,7 @@ import './globals.css'
 export const metadata: Metadata = {
   title: 'LabelHub — Capture the teaching, not just the label',
   description:
-    'An annotation engine for the LLM era. Six template modes — survey, pair, arena, tokens, game, apprentice — over one model-grade rubric.',
+    'An annotation engine for the LLM era. Three modes — pair rubric, arena GSB, and agent-trace eval — over one model-grade scoring engine.',
 }
 
 export default function RootLayout({
