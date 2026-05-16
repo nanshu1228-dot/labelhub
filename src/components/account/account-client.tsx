@@ -30,10 +30,15 @@ export function AccountClient({
   email,
   displayName,
   workspaces,
+  isAdminAnywhere = false,
 }: {
   email: string
   displayName: string | null
   workspaces: WorkspaceMembership[]
+  /** True when the user has admin role on at least one workspace —
+   *  unlocks the /admin dashboard entry card. Default false so older
+   *  callers (none currently) don't surface it accidentally. */
+  isAdminAnywhere?: boolean
 }) {
   return (
     <div className="space-y-10">
@@ -43,6 +48,8 @@ export function AccountClient({
           Your profile
         </h1>
       </div>
+
+      {isAdminAnywhere && <AdminEntryCard />}
 
       {workspaces.length > 0 && (
         <>
@@ -57,6 +64,55 @@ export function AccountClient({
 
       <SignOutCard />
     </div>
+  )
+}
+
+/**
+ * Admin cockpit CTA. Renders for any user who has admin role on at
+ * least one workspace. Distinct visual from the annotator QueueCTA
+ * (uses a slightly different gradient + "admin" lbl) so the role
+ * the viewer is operating in is unambiguous.
+ */
+function AdminEntryCard() {
+  return (
+    <Link
+      href="/admin"
+      className="block rounded-xl p-5"
+      style={{
+        background:
+          'linear-gradient(135deg, oklch(0.6 0.18 280 / 0.18), oklch(0.65 0.18 200 / 0.12))',
+        border: '1px solid oklch(0.6 0.18 280 / 0.4)',
+        textDecoration: 'none',
+      }}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="lbl" style={{ color: 'var(--accent)' }}>
+            § ADMIN COCKPIT
+          </div>
+          <h3
+            className="ts-18 mt-1"
+            style={{ color: 'var(--hi)', fontWeight: 500 }}
+          >
+            Run your workspaces
+          </h3>
+          <p
+            className="ts-13 mt-1"
+            style={{ color: 'var(--mute)', maxWidth: 480 }}
+          >
+            Cross-workspace dashboard. Pending QC queue, recent
+            rejections, per-workspace approval rates — one screen.
+          </p>
+        </div>
+        <span
+          className="ts-24"
+          style={{ color: 'var(--accent)' }}
+          aria-hidden="true"
+        >
+          →
+        </span>
+      </div>
+    </Link>
   )
 }
 

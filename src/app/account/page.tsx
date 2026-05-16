@@ -6,6 +6,7 @@ import { getDb } from '@/lib/db/client'
 import { users } from '@/lib/db/schema'
 import { optionalUser } from '@/lib/auth/guards'
 import { listMyWorkspaces } from '@/lib/actions/membership'
+import { userAdminsAnyWorkspace } from '@/lib/queries/admin-dashboard'
 import { AccountClient } from '@/components/account/account-client'
 
 export const metadata: Metadata = {
@@ -35,7 +36,10 @@ export default async function AccountPage() {
     .where(eq(users.id, me.id))
     .limit(1)
 
-  const myWorkspaces = await listMyWorkspaces().catch(() => [])
+  const [myWorkspaces, isAdminAnywhere] = await Promise.all([
+    listMyWorkspaces().catch(() => []),
+    userAdminsAnyWorkspace(me.id).catch(() => false),
+  ])
 
   return (
     <div className="app-light min-h-screen" style={{ background: 'var(--bg)' }}>
@@ -69,6 +73,7 @@ export default async function AccountPage() {
           email={me.email}
           displayName={profile?.displayName ?? null}
           workspaces={myWorkspaces}
+          isAdminAnywhere={isAdminAnywhere}
         />
       </main>
     </div>

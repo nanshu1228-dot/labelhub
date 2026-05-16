@@ -28,9 +28,21 @@ export async function updateSession(request: NextRequest) {
           request.cookies.set(name, value),
         )
         response = NextResponse.next({ request })
-        cookiesToSet.forEach(({ name, value, options }) =>
-          response.cookies.set(name, value, options),
-        )
+        cookiesToSet.forEach(({ name, value, options }) => {
+          // Belt-and-suspenders for "stay signed in":
+          //   Supabase SSR's defaults already set maxAge ~400 days, but
+          //   we floor any session-only (undefined/0) cookie at 30 days
+          //   so a browser quirk or a future SDK regression can't silently
+          //   downgrade us to session cookies (lost on tab close).
+          const safeOptions = {
+            ...options,
+            maxAge:
+              options?.maxAge && options.maxAge > 0
+                ? options.maxAge
+                : 60 * 60 * 24 * 30,
+          }
+          response.cookies.set(name, value, safeOptions)
+        })
       },
     },
   })
