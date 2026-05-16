@@ -1,14 +1,16 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useEffect, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import {
-  saveDraftAnnotation,
-  submitAnnotation,
-} from '@/lib/actions/annotations'
+import { submitAnnotation } from '@/lib/actions/annotations'
 import type { PairChecklistItem } from '@/lib/templates/types'
 import { TopicHeader } from './topic-header'
 import { AIPrecheckButton } from './ai-precheck'
+import {
+  autosaveStatusLabel,
+  useAutosaveDraft,
+  type AutosaveStatus,
+} from './use-autosave-draft'
 
 /**
  * Pair-Rubric annotator.
@@ -172,6 +174,7 @@ export interface PairPeerCellLite {
 export function PairRubricForm({
   workspaceId,
   topicId,
+  taskId,
   topicStatus,
   itemData,
   checklist,
@@ -182,6 +185,7 @@ export function PairRubricForm({
 }: {
   workspaceId: string
   topicId: string
+  taskId: string
   topicStatus: string
   itemData: Record<string, unknown>
   checklist: readonly PairChecklistItem[]
@@ -208,46 +212,127 @@ export function PairRubricForm({
   const [notes, setNotes] = useState<string>(() =>
     typeof initialPayload.notes === 'string' ? initialPayload.notes : '',
   )
-  const [isSaving, startSave] = useTransition()
   const [isSubmitting, startSubmit] = useTransition()
   const [error, setError] = useState<string | null>(null)
-  const [savedAt, setSavedAt] = useState<Date | null>(null)
+
+  const isReadOnly =
+    topicStatus !== 'drafting' && topicStatus !== 'revising'
+
+  const autosave = useAutosaveDraft({
+    topicId,
+    taskId,
+    readOnly: isReadOnly,
+  })
+
+  // On mount, check IndexedDB for a draft that's fresher than the
+  // server payload (e.g. the user's last session crashed before the
+  // debounced save reached the server). If so, merge it over current
+  // state so the rater picks up exactly where they left off.
+  useEffect(() => {
+    if (isReadOnly) return
+    let cancelled = false
+    void (async () => {
+      const local = await autosave.restoreLocal()
+      if (cancelled || !local) return
+      // Merge: ratings + customItems + notes from local. We don't blow
+      // away preset items the template added; we just slot in the
+      // local answers that map by id.
+      if (typeof local.notes === 'string') setNotes(local.notes)
+      const localRatings = local.ratings as
+        | Record<string, { a?: boolean; b?: boolean }>
+        | undefined
+      if (localRatings) {
+        setRatings((prev) => {
+          const next = { ...prev }
+          for (const [id, val] of Object.entries(localRatings)) {
+            next[id] = {
+              a: typeof val.a === 'boolean' ? val.a : prev[id]?.a ?? null,
+              b: typeof val.b === 'boolean' ? val.b : prev[id]?.b ?? null,
+            }
+          }
+          return next
+        })
+      }
+      const localCustom = local.customItems
+      if (Array.isArray(localCustom)) {
+        const restored: CustomItem[] = []
+        for (const v of localCustom) {
+          if (!v || typeof v !== 'object') continue
+          const it = v as Record<string, unknown>
+          if (typeof it.id === 'string' && typeof it.name === 'string') {
+            restored.push({
+              id: it.id,
+              name: it.name,
+              description:
+                typeof it.description === 'string' ? it.description : undefined,
+            })
+          }
+        }
+        if (restored.length > 0) setCustomItems(restored)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+    // restoreLocal is stable enough — we only want this on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [topicId, isReadOnly])
 
   // Count completion only for items currently visible. Conditional items
   // hidden behind an unmatched parent answer aren't required, otherwise
   // submit would be blocked on questions the annotator can't even see.
   const { done, total } = countCompleteVisible(checklist, customItems, ratings)
-  const isReadOnly =
-    topicStatus !== 'drafting' && topicStatus !== 'revising'
 
   function setVerdict(itemId: string, side: 'a' | 'b', value: boolean) {
-    setRatings((prev) => ({
-      ...prev,
-      [itemId]: { ...prev[itemId], [side]: value },
-    }))
+    setRatings((prev) => {
+      const next = {
+        ...prev,
+        [itemId]: { ...prev[itemId], [side]: value },
+      }
+      // Debounced autosave fires 1.5s after the last change. Also
+      // writes IndexedDB synchronously so a tab-close before the
+      // server save preserves the change.
+      autosave.markDirty({
+        ratings: ratingsToPayload(next),
+        customItems: customItems.length > 0 ? customItems : undefined,
+        notes: notes.trim() || undefined,
+      })
+      return next
+    })
   }
 
   function addCustomItem(name: string, description: string) {
     const trimmedName = name.trim()
     if (!trimmedName) return
     const id = newCustomId(trimmedName)
-    setCustomItems((prev) => [
-      ...prev,
+    const nextCustom: CustomItem[] = [
+      ...customItems,
       {
         id,
         name: trimmedName,
         description: description.trim() || undefined,
       },
-    ])
-    setRatings((prev) => ({ ...prev, [id]: { a: null, b: null } }))
+    ]
+    const nextRatings = { ...ratings, [id]: { a: null, b: null } }
+    setCustomItems(nextCustom)
+    setRatings(nextRatings)
+    autosave.markDirty({
+      ratings: ratingsToPayload(nextRatings),
+      customItems: nextCustom,
+      notes: notes.trim() || undefined,
+    })
   }
 
   function removeCustomItem(id: string) {
-    setCustomItems((prev) => prev.filter((c) => c.id !== id))
-    setRatings((prev) => {
-      const next = { ...prev }
-      delete next[id]
-      return next
+    const nextCustom = customItems.filter((c) => c.id !== id)
+    const nextRatings = { ...ratings }
+    delete nextRatings[id]
+    setCustomItems(nextCustom)
+    setRatings(nextRatings)
+    autosave.markDirty({
+      ratings: ratingsToPayload(nextRatings),
+      customItems: nextCustom.length > 0 ? nextCustom : undefined,
+      notes: notes.trim() || undefined,
     })
   }
 
@@ -259,20 +344,10 @@ export function PairRubricForm({
     }
   }
 
-  function saveDraft() {
+  async function saveDraft() {
     if (isReadOnly) return
     setError(null)
-    startSave(async () => {
-      try {
-        await saveDraftAnnotation({
-          topicId,
-          payload: buildPayload(),
-        })
-        setSavedAt(new Date())
-      } catch (e) {
-        setError(e instanceof Error ? e.message : 'Save failed.')
-      }
-    })
+    await autosave.flush(buildPayload())
   }
 
   function submit() {
@@ -492,8 +567,16 @@ export function PairRubricForm({
           <label className="lbl mb-1.5 block">notes (optional)</label>
           <textarea
             value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            onBlur={saveDraft}
+            onChange={(e) => {
+              // Local state changes per keystroke (cheap, render-only)
+              // but the autosave only fires when the user blurs the
+              // field — the AGENTS.md hard rule: NEVER save on
+              // keystroke. The debounced autosave on rubric edits is
+              // separate and acceptable because rubric clicks are
+              // discrete events.
+              setNotes(e.target.value)
+            }}
+            onBlur={() => void saveDraft()}
             disabled={isReadOnly}
             rows={3}
             maxLength={2000}
@@ -529,10 +612,10 @@ export function PairRubricForm({
           disabled={isReadOnly}
         />
 
-        <div className="mt-6 flex items-center gap-3">
+        <div className="mt-6 flex items-center gap-3 flex-wrap">
           <button
             onClick={saveDraft}
-            disabled={isReadOnly || isSaving}
+            disabled={isReadOnly || autosave.status === 'saving'}
             className="ts-13 mono"
             style={{
               background: 'transparent',
@@ -541,10 +624,11 @@ export function PairRubricForm({
               borderRadius: 6,
               padding: '6px 14px',
               cursor: isReadOnly ? 'not-allowed' : 'pointer',
-              opacity: isReadOnly || isSaving ? 0.5 : 1,
+              opacity:
+                isReadOnly || autosave.status === 'saving' ? 0.5 : 1,
             }}
           >
-            {isSaving ? 'saving…' : 'save draft'}
+            {autosave.status === 'saving' ? 'saving…' : 'save now'}
           </button>
           <button
             onClick={submit}
@@ -565,14 +649,11 @@ export function PairRubricForm({
           >
             {isSubmitting ? 'submitting…' : 'submit'}
           </button>
-          {savedAt && (
-            <span
-              className="ts-11 mono ml-auto"
-              style={{ color: 'var(--mute2)' }}
-            >
-              saved {savedAt.toISOString().slice(11, 19)}
-            </span>
-          )}
+          <AutosaveBadge
+            status={autosave.status}
+            lastSavedAt={autosave.lastSavedAt}
+            errorMessage={autosave.errorMessage}
+          />
           {isReadOnly && (
             <span
               className="ts-12 mono ml-auto px-2 py-0.5 rounded"
@@ -588,6 +669,61 @@ export function PairRubricForm({
         </div>
       </section>
     </>
+  )
+}
+
+/**
+ * Compact autosave status badge for the action row. Color-codes by
+ * status so a rater can see at a glance whether their changes are
+ * safe:
+ *   idle    — gray, low contrast (no changes yet)
+ *   dirty   — amber border (unsaved changes, debounce running)
+ *   saving  — accent border (network in flight)
+ *   saved   — green check (server confirmed)
+ *   error   — red (with the error message; kept locally per IndexedDB)
+ */
+function AutosaveBadge({
+  status,
+  lastSavedAt,
+  errorMessage,
+}: {
+  status: AutosaveStatus
+  lastSavedAt: Date | null
+  errorMessage: string | null
+}) {
+  const label = autosaveStatusLabel(status, lastSavedAt)
+  const palette: Record<AutosaveStatus, { fg: string; bg: string }> = {
+    idle: { fg: 'var(--mute2)', bg: 'transparent' },
+    dirty: {
+      fg: 'oklch(0.55 0.14 75)',
+      bg: 'oklch(0.6 0.14 75 / 0.1)',
+    },
+    saving: { fg: 'var(--accent)', bg: 'var(--accent-soft)' },
+    saved: {
+      fg: 'oklch(0.5 0.13 150)',
+      bg: 'oklch(0.5 0.13 150 / 0.1)',
+    },
+    error: { fg: 'var(--danger)', bg: 'var(--danger-soft)' },
+  }
+  const p = palette[status]
+  return (
+    <span
+      className="ts-11 mono ml-auto px-2 py-0.5 rounded inline-flex items-center gap-1"
+      style={{
+        color: p.fg,
+        background: p.bg,
+        border: status === 'idle' ? 'none' : `1px solid ${p.fg}33`,
+      }}
+      title={
+        status === 'error' && errorMessage
+          ? `${errorMessage} — your changes are still safe in your browser; reload the page to retry.`
+          : status === 'dirty'
+            ? 'Unsaved changes — auto-save fires in ~1 second. Local backup is already saved in your browser.'
+            : undefined
+      }
+    >
+      {label || (status === 'idle' ? '·' : status)}
+    </span>
   )
 }
 

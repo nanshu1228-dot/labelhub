@@ -1,15 +1,17 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useEffect, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import {
-  saveDraftAnnotation,
-  submitAnnotation,
-} from '@/lib/actions/annotations'
+import { submitAnnotation } from '@/lib/actions/annotations'
 import type { PairChecklistItem } from '@/lib/templates/types'
 import { dimensionGsb } from '@/lib/templates/modes/arena-gsb'
 import { TopicHeader } from './topic-header'
 import { AIPrecheckButton } from './ai-precheck'
+import {
+  autosaveStatusLabel,
+  useAutosaveDraft,
+  type AutosaveStatus,
+} from './use-autosave-draft'
 
 /**
  * Arena-GSB annotator.
@@ -131,6 +133,7 @@ export interface ArenaPeerCellLite {
 export function ArenaGsbForm({
   workspaceId,
   topicId,
+  taskId,
   topicStatus,
   itemData,
   dimensions: spec,
@@ -141,6 +144,7 @@ export function ArenaGsbForm({
 }: {
   workspaceId: string
   topicId: string
+  taskId: string
   topicStatus: string
   itemData: Record<string, unknown>
   dimensions: readonly PairChecklistItem[]
@@ -165,18 +169,83 @@ export function ArenaGsbForm({
       ? initialPayload.reasoning
       : '',
   )
-  const [isSaving, startSave] = useTransition()
   const [isSubmitting, startSubmit] = useTransition()
   const [error, setError] = useState<string | null>(null)
-  const [savedAt, setSavedAt] = useState<Date | null>(null)
   const isReadOnly =
     topicStatus !== 'drafting' && topicStatus !== 'revising'
 
+  const autosave = useAutosaveDraft({
+    topicId,
+    taskId,
+    readOnly: isReadOnly,
+  })
+
+  // Mount-time restore: if IndexedDB has a fresher draft than the
+  // server-loaded one (e.g. last session crashed pre-sync), merge it
+  // over current state.
+  useEffect(() => {
+    if (isReadOnly) return
+    let cancelled = false
+    void (async () => {
+      const local = await autosave.restoreLocal()
+      if (cancelled || !local) return
+      const localDims = local.dimensions as
+        | Record<string, { a?: number; b?: number }>
+        | undefined
+      if (localDims) {
+        setDimensions((prev) => {
+          const next = { ...prev }
+          for (const [id, v] of Object.entries(localDims)) {
+            next[id] = {
+              a:
+                typeof v.a === 'number' && v.a >= 1 && v.a <= 5
+                  ? v.a
+                  : prev[id]?.a ?? null,
+              b:
+                typeof v.b === 'number' && v.b >= 1 && v.b <= 5
+                  ? v.b
+                  : prev[id]?.b ?? null,
+            }
+          }
+          return next
+        })
+      }
+      const lv = local.overallVerdict
+      if (lv === 'a_better' || lv === 'tie' || lv === 'b_better') {
+        setVerdict(lv)
+      }
+      if (typeof local.reasoning === 'string') {
+        setReasoning(local.reasoning)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [topicId, isReadOnly])
+
   function setScore(dimId: string, side: 'a' | 'b', value: number) {
-    setDimensions((prev) => ({
-      ...prev,
-      [dimId]: { ...prev[dimId], [side]: value },
-    }))
+    setDimensions((prev) => {
+      const next = {
+        ...prev,
+        [dimId]: { ...prev[dimId], [side]: value },
+      }
+      autosave.markDirty({
+        dimensions: dimensionsToPayload(next),
+        overallVerdict: verdict ?? undefined,
+        reasoning: reasoning.trim() || undefined,
+      })
+      return next
+    })
+  }
+
+  function setOverallVerdict(v: Verdict) {
+    setVerdict(v)
+    autosave.markDirty({
+      dimensions: dimensionsToPayload(dimensions),
+      overallVerdict: v ?? undefined,
+      reasoning: reasoning.trim() || undefined,
+    })
   }
 
   function payload() {
@@ -187,17 +256,10 @@ export function ArenaGsbForm({
     }
   }
 
-  function saveDraft() {
+  async function saveDraft() {
     if (isReadOnly) return
     setError(null)
-    startSave(async () => {
-      try {
-        await saveDraftAnnotation({ topicId, payload: payload() })
-        setSavedAt(new Date())
-      } catch (e) {
-        setError(e instanceof Error ? e.message : 'Save failed.')
-      }
-    })
+    await autosave.flush(payload())
   }
 
   function submit() {
@@ -415,7 +477,7 @@ export function ArenaGsbForm({
               label="A 优"
               value="a_better"
               current={verdict}
-              onChange={setVerdict}
+              onChange={setOverallVerdict}
               readOnly={isReadOnly}
               color="oklch(0.65 0.18 200)"
             />
@@ -423,7 +485,7 @@ export function ArenaGsbForm({
               label="平手 tie"
               value="tie"
               current={verdict}
-              onChange={setVerdict}
+              onChange={setOverallVerdict}
               readOnly={isReadOnly}
               color="var(--mute)"
             />
@@ -431,7 +493,7 @@ export function ArenaGsbForm({
               label="B 优"
               value="b_better"
               current={verdict}
-              onChange={setVerdict}
+              onChange={setOverallVerdict}
               readOnly={isReadOnly}
               color="oklch(0.7 0.18 30)"
             />
@@ -443,7 +505,7 @@ export function ArenaGsbForm({
           <textarea
             value={reasoning}
             onChange={(e) => setReasoning(e.target.value)}
-            onBlur={saveDraft}
+            onBlur={() => void saveDraft()}
             disabled={isReadOnly}
             rows={4}
             maxLength={4000}
@@ -479,10 +541,10 @@ export function ArenaGsbForm({
           disabled={isReadOnly}
         />
 
-        <div className="mt-6 flex items-center gap-3">
+        <div className="mt-6 flex items-center gap-3 flex-wrap">
           <button
             onClick={saveDraft}
-            disabled={isReadOnly || isSaving}
+            disabled={isReadOnly || autosave.status === 'saving'}
             className="ts-13 mono"
             style={{
               background: 'transparent',
@@ -491,10 +553,11 @@ export function ArenaGsbForm({
               borderRadius: 6,
               padding: '6px 14px',
               cursor: isReadOnly ? 'not-allowed' : 'pointer',
-              opacity: isReadOnly || isSaving ? 0.5 : 1,
+              opacity:
+                isReadOnly || autosave.status === 'saving' ? 0.5 : 1,
             }}
           >
-            {isSaving ? 'saving…' : 'save draft'}
+            {autosave.status === 'saving' ? 'saving…' : 'save now'}
           </button>
           <button
             onClick={submit}
@@ -513,14 +576,11 @@ export function ArenaGsbForm({
           >
             {isSubmitting ? 'submitting…' : 'submit'}
           </button>
-          {savedAt && (
-            <span
-              className="ts-11 mono ml-auto"
-              style={{ color: 'var(--mute2)' }}
-            >
-              saved {savedAt.toISOString().slice(11, 19)}
-            </span>
-          )}
+          <AutosaveBadge
+            status={autosave.status}
+            lastSavedAt={autosave.lastSavedAt}
+            errorMessage={autosave.errorMessage}
+          />
           {isReadOnly && (
             <span
               className="ts-12 mono ml-auto px-2 py-0.5 rounded"
@@ -536,6 +596,59 @@ export function ArenaGsbForm({
         </div>
       </section>
     </>
+  )
+}
+
+/**
+ * Autosave status badge — mirrors the one in pair-rubric-form so both
+ * forms surface save state identically. Color-coded:
+ *   idle/saved  — calm
+ *   dirty       — amber (changes pending debounced save)
+ *   saving      — accent
+ *   error       — danger, with local-fallback explainer in tooltip
+ */
+function AutosaveBadge({
+  status,
+  lastSavedAt,
+  errorMessage,
+}: {
+  status: AutosaveStatus
+  lastSavedAt: Date | null
+  errorMessage: string | null
+}) {
+  const label = autosaveStatusLabel(status, lastSavedAt)
+  const palette: Record<AutosaveStatus, { fg: string; bg: string }> = {
+    idle: { fg: 'var(--mute2)', bg: 'transparent' },
+    dirty: {
+      fg: 'oklch(0.55 0.14 75)',
+      bg: 'oklch(0.6 0.14 75 / 0.1)',
+    },
+    saving: { fg: 'var(--accent)', bg: 'var(--accent-soft)' },
+    saved: {
+      fg: 'oklch(0.5 0.13 150)',
+      bg: 'oklch(0.5 0.13 150 / 0.1)',
+    },
+    error: { fg: 'var(--danger)', bg: 'var(--danger-soft)' },
+  }
+  const p = palette[status]
+  return (
+    <span
+      className="ts-11 mono ml-auto px-2 py-0.5 rounded inline-flex items-center gap-1"
+      style={{
+        color: p.fg,
+        background: p.bg,
+        border: status === 'idle' ? 'none' : `1px solid ${p.fg}33`,
+      }}
+      title={
+        status === 'error' && errorMessage
+          ? `${errorMessage} — your changes are still safe in your browser; reload the page to retry.`
+          : status === 'dirty'
+            ? 'Unsaved changes — auto-save fires in ~1 second. Local backup is already saved in your browser.'
+            : undefined
+      }
+    >
+      {label || (status === 'idle' ? '·' : status)}
+    </span>
   )
 }
 

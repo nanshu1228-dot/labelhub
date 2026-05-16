@@ -211,6 +211,7 @@ export default async function TopicAnnotatePage(props: {
         <PairRubricForm
           workspaceId={workspaceId}
           topicId={topicId}
+          taskId={task.id}
           topicStatus={displayStatus}
           itemData={itemData}
           checklist={template.pairChecklist ?? []}
@@ -230,6 +231,7 @@ export default async function TopicAnnotatePage(props: {
         <ArenaGsbForm
           workspaceId={workspaceId}
           topicId={topicId}
+          taskId={task.id}
           topicStatus={displayStatus}
           itemData={itemData}
           dimensions={template.arenaDimensions ?? []}
