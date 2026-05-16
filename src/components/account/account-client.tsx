@@ -32,7 +32,7 @@ export function AccountClient({
   displayName,
   workspaces,
   isAdminAnywhere = false,
-  unclaimedSeededCount = 0,
+  unclaimedSeeded = [],
 }: {
   email: string
   displayName: string | null
@@ -41,11 +41,11 @@ export function AccountClient({
    *  unlocks the /admin dashboard entry card. Default false so older
    *  callers (none currently) don't surface it accidentally. */
   isAdminAnywhere?: boolean
-  /** Number of seeded workspaces (admin_id matches the
+  /** Seeded workspaces (admin_id matches the
    *  `00000000-0000-0000-0000-…` sentinel) that nobody has claimed yet.
-   *  When > 0 we surface the ClaimSeededCard so a fresh signed-in user
-   *  can take over the demo workspaces in one click. */
-  unclaimedSeededCount?: number
+   *  When non-empty we surface the ClaimSeededCard with a name list
+   *  so the user knows exactly what they're about to take over. */
+  unclaimedSeeded?: Array<{ id: string; name: string }>
 }) {
   return (
     <div className="space-y-10">
@@ -56,8 +56,8 @@ export function AccountClient({
         </h1>
       </div>
 
-      {unclaimedSeededCount > 0 && (
-        <ClaimSeededCard count={unclaimedSeededCount} />
+      {unclaimedSeeded.length > 0 && (
+        <ClaimSeededCard workspaces={unclaimedSeeded} />
       )}
 
       {isAdminAnywhere && <AdminEntryCard />}
@@ -88,18 +88,29 @@ export function AccountClient({
  * After success the page refreshes so the workspace list + AdminEntryCard
  * appear immediately.
  */
-function ClaimSeededCard({ count }: { count: number }) {
+function ClaimSeededCard({
+  workspaces,
+}: {
+  workspaces: Array<{ id: string; name: string }>
+}) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
-  const [done, setDone] = useState<{ count: number } | null>(null)
+  const [done, setDone] = useState<{
+    claimed: number
+    lostToRace: number
+  } | null>(null)
+  const count = workspaces.length
 
   function claim() {
     setError(null)
     startTransition(async () => {
       try {
         const r = await claimSeededWorkspaces()
-        setDone({ count: r.claimed.length })
+        setDone({
+          claimed: r.claimed.length,
+          lostToRace: r.lostToRace.length,
+        })
         router.refresh()
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Claim failed.')
@@ -108,26 +119,43 @@ function ClaimSeededCard({ count }: { count: number }) {
   }
 
   if (done) {
+    const allLost = done.claimed === 0 && done.lostToRace > 0
     return (
       <div
         className="rounded-xl p-5"
         style={{
-          background: 'oklch(0.5 0.13 150 / 0.08)',
-          border: '1px solid oklch(0.5 0.13 150 / 0.35)',
+          background: allLost
+            ? 'var(--warn-soft)'
+            : 'oklch(0.5 0.13 150 / 0.08)',
+          border: `1px solid ${
+            allLost
+              ? 'oklch(0.6 0.14 75 / 0.4)'
+              : 'oklch(0.5 0.13 150 / 0.35)'
+          }`,
         }}
       >
-        <div className="lbl" style={{ color: 'oklch(0.45 0.15 150)' }}>
-          § CLAIMED
+        <div
+          className="lbl"
+          style={{
+            color: allLost ? 'oklch(0.55 0.14 75)' : 'oklch(0.45 0.15 150)',
+          }}
+        >
+          {allLost ? '§ MISSED' : '§ CLAIMED'}
         </div>
         <h3
           className="ts-16 mt-1"
           style={{ color: 'var(--hi)', fontWeight: 500 }}
         >
-          You&apos;re now admin of {done.count} workspace
-          {done.count === 1 ? '' : 's'}.
+          {allLost
+            ? 'Someone else got there first.'
+            : `You're now admin of ${done.claimed} workspace${done.claimed === 1 ? '' : 's'}.`}
         </h3>
         <p className="ts-13 mt-1" style={{ color: 'var(--mute)' }}>
-          The page is refreshing — your workspace list will appear below.
+          {allLost
+            ? 'All seeded workspaces were just claimed by another user. Refreshing — none of them will appear below.'
+            : done.lostToRace > 0
+              ? `${done.lostToRace} workspace${done.lostToRace === 1 ? ' was' : 's were'} claimed by someone else first; the rest are yours. Refreshing…`
+              : 'The page is refreshing — your workspace list will appear below.'}
         </p>
       </div>
     )
@@ -143,7 +171,7 @@ function ClaimSeededCard({ count }: { count: number }) {
       }}
     >
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="lbl" style={{ color: 'oklch(0.55 0.14 75)' }}>
             § DEMO READY · UNCLAIMED
           </div>
@@ -157,11 +185,29 @@ function ClaimSeededCard({ count }: { count: number }) {
             className="ts-13 mt-1"
             style={{ color: 'var(--mute)', maxWidth: 540 }}
           >
-            The seed scripts populated demo workspaces with placeholder
-            admin IDs. Click below to make yourself admin of all of
+            The seed scripts left these workspaces with placeholder
+            admin IDs. One click promotes you to admin of all of
             them — full access to tasks, members, billing, and the
             admin cockpit.
           </p>
+          <ul
+            className="mt-3 flex flex-wrap gap-1.5"
+            aria-label="workspaces that will be claimed"
+          >
+            {workspaces.map((w) => (
+              <li
+                key={w.id}
+                className="mono ts-11 px-2 py-0.5 rounded"
+                style={{
+                  background: 'oklch(0.7 0.14 75 / 0.12)',
+                  color: 'oklch(0.45 0.15 75)',
+                  border: '1px solid oklch(0.7 0.14 75 / 0.35)',
+                }}
+              >
+                {w.name}
+              </li>
+            ))}
+          </ul>
         </div>
         <button
           type="button"

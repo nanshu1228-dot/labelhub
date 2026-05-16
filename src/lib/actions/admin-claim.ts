@@ -33,27 +33,55 @@ import { requireUser } from '@/lib/auth/guards'
 const SEED_ADMIN_PREFIX = '00000000-0000-0000-0000-%'
 
 /**
- * Cheap count for the /account page — render the claim CTA only when
- * there's actually something to claim. Doesn't require auth (just
- * inspects which workspaces are still seed-orphaned).
+ * Cheap lookup for the /account page — return the workspace names
+ * that are still claimable so the CTA can show them by name (not just
+ * "N workspaces"). Empty array → no CTA renders.
+ *
+ * Doesn't require auth — it inspects which workspaces are still
+ * seed-orphaned, which is public-ish info (the demo is meant to be
+ * findable). We cap at 8 names to keep the CTA tidy on workspaces
+ * with a long seed list.
  */
-export async function countUnclaimedSeededWorkspaces(): Promise<number> {
+export async function listUnclaimedSeededWorkspaces(): Promise<
+  Array<{ id: string; name: string }>
+> {
   const db = getDb()
-  const rows = await db
-    .select({ id: workspaces.id })
+  return db
+    .select({ id: workspaces.id, name: workspaces.name })
     .from(workspaces)
     .where(like(workspaces.adminId, SEED_ADMIN_PREFIX))
+    .limit(8)
+}
+
+/**
+ * Backwards-compatible count helper. Kept so callers that only need
+ * a number can stay as-is.
+ */
+export async function countUnclaimedSeededWorkspaces(): Promise<number> {
+  const rows = await listUnclaimedSeededWorkspaces()
   return rows.length
 }
 
 /**
  * Claim every seeded workspace as the calling user. Returns the
- * workspace ids + names that were claimed (or already claimed in a
- * prior call), so the UI can show a meaningful confirmation.
+ * workspace ids + names that were actually claimed (i.e. the
+ * conditional UPDATE matched a still-orphaned row), plus the ones
+ * lost to a concurrent claimer so the UI can show "we got 3, missed
+ * 1 — someone else beat you to it".
+ *
+ * Race-safety: the UPDATE filters BOTH on workspace id AND that the
+ * admin_id still looks like the seed sentinel. If a concurrent
+ * request already swapped the admin_id to a real UUID, our UPDATE
+ * matches zero rows and we skip the membership upsert + audit event
+ * for that workspace. No silent overwrite.
  */
 export async function claimSeededWorkspaces(): Promise<{
   ok: true
   claimed: Array<{ workspaceId: string; workspaceName: string }>
+  /** Workspaces that were seeded when we read them but got claimed
+   *  by another user before our UPDATE landed. Always 0 in
+   *  single-user demo mode, but worth surfacing for transparency. */
+  lostToRace: Array<{ workspaceId: string; workspaceName: string }>
 }> {
   const me = await requireUser()
   const db = getDb()
@@ -70,17 +98,37 @@ export async function claimSeededWorkspaces(): Promise<{
     .where(like(workspaces.adminId, SEED_ADMIN_PREFIX))
 
   if (seeded.length === 0) {
-    return { ok: true, claimed: [] }
+    return { ok: true, claimed: [], lostToRace: [] }
   }
 
   const claimed: Array<{ workspaceId: string; workspaceName: string }> = []
+  const lostToRace: Array<{ workspaceId: string; workspaceName: string }> = []
 
   for (const ws of seeded) {
-    // 1. Promote me to the workspace's primary admin.
-    await db
+    // 1. Conditional update: only swap admin_id if it STILL matches
+    //    the sentinel. Two races we need to defeat:
+    //      a) User B claimed between our SELECT and UPDATE → admin_id
+    //         is now B's real UUID, our LIKE no longer matches, RETURNING
+    //         comes back empty.
+    //      b) Same workspace appears twice in `seeded` (impossible with
+    //         unique id, but defensive).
+    //    Empty RETURNING means "we lost the race"; record it and skip
+    //    the membership/audit work.
+    const updated = await db
       .update(workspaces)
       .set({ adminId: me.id })
-      .where(eq(workspaces.id, ws.id))
+      .where(
+        and(
+          eq(workspaces.id, ws.id),
+          like(workspaces.adminId, SEED_ADMIN_PREFIX),
+        ),
+      )
+      .returning({ id: workspaces.id })
+
+    if (updated.length === 0) {
+      lostToRace.push({ workspaceId: ws.id, workspaceName: ws.name })
+      continue
+    }
 
     // 2. Upsert membership: if I'm already a member, set role=admin;
     //    otherwise insert a fresh row. We can't use `onConflictDoUpdate`
@@ -125,12 +173,14 @@ export async function claimSeededWorkspaces(): Promise<{
   }
 
   // Refresh the account page (workspace list) and any workspace pages
-  // that might be cached.
+  // that might be cached. We deliberately don't revalidate each
+  // claimed workspace's detail page — the next visit will SSR fresh
+  // membership.
   try {
     revalidatePath('/account')
     revalidatePath('/admin')
   } catch {
     /* */
   }
-  return { ok: true, claimed }
+  return { ok: true, claimed, lostToRace }
 }
