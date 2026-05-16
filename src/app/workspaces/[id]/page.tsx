@@ -82,69 +82,93 @@ export default async function WorkspacePage(
       .limit(1)
     workspace = rows[0] ?? null
     if (workspace) {
-      // Small parallel COUNT queries — fast even on Postgres pooler.
+      // Mode-aware fan-out:
+      //   - common queries (events, tasks, topics, submitted annotations)
+      //     run for every workspace
+      //   - trajectory-flavored queries (trajectories, steps, marked
+      //     coverage, api keys, latest capture) only fire for
+      //     agent-trace-eval workspaces — pair/arena dashboards skip them
+      //     entirely so we don't pay 5 round-trips for guaranteed-zero
+      //     results.
+      const isTrajectoryMode = workspace.templateMode === 'agent-trace-eval'
+      const trajectoryQueries = isTrajectoryMode
+        ? ([
+            db
+              .select({ n: count() })
+              .from(trajectories)
+              .where(
+                and(
+                  eq(trajectories.workspaceId, id),
+                  isNull(trajectories.deletedAt),
+                ),
+              ),
+            db
+              .select({ n: count() })
+              .from(trajectorySteps)
+              .innerJoin(
+                trajectories,
+                eq(trajectorySteps.trajectoryId, trajectories.id),
+              )
+              .where(
+                and(
+                  eq(trajectories.workspaceId, id),
+                  isNull(trajectories.deletedAt),
+                ),
+              ),
+            db
+              .select({ n: count() })
+              .from(workspaceApiKeys)
+              .where(
+                and(
+                  eq(workspaceApiKeys.workspaceId, id),
+                  isNull(workspaceApiKeys.revokedAt),
+                ),
+              ),
+            // Count DISTINCT (trajectory_step_id) marked in this workspace —
+            // captures "coverage" rather than total marks (which over-counts
+            // when an annotator updates a mark).
+            db
+              .select({ n: sql<number>`COUNT(DISTINCT ${stepAnnotations.trajectoryStepId})::int` })
+              .from(stepAnnotations)
+              .innerJoin(annotations, eq(stepAnnotations.annotationId, annotations.id))
+              .innerJoin(topics, eq(annotations.topicId, topics.id))
+              .innerJoin(trajectorySteps, eq(stepAnnotations.trajectoryStepId, trajectorySteps.id))
+              .innerJoin(trajectories, eq(trajectorySteps.trajectoryId, trajectories.id))
+              .where(
+                and(
+                  eq(trajectories.workspaceId, id),
+                  isNull(trajectories.deletedAt),
+                ),
+              ),
+            db
+              .select({
+                id: trajectories.id,
+                ts: trajectories.createdAt,
+                agent: trajectories.agentName,
+              })
+              .from(trajectories)
+              .where(
+                and(
+                  eq(trajectories.workspaceId, id),
+                  isNull(trajectories.deletedAt),
+                ),
+              )
+              .orderBy(desc(trajectories.createdAt))
+              .limit(1),
+          ] as const)
+        : null
+
       const [
-        [trajRow],
-        [stepRow],
-        [keyRow],
         [evtRow],
-        [markedRow],
         [taskRow],
         [topicRow],
         [submittedRow],
-        latestList,
+        trajectoryResults,
       ] = await Promise.all([
-        db
-          .select({ n: count() })
-          .from(trajectories)
-          .where(
-            and(
-              eq(trajectories.workspaceId, id),
-              isNull(trajectories.deletedAt),
-            ),
-          ),
-        db
-          .select({ n: count() })
-          .from(trajectorySteps)
-          .innerJoin(
-            trajectories,
-            eq(trajectorySteps.trajectoryId, trajectories.id),
-          )
-          .where(
-            and(
-              eq(trajectories.workspaceId, id),
-              isNull(trajectories.deletedAt),
-            ),
-          ),
-        db
-          .select({ n: count() })
-          .from(workspaceApiKeys)
-          .where(
-            and(
-              eq(workspaceApiKeys.workspaceId, id),
-              isNull(workspaceApiKeys.revokedAt),
-            ),
-          ),
         db
           .select({ n: count() })
           .from(events)
           .where(eq(events.workspaceId, id)),
-        // Count DISTINCT (trajectory_step_id) marked in this workspace —
-        // captures "coverage" rather than total marks (which over-counts
-        // when an annotator updates a mark).
-        db
-          .select({ n: sql<number>`COUNT(DISTINCT ${stepAnnotations.trajectoryStepId})::int` })
-          .from(stepAnnotations)
-          .innerJoin(annotations, eq(stepAnnotations.annotationId, annotations.id))
-          .innerJoin(topics, eq(annotations.topicId, topics.id))
-          .innerJoin(trajectorySteps, eq(stepAnnotations.trajectoryStepId, trajectorySteps.id))
-          .innerJoin(trajectories, eq(trajectorySteps.trajectoryId, trajectories.id))
-          .where(
-            and(
-              eq(trajectories.workspaceId, id),
-              isNull(trajectories.deletedAt),
-            ),
-          ),
         db
           .select({ n: count() })
           .from(tasks)
@@ -165,22 +189,20 @@ export default async function WorkspacePage(
               sql`${annotations.submittedAt} is not null`,
             ),
           ),
-        db
-          .select({
-            id: trajectories.id,
-            ts: trajectories.createdAt,
-            agent: trajectories.agentName,
-          })
-          .from(trajectories)
-          .where(
-            and(
-              eq(trajectories.workspaceId, id),
-              isNull(trajectories.deletedAt),
-            ),
-          )
-          .orderBy(desc(trajectories.createdAt))
-          .limit(1),
+        trajectoryQueries
+          ? Promise.all(trajectoryQueries)
+          : Promise.resolve(null),
       ])
+      const [trajRow, stepRow, keyRow, markedRow, latestList] =
+        trajectoryResults
+          ? ([
+              trajectoryResults[0][0],
+              trajectoryResults[1][0],
+              trajectoryResults[2][0],
+              trajectoryResults[3][0],
+              trajectoryResults[4],
+            ] as const)
+          : ([undefined, undefined, undefined, undefined, []] as const)
       // Fan out a parallel fetch for the recent-activity panel — 8 events
       // is enough for "is the workspace alive?" without dragging the page TTI.
       recentEvents = await db
