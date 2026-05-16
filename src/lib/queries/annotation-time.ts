@@ -20,12 +20,17 @@ import {
  * speed-skip or get stuck?" view.
  *
  * Source of truth (in order of preference):
- *   1. `annotation.created_at` from the events table (when `annotation.drafted`
- *      or first step mark landed) → `annotation.submittedAt`
- *   2. Falls back to first step_annotation timestamp when event row is missing
+ *   1. `annotation.durationSec` — set at submit time from the
+ *      `startedAt` anchor. Works for ALL modes (pair-rubric / arena-gsb /
+ *      agent-trace-eval).
+ *   2. `annotation.startedAt` → `annotation.submittedAt` — same idea
+ *      but computed on the fly (useful when an old draft's
+ *      durationSec is null but startedAt is set).
+ *   3. Falls back to first `step_annotation.createdAt` →
+ *      `annotation.submittedAt` for legacy trajectory rows that
+ *      predate the started_at column.
  *
- * Returns null `elapsedSeconds` when we can't compute it (submitter never
- * actually finished, or the annotation row predates the event-sourced flow).
+ * Returns null `elapsedSeconds` when none of those apply.
  *
  * **Not** "active time" — we deliberately don't track keystroke heartbeats.
  * Wall-clock is sufficient signal for the speed-skip / time-fraud narratives
@@ -58,6 +63,8 @@ export async function getAnnotationTime(
     .select({
       id: annotations.id,
       submittedAt: annotations.submittedAt,
+      startedAt: annotations.startedAt,
+      durationSec: annotations.durationSec,
       topicId: annotations.topicId,
     })
     .from(annotations)
@@ -65,7 +72,38 @@ export async function getAnnotationTime(
     .limit(1)
   if (!ann) return null
 
-  // Earliest step mark created_at as start signal.
+  // Fast path: row already has durationSec persisted from submit time
+  // (this is the post-tracking-rollout case for every mode).
+  if (ann.durationSec != null) {
+    const submittedAt = ann.submittedAt ?? null
+    return {
+      annotationId,
+      startedAt: ann.startedAt,
+      submittedAt,
+      elapsedSeconds: ann.durationSec,
+      flag: await classifyForTopic(ann.topicId, ann.durationSec),
+    }
+  }
+
+  // Medium path: startedAt was anchored on draft save but durationSec
+  // wasn't persisted (interrupted submit, or older code path). Derive
+  // from the timestamp pair.
+  if (ann.startedAt && ann.submittedAt) {
+    const elapsedSeconds = Math.max(
+      0,
+      Math.round((ann.submittedAt.getTime() - ann.startedAt.getTime()) / 1000),
+    )
+    return {
+      annotationId,
+      startedAt: ann.startedAt,
+      submittedAt: ann.submittedAt,
+      elapsedSeconds,
+      flag: await classifyForTopic(ann.topicId, elapsedSeconds),
+    }
+  }
+
+  // Slow path / legacy: trajectory rows from before started_at landed.
+  // Use the first step-annotation timestamp as the start signal.
   const [firstMark] = await db
     .select({ createdAt: stepAnnotations.createdAt })
     .from(stepAnnotations)
@@ -129,6 +167,32 @@ function classify(
   return 'ok'
 }
 
+/**
+ * Resolve the task's economy config for a topic, then classify the
+ * elapsed seconds. Used by the fast-path (durationSec already
+ * persisted) where we don't need to re-derive the timestamp pair
+ * but still want the same flag semantics.
+ */
+async function classifyForTopic(
+  topicId: string,
+  elapsedSeconds: number,
+): Promise<'fast' | 'slow' | 'ok' | null> {
+  const db = getDb()
+  const [topic] = await db
+    .select({ taskId: topics.taskId })
+    .from(topics)
+    .where(eq(topics.id, topicId))
+    .limit(1)
+  if (!topic) return null
+  const [task] = await db
+    .select({ rewardConfig: tasks.rewardConfig })
+    .from(tasks)
+    .where(eq(tasks.id, topic.taskId))
+    .limit(1)
+  const parsed = economyConfigSchema.safeParse(task?.rewardConfig ?? null)
+  return parsed.success ? classify(elapsedSeconds, parsed.data) : 'ok'
+}
+
 // ─── Bulk view — Quality page ────────────────────────────────────────────
 
 export interface AnnotationTimeRow {
@@ -153,11 +217,15 @@ export async function listWorkspaceAnnotationTimes(
 ): Promise<AnnotationTimeRow[]> {
   const db = getDb()
 
-  // Pull every submitted annotation in the workspace.
+  // Pull every submitted annotation in the workspace. Also pull
+  // startedAt + durationSec so the modern fast-path can short-circuit
+  // the step-mark fallback below.
   const annRows = await db
     .select({
       annotationId: annotations.id,
       submittedAt: annotations.submittedAt,
+      startedAt: annotations.startedAt,
+      durationSec: annotations.durationSec,
       userId: annotations.userId,
       displayName: users.displayName,
       taskRewardConfig: tasks.rewardConfig,
@@ -211,16 +279,29 @@ export async function listWorkspaceAnnotationTimes(
   }
 
   const out: AnnotationTimeRow[] = annRows.map((r) => {
+    // Three-tier source priority (matches getAnnotationTime):
+    //   1. durationSec column — direct read, all modes
+    //   2. startedAt → submittedAt pair — derive on the fly
+    //   3. first step_annotation.createdAt — legacy trajectory fallback
     const firstMark = firstMarkByAnnotation.get(r.annotationId)
-    const elapsedSeconds =
-      firstMark && r.submittedAt
-        ? Math.max(
-            0,
-            Math.round(
-              (r.submittedAt.getTime() - firstMark.createdAt.getTime()) / 1000,
-            ),
-          )
-        : null
+    let elapsedSeconds: number | null = null
+    if (r.durationSec != null) {
+      elapsedSeconds = r.durationSec
+    } else if (r.startedAt && r.submittedAt) {
+      elapsedSeconds = Math.max(
+        0,
+        Math.round(
+          (r.submittedAt.getTime() - r.startedAt.getTime()) / 1000,
+        ),
+      )
+    } else if (firstMark && r.submittedAt) {
+      elapsedSeconds = Math.max(
+        0,
+        Math.round(
+          (r.submittedAt.getTime() - firstMark.createdAt.getTime()) / 1000,
+        ),
+      )
+    }
 
     let flag: 'fast' | 'slow' | 'ok' | null = null
     if (elapsedSeconds != null) {

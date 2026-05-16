@@ -102,12 +102,16 @@ export async function saveDraftAnnotation(
 
   let annotation: typeof annotations.$inferSelect
   if (existing) {
+    // Set startedAt on the first save only — once set, never overwrite.
+    // Existing rows from before this column was added stay null until
+    // their next save creates a fresh anchor.
     const [updated] = await db
       .update(annotations)
       .set({
         payload: parsed.payload,
         claudeProposal: parsed.claudeProposal ?? existing.claudeProposal,
         reasoningText: parsed.reasoningText ?? existing.reasoningText,
+        startedAt: existing.startedAt ?? new Date(),
         version: existing.version + 1,
       })
       .where(eq(annotations.id, existing.id))
@@ -122,6 +126,7 @@ export async function saveDraftAnnotation(
         payload: parsed.payload,
         claudeProposal: parsed.claudeProposal ?? null,
         reasoningText: parsed.reasoningText ?? null,
+        startedAt: new Date(),
       })
       .returning()
     annotation = created
@@ -135,6 +140,26 @@ export async function saveDraftAnnotation(
   })
 
   return annotation
+}
+
+/**
+ * Derive time-on-task in seconds from a started/finished pair.
+ * Clamps to [0, 24h] so a tab left open overnight doesn't pollute
+ * quality stats. Returns null when started_at is missing (legacy
+ * rows from before the column landed).
+ */
+function deriveDurationSec(
+  startedAt: Date | null | undefined,
+  finishedAt: Date,
+): number | null {
+  if (!startedAt) return null
+  const sec = Math.floor((finishedAt.getTime() - startedAt.getTime()) / 1000)
+  if (sec < 0) return 0
+  // 24h ceiling — anything longer is "left the tab open over lunch",
+  // not real time-on-task. We capture it as 0 (unknown) rather than
+  // a 6-hour outlier that breaks the quality dashboard.
+  if (sec > 86_400) return null
+  return sec
 }
 
 const submitSchema = z.object({
@@ -218,6 +243,11 @@ export async function submitAnnotation(input: z.infer<typeof submitSchema>) {
   const now = new Date()
   let annotation: typeof annotations.$inferSelect
   if (existing) {
+    // Preserve the existing startedAt if any; otherwise anchor now
+    // (the user jumped straight to submit without saving a draft).
+    // durationSec is derived once at submit time and persisted —
+    // /quality reads it directly without recomputing.
+    const startedAt = existing.startedAt ?? now
     const [updated] = await db
       .update(annotations)
       .set({
@@ -226,12 +256,18 @@ export async function submitAnnotation(input: z.infer<typeof submitSchema>) {
         deltaSummary: parsed.deltaSummary ?? existing.deltaSummary,
         reasoningText: parsed.reasoningText ?? existing.reasoningText,
         submittedAt: now,
+        startedAt,
+        durationSec: deriveDurationSec(startedAt, now),
         version: existing.version + 1,
       })
       .where(eq(annotations.id, existing.id))
       .returning()
     annotation = updated
   } else {
+    // No prior draft — the user clicked Submit on a fresh form.
+    // We anchor startedAt = now so duration is 0; admins will spot
+    // these as "no time spent" in quality drilldown, which is
+    // accurate signal.
     const [created] = await db
       .insert(annotations)
       .values({
@@ -242,6 +278,8 @@ export async function submitAnnotation(input: z.infer<typeof submitSchema>) {
         deltaSummary: parsed.deltaSummary ?? null,
         reasoningText: parsed.reasoningText ?? null,
         submittedAt: now,
+        startedAt: now,
+        durationSec: 0,
       })
       .returning()
     annotation = created

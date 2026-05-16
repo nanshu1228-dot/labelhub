@@ -58,6 +58,30 @@ export interface RaterAxisRow {
   score: number
 }
 
+/**
+ * Time-on-task summary for one rater × one workspace. Populated from
+ * the durationSec column (post-time-tracking rollout) — falls back to
+ * the startedAt/submittedAt pair when durationSec is null. Annotations
+ * without either signal are excluded from coverage but reported as
+ * `unknownCount` so the UI is honest about sample size.
+ */
+export interface RaterSpeedStats {
+  /** How many of this rater's submissions have a usable duration. */
+  measuredCount: number
+  /** Submissions with no duration data (legacy or interrupted). */
+  unknownCount: number
+  /** Median seconds across measured submissions. */
+  medianSec: number | null
+  /** 10th-percentile seconds — useful for spotting "5 second" outliers. */
+  p10Sec: number | null
+  /** 90th-percentile seconds — useful for spotting "stuck for 10 minutes". */
+  p90Sec: number | null
+  /** Number of submissions flagged as suspiciously fast (< 10s). The
+   *  threshold is hard-coded; per-task economy thresholds live in
+   *  annotation-time.ts for the bulk-table flag column. */
+  suspiciouslyFastCount: number
+}
+
 export interface RaterDrilldown {
   userId: string
   displayName: string | null
@@ -69,6 +93,20 @@ export interface RaterDrilldown {
   axes: RaterAxisRow[]
   /** Total annotations submitted in this workspace. */
   totalSubmitted: number
+  /** Speed-of-work summary — surfaces water-army patterns. */
+  speed: RaterSpeedStats
+}
+
+const SUSPICIOUSLY_FAST_SEC = 10
+
+function percentile(arr: number[], p: number): number | null {
+  if (arr.length === 0) return null
+  const s = [...arr].sort((a, b) => a - b)
+  const idx = Math.min(
+    s.length - 1,
+    Math.max(0, Math.floor((p / 100) * (s.length - 1))),
+  )
+  return s[idx]
 }
 
 /**
@@ -319,9 +357,16 @@ export async function getRaterDrilldown(opts: {
   }
   axes.sort((a, b) => a.score - b.score) // worst first (drift surfaces top)
 
-  // 6. Total submitted by this user across the workspace.
+  // 6. Total submitted by this user across the workspace + speed stats.
+  //    We pull durationSec and startedAt/submittedAt in the same query so
+  //    we can derive speed in-process instead of a second roundtrip.
   const subRows = await db
-    .select({ id: annotations.id })
+    .select({
+      id: annotations.id,
+      durationSec: annotations.durationSec,
+      startedAt: annotations.startedAt,
+      submittedAt: annotations.submittedAt,
+    })
     .from(annotations)
     .innerJoin(topics, eq(topics.id, annotations.topicId))
     .innerJoin(tasks, eq(tasks.id, topics.taskId))
@@ -333,6 +378,36 @@ export async function getRaterDrilldown(opts: {
       ),
     )
 
+  const durations: number[] = []
+  let unknownCount = 0
+  for (const r of subRows) {
+    if (r.durationSec != null) {
+      durations.push(r.durationSec)
+    } else if (r.startedAt && r.submittedAt) {
+      const sec = Math.max(
+        0,
+        Math.round((r.submittedAt.getTime() - r.startedAt.getTime()) / 1000),
+      )
+      durations.push(sec)
+    } else {
+      unknownCount++
+    }
+  }
+  const sortedAsc = [...durations].sort((a, b) => a - b)
+  const speed: RaterSpeedStats = {
+    measuredCount: durations.length,
+    unknownCount,
+    medianSec:
+      sortedAsc.length > 0
+        ? sortedAsc[Math.floor(sortedAsc.length / 2)]
+        : null,
+    p10Sec: percentile(durations, 10),
+    p90Sec: percentile(durations, 90),
+    suspiciouslyFastCount: durations.filter(
+      (d) => d < SUSPICIOUSLY_FAST_SEC,
+    ).length,
+  }
+
   return {
     userId: user.id,
     displayName: user.displayName ?? null,
@@ -341,5 +416,6 @@ export async function getRaterDrilldown(opts: {
     rejected,
     axes,
     totalSubmitted: subRows.length,
+    speed,
   }
 }

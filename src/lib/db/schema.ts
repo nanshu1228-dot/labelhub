@@ -239,6 +239,21 @@ export const annotations = pgTable(
     deltaSummary: text('delta_summary'), // human-readable delta
     reasoningText: text('reasoning_text'), // human's CoT
     submittedAt: timestamp('submitted_at'),
+    /**
+     * Wall-clock timestamp the rater first started this annotation —
+     * set on the FIRST saveDraft call, never overwritten. Combined
+     * with `submittedAt` to derive time-on-task. Nullable to keep
+     * legacy rows from before this column existed valid.
+     */
+    startedAt: timestamp('started_at'),
+    /**
+     * Time the rater actually spent on this annotation (seconds).
+     * Computed at submit time as `submittedAt - startedAt`, clamped
+     * to a sane range. Used by /quality to flag "5 seconds per topic"
+     * water-army speeds. Nullable because draft-then-abandon entries
+     * never get this set.
+     */
+    durationSec: integer('duration_sec'),
     version: integer('version').default(1).notNull(),
   },
   (table) => ({

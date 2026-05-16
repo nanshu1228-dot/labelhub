@@ -9,7 +9,9 @@ import { getWorkspaceById } from '@/lib/queries/workspaces'
 import {
   getRaterDrilldown,
   type RaterAxisRow,
+  type RaterSpeedStats,
 } from '@/lib/queries/rater-drilldown'
+import { formatElapsed } from '@/lib/queries/annotation-time'
 
 export const metadata: Metadata = {
   title: 'Rater calibration — LabelHub',
@@ -116,6 +118,8 @@ export default async function RaterDrilldownPage(props: {
           </div>
         </section>
 
+        <SpeedSection speed={drill.speed} />
+
         <section className="mb-8">
           <div className="flex items-baseline justify-between mb-2">
             <div className="lbl">§ ALIGNMENT BY AXIS (worst first)</div>
@@ -192,6 +196,91 @@ function Stat({
         {value}
       </div>
     </div>
+  )
+}
+
+/**
+ * Time-on-task summary block.
+ *
+ * Renders four tiles: measured-count, median time, p10 (fast outlier),
+ * suspiciously-fast count. The 'suspiciously fast' tile turns red when
+ * non-zero — that's the cheap-shot water-army signal admins want
+ * surfaced immediately.
+ *
+ * When measuredCount is 0 (no rows have started_at/durationSec yet —
+ * e.g. fresh deploy before any annotation finished post-rollout), we
+ * collapse to a friendly empty state instead of showing four '—' tiles.
+ */
+function SpeedSection({ speed }: { speed: RaterSpeedStats }) {
+  if (speed.measuredCount === 0) {
+    return (
+      <section className="mb-8">
+        <div className="lbl mb-2">§ TIME ON TASK</div>
+        <div
+          className="rounded-md px-4 py-4 ts-13"
+          style={{
+            background: 'var(--panel)',
+            border: '1px dashed var(--line)',
+            color: 'var(--mute2)',
+          }}
+        >
+          No timing data yet — duration is recorded from{' '}
+          <span className="mono">annotations.started_at</span> on save
+          and finalized at submit. New submissions after the rollout
+          will populate these stats.
+          {speed.unknownCount > 0 && (
+            <span>
+              {' '}({speed.unknownCount} legacy submission
+              {speed.unknownCount === 1 ? '' : 's'} have no duration.)
+            </span>
+          )}
+        </div>
+      </section>
+    )
+  }
+  const hasFastFlag = speed.suspiciouslyFastCount > 0
+  return (
+    <section className="mb-8">
+      <div className="flex items-baseline justify-between mb-2">
+        <div className="lbl">§ TIME ON TASK</div>
+        <div className="ts-11 mono" style={{ color: 'var(--mute2)' }}>
+          {speed.measuredCount} measured
+          {speed.unknownCount > 0
+            ? ` · ${speed.unknownCount} unknown`
+            : ''}
+        </div>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Stat
+          label="MEDIAN"
+          value={formatElapsed(speed.medianSec)}
+        />
+        <Stat
+          label="P10 (FAST END)"
+          value={formatElapsed(speed.p10Sec)}
+        />
+        <Stat
+          label="P90 (SLOW END)"
+          value={formatElapsed(speed.p90Sec)}
+        />
+        <Stat
+          label="< 10s SUBMITS"
+          value={speed.suspiciouslyFastCount}
+          accent={hasFastFlag ? 'bad' : undefined}
+        />
+      </div>
+      {hasFastFlag && (
+        <p
+          className="ts-12 mono mt-2"
+          style={{ color: 'var(--danger)' }}
+        >
+          ⚠ {speed.suspiciouslyFastCount} submission
+          {speed.suspiciouslyFastCount === 1 ? '' : 's'} under 10 seconds —
+          unusually fast for any annotation mode. Worth a manual review
+          before approving.
+        </p>
+      )}
+    </section>
   )
 }
 
