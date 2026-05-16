@@ -65,6 +65,15 @@ const EXPECTED_GUARDS: Record<string, RegExp> = {
   'workspaces.ts': /require(User|WorkspaceAdmin)\(/,
   'billing/payment-methods.ts': /requireUser\(/,
   'ai.ts': /require(WorkspaceAdmin|WorkspaceMember)\(/,
+  // Self-service workspace seed claim — signed-in user takes over
+  // workspaces whose adminId still matches the seed sentinel. The
+  // sentinel check itself happens in-SQL, so requireUser is enough.
+  'admin-claim.ts': /requireUser\(/,
+  // AI pre-submission feedback — workspace member (annotator+) only.
+  'draft-feedback.ts': /requireWorkspaceMember\(/,
+  // Notification read-state mutations — caller's own inbox only;
+  // requireUser plus a userId WHERE clause defends against forged ids.
+  'notifications.ts': /requireUser\(/,
   // Demo-mode gated — pattern is an env check rather than a guard call.
   'guideline-refiner.ts': /LABELHUB_DEMO_MODE/,
   // Phase-5 hardening: previously-naked helpers now self-defend.

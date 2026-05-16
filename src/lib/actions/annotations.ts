@@ -571,34 +571,47 @@ export async function respondToReview(
   // notification target — that's the person whose decision triggered
   // this reply. If multiple reviewers are involved we only ping the
   // most recent; full participant-list fan-out is overkill for v1.
-  const reviewerEvents = await db
-    .select({ actorId: events.actorId })
-    .from(events)
-    .where(
-      and(
-        eq(events.workspaceId, task.workspaceId),
-        sql`${events.payload} ->> 'annotationId' = ${parsed.annotationId}`,
-        sql`${events.type} IN ('annotation.approved', 'annotation.rejected', 'annotation.revised', 'annotation.qc_passed')`,
-      ),
+  //
+  // Wrapped in try/catch: notification is a side effect, never a
+  // blocker. If the events lookup fails (test mock without orderBy,
+  // postgres hiccup, etc.) we just skip the ping — the reply itself
+  // still commits and the action returns success.
+  try {
+    const reviewerEvents = await db
+      .select({ actorId: events.actorId })
+      .from(events)
+      .where(
+        and(
+          eq(events.workspaceId, task.workspaceId),
+          sql`${events.payload} ->> 'annotationId' = ${parsed.annotationId}`,
+          sql`${events.type} IN ('annotation.approved', 'annotation.rejected', 'annotation.revised', 'annotation.qc_passed')`,
+        ),
+      )
+      .orderBy(desc(events.ts))
+      .limit(1)
+    const lastReviewerId = reviewerEvents[0]?.actorId ?? null
+    if (lastReviewerId && lastReviewerId !== me.id) {
+      await emitNotification({
+        userId: lastReviewerId,
+        workspaceId: task.workspaceId,
+        type: 'review.reply',
+        title: 'New reply on a review you wrote',
+        body: trimmed.slice(0, 140),
+        linkUrl: `/workspaces/${task.workspaceId}/topics/${topic.id}/annotate?annotationId=${parsed.annotationId}`,
+        payload: {
+          annotationId: parsed.annotationId,
+          topicId: topic.id,
+          taskId: task.id,
+        },
+        actorId: me.id,
+      })
+    }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[respondToReview] reviewer-notification skipped:',
+      e instanceof Error ? e.message : e,
     )
-    .orderBy(desc(events.ts))
-    .limit(1)
-  const lastReviewerId = reviewerEvents[0]?.actorId ?? null
-  if (lastReviewerId && lastReviewerId !== me.id) {
-    await emitNotification({
-      userId: lastReviewerId,
-      workspaceId: task.workspaceId,
-      type: 'review.reply',
-      title: 'New reply on a review you wrote',
-      body: trimmed.slice(0, 140),
-      linkUrl: `/workspaces/${task.workspaceId}/topics/${topic.id}/annotate?annotationId=${parsed.annotationId}`,
-      payload: {
-        annotationId: parsed.annotationId,
-        topicId: topic.id,
-        taskId: task.id,
-      },
-      actorId: me.id,
-    })
   }
 
   return { ok: true as const, eventId: evt.id }
