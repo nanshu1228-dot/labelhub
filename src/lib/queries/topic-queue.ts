@@ -1,5 +1,5 @@
 import 'server-only'
-import { and, eq, isNotNull, isNull, or, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, isNull, or } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import {
   annotations,
@@ -101,7 +101,7 @@ export async function listMyTopicQueueForUser(
     )
     .where(
       and(
-        sql`${tasks.workspaceId} = any(${workspaceIds})`,
+        inArray(tasks.workspaceId, workspaceIds),
         or(
           eq(tasks.templateMode, 'pair-rubric'),
           eq(tasks.templateMode, 'arena-gsb'),

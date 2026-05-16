@@ -1,7 +1,7 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { notFound, redirect } from 'next/navigation'
-import { eq, sql } from 'drizzle-orm'
+import { eq, inArray, sql } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { topics } from '@/lib/db/schema'
 import {
@@ -64,7 +64,7 @@ export default async function WorkspaceTasksPage(props: {
           .where(
             taskIds.length === 1
               ? eq(topics.taskId, taskIds[0])
-              : sql`${topics.taskId} = any(${taskIds})`,
+              : inArray(topics.taskId, taskIds),
           )
           .groupBy(topics.taskId)
       : []
