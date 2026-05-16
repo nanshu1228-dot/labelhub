@@ -1,3 +1,5 @@
+import Link from 'next/link'
+
 /**
  * Topic header — shared between pair-rubric and arena-gsb.
  *
@@ -47,13 +49,13 @@ export function TopicHeader({
   return (
     <header className="border-b border-[var(--line)] pb-6 mb-6">
       <div className="flex items-center gap-3 ts-12 mono mb-3">
-        <a
+        <Link
           href={`/workspaces/${workspaceId}`}
           className="hover:underline"
           style={{ color: 'var(--mute)' }}
         >
           {workspaceName}
-        </a>
+        </Link>
         <span style={{ color: 'var(--mute2)' }}>·</span>
         <span style={{ color: 'var(--text)' }}>{taskName}</span>
         <span

@@ -351,7 +351,7 @@ function ReviewLookupFailedBanner({
           no longer exists). Falling back to your own draft view.
         </span>
       </div>
-      <a
+      <Link
         href={`/workspaces/${workspaceId}/topics/${topicId}/annotate`}
         className="ts-11 mono shrink-0"
         style={{
@@ -360,7 +360,7 @@ function ReviewLookupFailedBanner({
         }}
       >
         clear url →
-      </a>
+      </Link>
     </div>
   )
 }
