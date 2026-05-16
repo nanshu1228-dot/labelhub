@@ -1,5 +1,13 @@
 import 'server-only'
-import { and, count, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm'
+import {
+  and,
+  count,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNotNull,
+} from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import {
   annotations,
@@ -127,7 +135,7 @@ export async function getAdminDashboardData(opts: {
             and(
               eq(events.workspaceId, ws.workspaceId),
               eq(events.type, 'annotation.approved'),
-              sql`${events.ts} >= ${sevenDaysAgo}`,
+              gte(events.ts, sevenDaysAgo),
             ),
           ),
         db
@@ -137,7 +145,7 @@ export async function getAdminDashboardData(opts: {
             and(
               eq(events.workspaceId, ws.workspaceId),
               eq(events.type, 'annotation.rejected'),
-              sql`${events.ts} >= ${sevenDaysAgo}`,
+              gte(events.ts, sevenDaysAgo),
             ),
           ),
         db
@@ -234,7 +242,7 @@ export async function getAdminDashboardData(opts: {
       and(
         inArray(events.workspaceId, workspaceIds),
         eq(events.type, 'annotation.rejected'),
-        sql`${events.ts} >= ${fourteenDaysAgo}`,
+        gte(events.ts, fourteenDaysAgo),
       ),
     )
     .orderBy(desc(events.ts))
@@ -329,4 +337,3 @@ export async function userAdminsAnyWorkspace(userId: string): Promise<boolean> {
 
 // Silence unused-imports until trajectories is needed for a per-mode card
 void trajectories
-void isNull
