@@ -1,5 +1,7 @@
 import 'server-only'
 import type { PlatformTemplate, PairChecklistItem, TemplateMode } from './types'
+import type { RubricSpec } from './rubric'
+import { rubricSpecSchema } from './rubric'
 import { getTemplate } from './registry'
 
 /**
@@ -12,10 +14,16 @@ import { getTemplate } from './registry'
  *   - `pairChecklist` / `arenaDimensions` — when provided, replaces the
  *     template's default list entirely. Item IDs must be snake_case
  *     (validated at the create-task action layer, not here).
+ *   - `rubric` — full RubricSpec override for agent-trace-eval mode.
+ *     When supplied, replaces both perStep and perTrajectory arrays
+ *     entirely. Parsed via the canonical rubricSpecSchema so a malformed
+ *     override silently falls back to the template default rather than
+ *     crashing the page. New in Phase-7 (trajectory NL → rubric).
  */
 export interface TaskTemplateConfig {
   pairChecklist?: readonly PairChecklistItem[]
   arenaDimensions?: readonly PairChecklistItem[]
+  rubric?: RubricSpec
 }
 
 /**
@@ -40,6 +48,7 @@ export function getEffectiveTemplate(
   const merged: PlatformTemplate = { ...base }
   if (cfg.pairChecklist) merged.pairChecklist = cfg.pairChecklist
   if (cfg.arenaDimensions) merged.arenaDimensions = cfg.arenaDimensions
+  if (cfg.rubric) merged.rubric = cfg.rubric
   return merged
 }
 
@@ -58,6 +67,15 @@ function parseConfig(raw: unknown): TaskTemplateConfig | null {
   if (Array.isArray(obj.arenaDimensions)) {
     const items = obj.arenaDimensions.filter(isChecklistItem)
     if (items.length > 0) out.arenaDimensions = pruneOrphanConditions(items)
+  }
+  // Rubric override is a structured object (perStep + perTrajectory arrays).
+  // Parse via the canonical schema; bad shapes fall through silently
+  // (the template default still applies) rather than blowing up SSR.
+  if (obj.rubric && typeof obj.rubric === 'object') {
+    const parsed = rubricSpecSchema.safeParse(obj.rubric)
+    if (parsed.success) {
+      out.rubric = parsed.data
+    }
   }
   return Object.keys(out).length > 0 ? out : null
 }

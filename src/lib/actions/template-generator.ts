@@ -20,12 +20,16 @@ import { aiCallLog } from '@/lib/db/schema'
 import { requireWorkspaceAdmin } from '@/lib/auth/guards'
 import {
   generateTemplate,
+  generateTrajectoryRubric,
+  toRubricSpec,
   type GeneratedTemplate,
+  type GeneratedTrajectoryRubric,
 } from '@/lib/ai/template-generator'
 import {
   assertWithinDailyAIQuota,
   logAICall,
 } from '@/lib/ai/quota'
+import type { RubricSpec } from '@/lib/templates/rubric'
 import { uuidLike } from '@/lib/validators/uuid'
 import { AppError } from '@/lib/errors'
 
@@ -39,16 +43,17 @@ const GenerateInput = z.object({
  *  Claude bills on long descriptions. */
 const COOLDOWN_MS = 15 * 1000
 
-export async function generateTemplateFromDescription(
-  input: z.infer<typeof GenerateInput>,
-): Promise<{ ok: true; template: GeneratedTemplate }> {
-  const parsed = GenerateInput.parse(input)
-
-  // 1. Admin gate — only admins can edit template_config, so only
-  //    admins should be able to seed it via AI.
-  const { user } = await requireWorkspaceAdmin(parsed.workspaceId)
-
-  // 2. Cooldown — last template-generator call within COOLDOWN_MS?
+/**
+ * Run shared cooldown + quota checks across both generator variants.
+ * `feature` differentiates them in ai_call_log so the cooldown is
+ * scoped to the variant (admin can hit "pair-rubric → 🪄" then
+ * immediately switch to "agent-trace-eval → 🪄" without waiting).
+ */
+async function gateAdmin(opts: {
+  workspaceId: string
+  feature: 'template-generator' | 'template-generator-traj'
+}): Promise<{ userId: string }> {
+  const { user } = await requireWorkspaceAdmin(opts.workspaceId)
   const db = getDb()
   const since = new Date(Date.now() - COOLDOWN_MS)
   const [recent] = await db
@@ -57,7 +62,7 @@ export async function generateTemplateFromDescription(
     .where(
       and(
         eq(aiCallLog.userId, user.id),
-        eq(aiCallLog.feature, 'template-generator'),
+        eq(aiCallLog.feature, opts.feature),
         gt(aiCallLog.ts, since),
       ),
     )
@@ -69,18 +74,26 @@ export async function generateTemplateFromDescription(
       429,
     )
   }
-
-  // 3. Daily AI quota — same global cap every AI feature respects.
   await assertWithinDailyAIQuota(user.id)
+  return { userId: user.id }
+}
 
-  // 4. Generate + log.
+export async function generateTemplateFromDescription(
+  input: z.infer<typeof GenerateInput>,
+): Promise<{ ok: true; template: GeneratedTemplate }> {
+  const parsed = GenerateInput.parse(input)
+  const { userId } = await gateAdmin({
+    workspaceId: parsed.workspaceId,
+    feature: 'template-generator',
+  })
+
   const { result, usage } = await generateTemplate({
     mode: parsed.mode,
     description: parsed.description,
   })
 
   await logAICall({
-    userId: user.id,
+    userId,
     feature: 'template-generator',
     model: usage.model,
     inputTokens: usage.inputTokens,
@@ -89,4 +102,47 @@ export async function generateTemplateFromDescription(
   })
 
   return { ok: true, template: result }
+}
+
+// ─── Agent-trace-eval (trajectory) ─────────────────────────────────────
+
+const GenerateTrajectoryInput = z.object({
+  workspaceId: uuidLike,
+  description: z.string().min(8).max(4000),
+})
+
+/**
+ * Same flow as generateTemplateFromDescription but produces a full
+ * RubricSpec (perStep + perTrajectory) for agent-trace-eval mode. We
+ * return BOTH the raw generated form (so the form UI can show Claude's
+ * one-line summary) AND the canonical RubricSpec shape ready to drop
+ * into templateConfig.rubric.
+ */
+export async function generateTrajectoryRubricFromDescription(
+  input: z.infer<typeof GenerateTrajectoryInput>,
+): Promise<{
+  ok: true
+  generated: GeneratedTrajectoryRubric
+  rubric: RubricSpec
+}> {
+  const parsed = GenerateTrajectoryInput.parse(input)
+  const { userId } = await gateAdmin({
+    workspaceId: parsed.workspaceId,
+    feature: 'template-generator-traj',
+  })
+
+  const { result, usage } = await generateTrajectoryRubric({
+    description: parsed.description,
+  })
+
+  await logAICall({
+    userId,
+    feature: 'template-generator-traj',
+    model: usage.model,
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    workspaceId: parsed.workspaceId,
+  })
+
+  return { ok: true, generated: result, rubric: toRubricSpec(result) }
 }

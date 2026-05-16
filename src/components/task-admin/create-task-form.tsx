@@ -4,12 +4,22 @@ import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createTask } from '@/lib/actions/tasks'
-import { generateTemplateFromDescription } from '@/lib/actions/template-generator'
+import {
+  generateTemplateFromDescription,
+  generateTrajectoryRubricFromDescription,
+} from '@/lib/actions/template-generator'
 import type {
   ConditionalDisplay,
   PairChecklistItem,
   TemplateMode,
 } from '@/lib/templates/types'
+import type {
+  RubricItem,
+  RubricScale,
+  RubricSeverity,
+  RubricSpec,
+  TrajectoryStepKind,
+} from '@/lib/templates/rubric'
 
 /**
  * Admin task-creation form.
@@ -58,6 +68,36 @@ function formatShowWhen(
   return `${cond.parentId} ≥ ${cond.when}`
 }
 
+type EditableRubricItem = RubricItem & { _key: string }
+
+function toEditableRubric(items: readonly RubricItem[]): EditableRubricItem[] {
+  return items.map((i) => ({ ...i, _key: nextKey() }))
+}
+
+/**
+ * Structural comparison for two rubric items — used to decide whether a
+ * templateConfig.rubric override is actually different from the default.
+ * Compares the user-facing fields; we don't bother with deep options
+ * equality (re-ordered options are still "different" and an override
+ * write is honest about that).
+ */
+function sameRubricItem(a: RubricItem, b: RubricItem): boolean {
+  if (!a || !b) return false
+  if (a.id !== b.id) return false
+  if (a.name !== b.name) return false
+  if ((a.description ?? '') !== (b.description ?? '')) return false
+  if (a.scale !== b.scale) return false
+  if (a.severity !== b.severity) return false
+  if (!!a.requiresReason !== !!b.requiresReason) return false
+  const optsA = (a.options ?? []).join('|')
+  const optsB = (b.options ?? []).join('|')
+  if (optsA !== optsB) return false
+  const appliesA = (a.appliesTo ?? []).join('|')
+  const appliesB = (b.appliesTo ?? []).join('|')
+  if (appliesA !== appliesB) return false
+  return true
+}
+
 export function CreateTaskForm({
   workspaceId,
   workspaceName,
@@ -66,6 +106,7 @@ export function CreateTaskForm({
   templateDescription,
   defaultPairChecklist,
   defaultArenaDimensions,
+  defaultTrajectoryRubric,
 }: {
   workspaceId: string
   workspaceName: string
@@ -74,6 +115,7 @@ export function CreateTaskForm({
   templateDescription: string
   defaultPairChecklist: readonly PairChecklistItem[] | null
   defaultArenaDimensions: readonly PairChecklistItem[] | null
+  defaultTrajectoryRubric: RubricSpec | null
 }) {
   const router = useRouter()
   const [name, setName] = useState('')
@@ -99,6 +141,19 @@ export function CreateTaskForm({
   const [genPending, startGenTransition] = useTransition()
   const [genError, setGenError] = useState<string | null>(null)
   const [genSummary, setGenSummary] = useState<string | null>(null)
+
+  // Trajectory rubric editor — only used when templateMode is
+  // 'agent-trace-eval'. perStep and perTrajectory are edited as
+  // separate lists; on save we ship templateConfig.rubric if changed.
+  const initialTrajRubric =
+    defaultTrajectoryRubric ?? { perStep: [], perTrajectory: [] }
+  const [trajPerStep, setTrajPerStep] = useState<EditableRubricItem[]>(() =>
+    toEditableRubric(initialTrajRubric.perStep),
+  )
+  const [trajPerTraj, setTrajPerTraj] = useState<EditableRubricItem[]>(() =>
+    toEditableRubric(initialTrajRubric.perTrajectory),
+  )
+  const supportsTrajectoryEditor = templateMode === 'agent-trace-eval'
 
   const supportsRubricEditor =
     templateMode === 'pair-rubric' || templateMode === 'arena-gsb'
@@ -131,9 +186,12 @@ export function CreateTaskForm({
    *
    * We don't append — we replace. If the admin wanted to keep their
    * existing rows, they'd close the modal without generating.
+   *
+   * Two dispatch paths:
+   *   - pair-rubric / arena-gsb → flat list, fills `items`
+   *   - agent-trace-eval        → RubricSpec, fills both trajectory lists
    */
   function generateFromDescription() {
-    if (!supportsRubricEditor) return
     const desc = genDescription.trim()
     if (desc.length < 8) {
       setGenError('Describe the task in a sentence or two (≥ 8 chars).')
@@ -141,27 +199,65 @@ export function CreateTaskForm({
     }
     setGenError(null)
     setGenSummary(null)
-    startGenTransition(async () => {
-      try {
-        const r = await generateTemplateFromDescription({
-          workspaceId,
-          mode: templateMode as 'pair-rubric' | 'arena-gsb',
-          description: desc,
-        })
-        setItems(
-          r.template.items.map((i) => ({
-            _key: nextKey(),
-            id: i.id,
-            name: i.name,
-            description: i.description,
-            showWhen: i.showWhen,
-          })),
-        )
-        setGenSummary(r.template.summary)
-      } catch (e) {
-        setGenError(e instanceof Error ? e.message : 'Generation failed.')
-      }
-    })
+    if (supportsRubricEditor) {
+      startGenTransition(async () => {
+        try {
+          const r = await generateTemplateFromDescription({
+            workspaceId,
+            mode: templateMode as 'pair-rubric' | 'arena-gsb',
+            description: desc,
+          })
+          setItems(
+            r.template.items.map((i) => ({
+              _key: nextKey(),
+              id: i.id,
+              name: i.name,
+              description: i.description,
+              showWhen: i.showWhen,
+            })),
+          )
+          setGenSummary(r.template.summary)
+        } catch (e) {
+          setGenError(e instanceof Error ? e.message : 'Generation failed.')
+        }
+      })
+      return
+    }
+    if (supportsTrajectoryEditor) {
+      startGenTransition(async () => {
+        try {
+          const r = await generateTrajectoryRubricFromDescription({
+            workspaceId,
+            description: desc,
+          })
+          setTrajPerStep(toEditableRubric(r.rubric.perStep))
+          setTrajPerTraj(toEditableRubric(r.rubric.perTrajectory))
+          setGenSummary(r.generated.summary)
+        } catch (e) {
+          setGenError(e instanceof Error ? e.message : 'Generation failed.')
+        }
+      })
+    }
+  }
+
+  // ─── Trajectory rubric editor helpers ──────────────────────────────
+  function setTrajItem(
+    list: 'perStep' | 'perTrajectory',
+    key: string,
+    patch: Partial<RubricItem>,
+  ) {
+    const setter = list === 'perStep' ? setTrajPerStep : setTrajPerTraj
+    setter((prev) =>
+      prev.map((it) => (it._key === key ? { ...it, ...patch } : it)),
+    )
+  }
+  function removeTrajItem(list: 'perStep' | 'perTrajectory', key: string) {
+    const setter = list === 'perStep' ? setTrajPerStep : setTrajPerTraj
+    setter((prev) => prev.filter((it) => it._key !== key))
+  }
+  function restoreTrajDefaults() {
+    setTrajPerStep(toEditableRubric(initialTrajRubric.perStep))
+    setTrajPerTraj(toEditableRubric(initialTrajRubric.perTrajectory))
   }
 
   function submit() {
@@ -177,7 +273,11 @@ export function CreateTaskForm({
     }
 
     let templateConfig:
-      | { pairChecklist?: PairChecklistItem[]; arenaDimensions?: PairChecklistItem[] }
+      | {
+          pairChecklist?: PairChecklistItem[]
+          arenaDimensions?: PairChecklistItem[]
+          rubric?: RubricSpec
+        }
       | undefined
     if (supportsRubricEditor) {
       const cleaned: PairChecklistItem[] = []
@@ -244,6 +344,49 @@ export function CreateTaskForm({
           )
         })
       if (presetEqual) templateConfig = undefined
+    }
+
+    // Trajectory rubric override: only shipped when at least one
+    // editable name/description (or item count) differs from the
+    // template default. Validation here is minimal — server-side
+    // `effective.parseConfig` runs the strict rubricSpecSchema and
+    // falls back to defaults on bad shapes.
+    if (supportsTrajectoryEditor) {
+      const stripKey = (it: EditableRubricItem): RubricItem => {
+        const { _key: _ignore, ...rest } = it
+        void _ignore
+        return rest
+      }
+      const candidatePerStep = trajPerStep.map(stripKey)
+      const candidatePerTraj = trajPerTraj.map(stripKey)
+      // Sanity: require unique ids in each list AND across lists
+      // (per-step and per-trajectory share a storage namespace).
+      const allIds = [
+        ...candidatePerStep.map((i) => i.id),
+        ...candidatePerTraj.map((i) => i.id),
+      ]
+      if (new Set(allIds).size !== allIds.length) {
+        setError(
+          'Trajectory rubric item ids must be unique across perStep and perTrajectory.',
+        )
+        return
+      }
+      // Skip if identical to the template default (avoid storing
+      // a redundant override row).
+      const sameAsDefault =
+        candidatePerStep.length === initialTrajRubric.perStep.length &&
+        candidatePerTraj.length === initialTrajRubric.perTrajectory.length &&
+        candidatePerStep.every((c, i) => sameRubricItem(c, initialTrajRubric.perStep[i])) &&
+        candidatePerTraj.every((c, i) =>
+          sameRubricItem(c, initialTrajRubric.perTrajectory[i]),
+        )
+      if (!sameAsDefault) {
+        templateConfig = templateConfig ?? {}
+        templateConfig.rubric = {
+          perStep: candidatePerStep,
+          perTrajectory: candidatePerTraj,
+        }
+      }
     }
 
     setError(null)
@@ -542,6 +685,84 @@ export function CreateTaskForm({
         </section>
       )}
 
+      {supportsTrajectoryEditor && (
+        <section className="mb-6">
+          <div className="flex items-baseline justify-between mb-2">
+            <div className="lbl">§ TRAJECTORY RUBRIC</div>
+            <div className="flex items-center gap-3 ts-11 mono">
+              <button
+                type="button"
+                onClick={() => {
+                  setGenOpen(true)
+                  setGenError(null)
+                }}
+                className="ts-11 mono"
+                style={{
+                  background: 'var(--accent-soft)',
+                  color: 'var(--accent)',
+                  border: '1px dashed var(--accent-line)',
+                  borderRadius: 4,
+                  padding: '2px 10px',
+                  cursor: 'pointer',
+                }}
+                title="Describe what raters should check; Claude generates the full per-step + per-trajectory rubric"
+              >
+                🪄 generate from description
+              </button>
+              <button
+                type="button"
+                onClick={restoreTrajDefaults}
+                style={{
+                  color: 'var(--mute2)',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                }}
+              >
+                restore defaults
+              </button>
+            </div>
+          </div>
+          {genOpen && (
+            <GenerateModal
+              mode={templateMode}
+              description={genDescription}
+              setDescription={setGenDescription}
+              pending={genPending}
+              error={genError}
+              summary={genSummary}
+              onClose={() => {
+                setGenOpen(false)
+                setGenSummary(null)
+              }}
+              onGenerate={generateFromDescription}
+            />
+          )}
+          <p className="ts-12 mb-3" style={{ color: 'var(--mute2)' }}>
+            Two-tier: per-step questions asked once per matching step, and
+            per-trajectory questions asked once for the whole trace. Names
+            + descriptions are editable; scale and step-kind filters are
+            set by the AI (regenerate to change them).
+          </p>
+          <TrajRubricSubsection
+            heading="PER-STEP"
+            list="perStep"
+            items={trajPerStep}
+            setItem={setTrajItem}
+            removeItem={removeTrajItem}
+            showAppliesTo
+          />
+          <TrajRubricSubsection
+            heading="PER-TRAJECTORY"
+            list="perTrajectory"
+            items={trajPerTraj}
+            setItem={setTrajItem}
+            removeItem={removeTrajItem}
+            showAppliesTo={false}
+          />
+        </section>
+      )}
+
       {error && (
         <div
           className="ts-12 mono mb-4 p-2 rounded"
@@ -627,6 +848,214 @@ function Field({
     </label>
   )
 }
+
+/**
+ * Trajectory rubric subsection — renders one of (perStep | perTrajectory)
+ * as a table where name + description are editable inline; scale,
+ * appliesTo, severity, and requiresReason render as readonly chips. The
+ * admin can delete rows or regenerate via 🪄. Direct editing of those
+ * structural fields is deliberately out of scope — admins curate via the
+ * AI generator or live with the preset defaults.
+ *
+ * This is the minimum-viable trajectory rubric editor. The full version
+ * (scale picker, options editor for enums, applies-to multi-select)
+ * lives in the backlog under "trajectory template builder v2".
+ */
+function TrajRubricSubsection({
+  heading,
+  list,
+  items,
+  setItem,
+  removeItem,
+  showAppliesTo,
+}: {
+  heading: string
+  list: 'perStep' | 'perTrajectory'
+  items: EditableRubricItem[]
+  setItem: (
+    list: 'perStep' | 'perTrajectory',
+    key: string,
+    patch: Partial<RubricItem>,
+  ) => void
+  removeItem: (list: 'perStep' | 'perTrajectory', key: string) => void
+  showAppliesTo: boolean
+}) {
+  return (
+    <div className="mb-4">
+      <div
+        className="ts-11 mono mb-1"
+        style={{ color: 'var(--mute)', letterSpacing: '0.06em' }}
+      >
+        {heading} · {items.length} {items.length === 1 ? 'item' : 'items'}
+      </div>
+      <div
+        className="rounded-md overflow-hidden"
+        style={{
+          background: 'var(--panel)',
+          border: '1px solid var(--line)',
+        }}
+      >
+        <table className="w-full ts-13">
+          <thead>
+            <tr
+              style={{
+                background: 'var(--panel2)',
+                borderBottom: '1px solid var(--line)',
+              }}
+            >
+              <th
+                className="text-left px-3 py-2 mono ts-11"
+                style={{ color: 'var(--mute)', width: 160 }}
+              >
+                ID
+              </th>
+              <th
+                className="text-left px-3 py-2 mono ts-11"
+                style={{ color: 'var(--mute)', width: 180 }}
+              >
+                NAME
+              </th>
+              <th
+                className="text-left px-3 py-2 mono ts-11"
+                style={{ color: 'var(--mute)' }}
+              >
+                DESCRIPTION / META
+              </th>
+              <th style={{ width: 40 }} />
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((it) => (
+              <tr
+                key={it._key}
+                style={{ borderTop: '1px solid var(--line)' }}
+              >
+                <td
+                  className="px-3 py-2 mono ts-12"
+                  style={{ color: 'var(--mute2)' }}
+                  title="Storage key — set by the AI generator, not editable inline"
+                >
+                  {it.id}
+                </td>
+                <td className="px-3 py-2">
+                  <input
+                    value={it.name}
+                    onChange={(e) =>
+                      setItem(list, it._key, { name: e.target.value })
+                    }
+                    placeholder="Display name"
+                    className="w-full px-2 py-1 ts-13"
+                    style={inlineInputStyle}
+                  />
+                </td>
+                <td className="px-3 py-2">
+                  <input
+                    value={it.description ?? ''}
+                    onChange={(e) =>
+                      setItem(list, it._key, {
+                        description: e.target.value,
+                      })
+                    }
+                    placeholder="Optional one-liner"
+                    className="w-full px-2 py-1 ts-13"
+                    style={inlineInputStyle}
+                  />
+                  <div className="mt-1 flex flex-wrap gap-1.5">
+                    <Chip color="oklch(0.6 0.18 280)" label={`scale: ${it.scale}`} />
+                    {showAppliesTo && (
+                      <Chip
+                        color="oklch(0.55 0 0)"
+                        label={`applies: ${formatAppliesTo(it.appliesTo)}`}
+                      />
+                    )}
+                    {it.options && it.options.length > 0 && (
+                      <Chip
+                        color="oklch(0.65 0.18 200)"
+                        label={`opts: ${it.options.join(' / ')}`}
+                      />
+                    )}
+                    {it.severity && it.severity !== 'minor' && (
+                      <Chip
+                        color={
+                          it.severity === 'critical'
+                            ? 'var(--danger)'
+                            : 'oklch(0.6 0.18 280)'
+                        }
+                        label={`severity: ${it.severity}`}
+                      />
+                    )}
+                    {it.requiresReason && (
+                      <Chip color="oklch(0.6 0.14 75)" label="needs reason" />
+                    )}
+                  </div>
+                </td>
+                <td className="px-3 py-2 text-right">
+                  <button
+                    type="button"
+                    onClick={() => removeItem(list, it._key)}
+                    title="Remove"
+                    className="ts-12 mono"
+                    style={{
+                      color: 'var(--danger)',
+                      background: 'transparent',
+                      border: '1px solid transparent',
+                      padding: '2px 6px',
+                      borderRadius: 4,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    ×
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {items.length === 0 && (
+              <tr>
+                <td
+                  colSpan={4}
+                  className="px-3 py-6 text-center ts-12 mono"
+                  style={{ color: 'var(--mute2)' }}
+                >
+                  No items — click &quot;🪄 generate&quot; or
+                  &quot;restore defaults&quot;.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+function Chip({ color, label }: { color: string; label: string }) {
+  return (
+    <span
+      className="ts-11 mono px-1.5 py-0.5 rounded inline-block"
+      style={{
+        color,
+        background: `${color}15`,
+        border: `1px solid ${color}55`,
+      }}
+    >
+      {label}
+    </span>
+  )
+}
+
+function formatAppliesTo(
+  a: readonly TrajectoryStepKind[] | readonly ['*'] | undefined,
+): string {
+  if (!a || a.length === 0) return 'all'
+  if (a[0] === '*') return 'all'
+  return (a as readonly TrajectoryStepKind[]).join(', ')
+}
+
+// Suppress unused warnings — RubricScale / RubricSeverity are referenced
+// only through the imported types and helpers below; keeping the imports
+// explicit so future direct uses (e.g. a scale picker) typecheck cleanly.
+void (null as unknown as RubricScale | undefined)
+void (null as unknown as RubricSeverity | undefined)
 
 /**
  * NL → rubric generator modal.

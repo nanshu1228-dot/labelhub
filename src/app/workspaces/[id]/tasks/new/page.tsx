@@ -61,6 +61,7 @@ export default async function NewTaskPage(props: {
         templateDescription={template.description}
         defaultPairChecklist={template.pairChecklist ?? null}
         defaultArenaDimensions={template.arenaDimensions ?? null}
+        defaultTrajectoryRubric={template.rubric ?? null}
       />
     </div>
   )
