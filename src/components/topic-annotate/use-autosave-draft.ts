@@ -35,9 +35,18 @@ export interface UseAutosaveDraftOpts {
   topicId: string
   taskId: string
   readOnly: boolean
-  /** Debounce window for rating/dimension changes. 1500ms feels
-   *  responsive (rater sees "saving" within 2s) without firing on
-   *  every click in a fast multi-input session. */
+  /**
+   * Debounce window for rating/dimension changes. Phase-10 bumped to
+   * 3000ms from the earlier 1500ms based on three observations:
+   *   1. Real raters spend 5-10s thinking between clicks; 3s captures
+   *      the "burst" pattern without firing during the natural pause.
+   *   2. Each server save is ~5 DB roundtrips (annotation upsert +
+   *      events insert + revision insert + prune scan). Cutting save
+   *      frequency in half halves DB load at peak.
+   *   3. IndexedDB is still written SYNCHRONOUSLY on every change,
+   *      so the recovery story is unchanged — the only delay is the
+   *      "server has seen this" confirmation.
+   */
   debounceMs?: number
 }
 
@@ -59,7 +68,7 @@ export interface UseAutosaveDraft {
 export function useAutosaveDraft(
   opts: UseAutosaveDraftOpts,
 ): UseAutosaveDraft {
-  const debounceMs = opts.debounceMs ?? 1500
+  const debounceMs = opts.debounceMs ?? 3000
   const [status, setStatus] = useState<AutosaveStatus>('idle')
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
@@ -67,6 +76,16 @@ export function useAutosaveDraft(
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const latestPayloadRef = useRef<Record<string, unknown> | null>(null)
   const inFlightRef = useRef<Promise<void> | null>(null)
+  /** Hash of the payload we last successfully saved to the server.
+   *  If the next debounce fires with an identical hash, skip the
+   *  server call — saves a network roundtrip and a write amplification
+   *  in the revision history. Common case: rater toggles A→B→A on one
+   *  item, ends back where they started. */
+  const lastSentHashRef = useRef<string | null>(null)
+  /** Set when the tab is hidden. We pause the debounce timer while
+   *  hidden; resume on visibilitychange. Background tabs shouldn't
+   *  spend server resources. */
+  const visibilityPausedRef = useRef(false)
 
   const writeLocal = useCallback(
     async (payload: Record<string, unknown>) => {
@@ -110,6 +129,16 @@ export function useAutosaveDraft(
 
   const doSave = useCallback(
     async (payload: Record<string, unknown>): Promise<void> => {
+      // Hash-skip — if the payload is byte-identical to what we last
+      // sent, skip the network call entirely. Catches both "rater
+      // toggled back to same answer" and "debounce fired but nothing
+      // actually changed after the last save".
+      const hash = quickHash(payload)
+      if (hash === lastSentHashRef.current) {
+        // Reflect the no-op so the UI can switch back to 'saved'.
+        setStatus('saved')
+        return
+      }
       // Coalesce concurrent saves — if one is already in flight, wait
       // for it and let the trailing call subsume.
       if (inFlightRef.current) {
@@ -123,6 +152,7 @@ export function useAutosaveDraft(
             payload,
           })
           await markSyncedLocal()
+          lastSentHashRef.current = hash
           setStatus('saved')
           setLastSavedAt(new Date())
           setErrorMessage(null)
@@ -141,6 +171,18 @@ export function useAutosaveDraft(
     [opts.topicId, markSyncedLocal],
   )
 
+  const scheduleSave = useCallback(() => {
+    if (timerRef.current) clearTimeout(timerRef.current)
+    // When the tab is hidden, don't burn server cycles — IndexedDB
+    // already has the change. The visibilitychange listener kicks
+    // the save the moment the rater comes back.
+    if (visibilityPausedRef.current) return
+    timerRef.current = setTimeout(() => {
+      const p = latestPayloadRef.current
+      if (p) void doSave(p)
+    }, debounceMs)
+  }, [doSave, debounceMs])
+
   const markDirty = useCallback(
     (payload: Record<string, unknown>) => {
       if (opts.readOnly) return
@@ -150,14 +192,36 @@ export function useAutosaveDraft(
       // fires still preserves the change. This is the local-first
       // promise of Pillar 1 — IndexedDB is the truth until synced.
       void writeLocal(payload)
-      if (timerRef.current) clearTimeout(timerRef.current)
-      timerRef.current = setTimeout(() => {
+      scheduleSave()
+    },
+    [opts.readOnly, writeLocal, scheduleSave],
+  )
+
+  // Visibility handling: pause debounce when hidden, flush + resume
+  // when the rater comes back. Two ergonomic wins:
+  //   - background tab with stale work doesn't keep banging the API
+  //   - returning to the tab after a long lunch immediately syncs the
+  //     last in-flight change instead of waiting for the next click
+  useEffect(() => {
+    if (opts.readOnly) return
+    const onVisibility = () => {
+      if (document.hidden) {
+        visibilityPausedRef.current = true
+        if (timerRef.current) {
+          clearTimeout(timerRef.current)
+          timerRef.current = null
+        }
+      } else {
+        visibilityPausedRef.current = false
+        // Fire the pending save now if any.
         const p = latestPayloadRef.current
         if (p) void doSave(p)
-      }, debounceMs)
-    },
-    [opts.readOnly, writeLocal, doSave, debounceMs],
-  )
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () =>
+      document.removeEventListener('visibilitychange', onVisibility)
+  }, [opts.readOnly, doSave])
 
   const flush = useCallback(
     async (payload: Record<string, unknown>) => {
@@ -232,6 +296,31 @@ export function useAutosaveDraft(
     flush,
     restoreLocal,
   }
+}
+
+/**
+ * Cheap deterministic hash of a payload — used by the hook to skip
+ * server saves when the content hasn't changed since the last
+ * successful save. Avoids the cost of cryptographic hash; collisions
+ * here would only cause a "skipped a real save" miss, and the next
+ * actual change would still save normally (so worst-case data loss
+ * is bounded to ONE change at a content-collision moment, which is
+ * effectively never given JSON.stringify is stable for our payloads).
+ */
+function quickHash(obj: unknown): string {
+  let s: string
+  try {
+    s = JSON.stringify(obj)
+  } catch {
+    return String(Math.random())
+  }
+  // djb2 — fast, well-distributed enough for change-detection.
+  let h = 5381
+  for (let i = 0; i < s.length; i++) {
+    h = (h * 33) ^ s.charCodeAt(i)
+  }
+  // Convert to unsigned + base-36 to keep the key short.
+  return (h >>> 0).toString(36) + ':' + s.length.toString(36)
 }
 
 /**

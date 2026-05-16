@@ -1106,6 +1106,82 @@ export const walletBalance = pgTable(
 )
 
 // =================================================================
+// Annotation revisions — Phase-10 version history.
+//
+// Every meaningful save (autosave / explicit checkpoint / submit /
+// admin restore) appends an immutable row here. That gives admins a
+// time-machine to restore an annotation to a previous state when:
+//   - rater accidentally cleared their work and the autosave already
+//     overwrote the server-of-truth
+//   - reviewer wants to compare what got submitted with what was in
+//     flight an hour earlier (audit/forensics)
+//   - rater hits 'restore' on a recent version from their own UI
+//
+// Storage discipline:
+//   - 'autosave' rows are CAPPED at 20 most-recent per annotation;
+//     older autosaves get pruned at write time so the table doesn't
+//     bloat. A burst-clicking rater generates a lot of these and we
+//     don't care to keep all of them.
+//   - 'manual' (rater checkpoint), 'submit', and 'restore' rows are
+//     NEVER pruned — those are the "memory points" an admin cares
+//     about.
+//   - byteSize column exists so we can sum + alarm if a payload
+//     somehow explodes past expectations.
+//
+// Append-only — there's no UPDATE path. A restore writes a NEW row
+// with kind='restore' and prevRevisionId pointing at the original.
+// =================================================================
+export const annotationRevisions = pgTable(
+  'annotation_revisions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    annotationId: uuid('annotation_id')
+      .references(() => annotations.id)
+      .notNull(),
+    /** Who triggered the write. For autosave/submit/manual = the
+     *  submitter. For restore = the admin who restored. */
+    actorId: uuid('actor_id')
+      .references(() => users.id)
+      .notNull(),
+    /** Denormalized so admin-side queries (per-workspace history
+     *  list) don't need a 3-table join. */
+    workspaceId: uuid('workspace_id')
+      .references(() => workspaces.id)
+      .notNull(),
+    /** Snapshot of the annotation payload at this moment. Same shape
+     *  the annotation table stores. Capped at ~64KB by the form's
+     *  template schemas. */
+    payload: jsonb('payload').notNull(),
+    /** What kind of save this was. 'autosave' rolls; the others stay. */
+    kind: text('kind').notNull(),
+    /** When restoring, points at the revision we restored FROM. Lets
+     *  the history UI render a fork arrow. Null for non-restore rows. */
+    prevRevisionId: uuid('prev_revision_id'),
+    /** Bytes of `payload` after JSON-serialization. Used for storage
+     *  budget reporting; not relied on for correctness. */
+    byteSize: integer('byte_size').notNull(),
+    ts: timestamp('ts').defaultNow().notNull(),
+  },
+  (table) => ({
+    annTsIdx: index('annotation_revisions_ann_ts_idx').on(
+      table.annotationId,
+      table.ts,
+    ),
+    /** Pruning hot path: "find oldest autosave rows for this
+     *  annotation to delete". */
+    annKindTsIdx: index('annotation_revisions_ann_kind_ts_idx').on(
+      table.annotationId,
+      table.kind,
+      table.ts,
+    ),
+    workspaceTsIdx: index('annotation_revisions_ws_ts_idx').on(
+      table.workspaceId,
+      table.ts,
+    ),
+  }),
+)
+
+// =================================================================
 // LLM-as-Judge — configure a model judge + run it against human
 // annotations to measure agreement.
 //

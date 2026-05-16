@@ -79,6 +79,8 @@ const EXPECTED_GUARDS: Record<string, RegExp> = {
   'trust-status.ts': /requireWorkspaceAdmin\(/,
   // AI Coach — annotator's own data, requireUser is the right gate.
   'trust-coach.ts': /requireUser\(/,
+  // Annotation revisions / restore — admin-only forensic surface.
+  'annotation-revisions.ts': /requireWorkspaceAdmin\(/,
   // Notification read-state mutations — caller's own inbox only;
   // requireUser plus a userId WHERE clause defends against forged ids.
   'notifications.ts': /requireUser\(/,

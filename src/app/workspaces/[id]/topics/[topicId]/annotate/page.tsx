@@ -257,6 +257,24 @@ export default async function TopicAnnotatePage(props: {
   return (
     <div className="app-light min-h-screen" style={{ background: 'var(--bg)' }}>
       <div className="max-w-[1100px] mx-auto px-6 py-8">
+        {viewerRole === 'admin' && (
+          <div className="mb-3 flex items-center gap-2 ts-12 mono">
+            <Link
+              href={`/workspaces/${workspaceId}/topics/${topicId}/history`}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded"
+              style={{
+                background: 'var(--panel)',
+                color: 'var(--mute)',
+                border: '1px solid var(--line)',
+                textDecoration: 'none',
+              }}
+              title="View revision timeline + restore an earlier version"
+            >
+              ↺ history
+            </Link>
+          </div>
+        )}
+
         {reviewLookupFailed && (
           <div className="mb-4">
             <ReviewLookupFailedBanner

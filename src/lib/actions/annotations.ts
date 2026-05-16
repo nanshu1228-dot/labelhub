@@ -13,6 +13,7 @@ import { fanoutWebhook } from '@/lib/webhooks/fanout'
 import { emitNotification } from '@/lib/notifications/emit'
 import { recomputeAndPersistTrust } from '@/lib/quality/trust-recompute'
 import { readTrustStatus } from '@/lib/actions/trust-status'
+import { writeRevision } from '@/lib/quality/annotation-revisions'
 import { uuidLike } from '@/lib/validators/uuid'
 import {
   ConflictError,
@@ -155,6 +156,19 @@ export async function saveDraftAnnotation(
     workspaceId: task.workspaceId,
     actorId: user.id,
     payload: { topicId: topic.id, annotationId: annotation.id },
+  })
+
+  // Phase-10: snapshot this save into the revision history. Rolling
+  // cap of 20 'autosave' rows per annotation is enforced inside
+  // writeRevision (submits + manual + restore rows never pruned).
+  // Failure is silently swallowed — the annotation row itself is
+  // the source of truth; revisions are the safety net.
+  await writeRevision({
+    annotationId: annotation.id,
+    actorId: user.id,
+    workspaceId: task.workspaceId,
+    payload: parsed.payload,
+    kind: 'autosave',
   })
 
   return annotation
@@ -340,6 +354,17 @@ export async function submitAnnotation(input: z.infer<typeof submitSchema>) {
       /** Mark whether this carries pair-annotation teaching signal */
       hasPairData: parsed.claudeProposal !== undefined,
     },
+  })
+
+  // Phase-10: submit revision is NEVER pruned — it's the canonical
+  // "this is what got submitted" snapshot a future admin can always
+  // restore the annotation back to.
+  await writeRevision({
+    annotationId: annotation.id,
+    actorId: user.id,
+    workspaceId: task.workspaceId,
+    payload: validatedPayload,
+    kind: 'submit',
   })
 
   return annotation
