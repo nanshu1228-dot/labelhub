@@ -69,21 +69,42 @@ export default async function MyQueuePage(props: {
       <div className="mx-auto max-w-[960px]">
         <div className="mb-6 flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <div className="lbl mb-2">§ MY QUEUE</div>
+            <div className="lbl mb-2">§ FLAT QUEUE</div>
             <h1 className="ts-32" style={{ color: 'var(--hi)' }}>
-              What&apos;s next
+              All topics across every task
             </h1>
             <p
               className="ts-13 mt-1"
               style={{ color: 'var(--mute)', maxWidth: 640 }}
             >
-              Ranked by where your mark will move the needle most — open
-              disputes first, then your drafts, then peer-rated, then
-              fresh captures.
+              Power-user view — every claimable topic across every
+              workspace, mixed together. Most labelers use{' '}
+              <Link
+                href="/my/tasks"
+                style={{ color: 'var(--accent)', textDecoration: 'none' }}
+              >
+                /my/tasks
+              </Link>{' '}
+              to pick a campaign first, then drill in. This view is
+              here when you want to browse without picking a task.
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <InboxLink unread={unreadCount} />
+            <Link
+              href="/my/tasks"
+              className="ts-12 mono"
+              style={{
+                background: 'var(--accent-soft)',
+                color: 'var(--accent)',
+                border: '1px solid var(--accent-line)',
+                borderRadius: 6,
+                padding: '6px 12px',
+                textDecoration: 'none',
+              }}
+            >
+              ← my tasks
+            </Link>
             <Link
               href="/my/submissions"
               className="ts-12 mono"

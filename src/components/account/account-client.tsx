@@ -432,7 +432,7 @@ function InboxPreviewCard({ count }: { count: number }) {
 function QueueCTA() {
   return (
     <Link
-      href="/my/queue"
+      href="/my/tasks"
       className="block rounded-xl p-5"
       style={{
         background:
@@ -450,14 +450,14 @@ function QueueCTA() {
             className="ts-18 mt-1"
             style={{ color: 'var(--hi)', fontWeight: 500 }}
           >
-            Open my queue
+            Pick a task to work on
           </h3>
           <p
             className="ts-13 mt-1"
             style={{ color: 'var(--mute)', maxWidth: 480 }}
           >
-            See ranked trajectories waiting for your review across every
-            workspace you&apos;re in — disputes first.
+            One card per campaign — reward, claimable topics, your
+            progress. Pick one to drill in and claim individual topics.
           </p>
         </div>
         <span
