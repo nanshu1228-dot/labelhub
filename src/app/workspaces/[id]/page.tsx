@@ -267,18 +267,28 @@ export default async function WorkspacePage(
         {new Date(workspace.createdAt).toLocaleString()}
       </div>
 
+      {/*
+        Mode-aware tile grid.
+        Trajectory-only tiles (TRAJECTORIES, ANNOTATED, API KEYS, PROVIDERS,
+        EVAL-RUN) make no sense for pair-rubric / arena-gsb workspaces —
+        those modes don't capture agent traces or run upstream LLMs through
+        the proxy. Showing them clutters the cockpit and links to dead-end
+        pages. Gate on templateMode.
+      */}
       <div className="mt-12 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-4">
-        <StatTile
-          label="TRAJECTORIES"
-          value={stats.trajCount.toString()}
-          hint={
-            stats.trajCount === 0
-              ? 'no captures yet'
-              : `${stats.stepCount} total steps`
-          }
-          href={`/workspaces/${id}/trajectories`}
-          accent={stats.trajCount > 0}
-        />
+        {workspace.templateMode === 'agent-trace-eval' && (
+          <StatTile
+            label="TRAJECTORIES"
+            value={stats.trajCount.toString()}
+            hint={
+              stats.trajCount === 0
+                ? 'no captures yet'
+                : `${stats.stepCount} total steps`
+            }
+            href={`/workspaces/${id}/trajectories`}
+            accent={stats.trajCount > 0}
+          />
+        )}
         <StatTile
           label="TASKS"
           value={stats.taskCount.toString()}
@@ -290,34 +300,40 @@ export default async function WorkspacePage(
           href={`/workspaces/${id}/tasks`}
           accent={stats.taskCount > 0}
         />
-        <StatTile
-          label="ANNOTATED"
-          value={`${stats.markedSteps}/${stats.stepCount}`}
-          hint={
-            stats.stepCount === 0
-              ? '—'
-              : stats.markedSteps === 0
-                ? 'open a trajectory to start'
-                : `${Math.round((stats.markedSteps / Math.max(stats.stepCount, 1)) * 100)}% coverage`
-          }
-          accent={stats.markedSteps > 0}
-        />
-        <StatTile
-          label="API KEYS"
-          value={stats.apiKeyCount.toString()}
-          hint={
-            stats.apiKeyCount === 0
-              ? 'run `npm run bootstrap` to mint one'
-              : 'manage / view endpoints'
-          }
-          href={`/workspaces/${id}/api`}
-        />
-        <StatTile
-          label="PROVIDERS"
-          value="↗"
-          hint="manage upstream LLM keys"
-          href={`/workspaces/${id}/connections`}
-        />
+        {workspace.templateMode === 'agent-trace-eval' && (
+          <StatTile
+            label="ANNOTATED"
+            value={`${stats.markedSteps}/${stats.stepCount}`}
+            hint={
+              stats.stepCount === 0
+                ? '—'
+                : stats.markedSteps === 0
+                  ? 'open a trajectory to start'
+                  : `${Math.round((stats.markedSteps / Math.max(stats.stepCount, 1)) * 100)}% coverage`
+            }
+            accent={stats.markedSteps > 0}
+          />
+        )}
+        {workspace.templateMode === 'agent-trace-eval' && (
+          <StatTile
+            label="API KEYS"
+            value={stats.apiKeyCount.toString()}
+            hint={
+              stats.apiKeyCount === 0
+                ? 'run `npm run bootstrap` to mint one'
+                : 'manage / view endpoints'
+            }
+            href={`/workspaces/${id}/api`}
+          />
+        )}
+        {workspace.templateMode === 'agent-trace-eval' && (
+          <StatTile
+            label="PROVIDERS"
+            value="↗"
+            hint="manage upstream LLM keys"
+            href={`/workspaces/${id}/connections`}
+          />
+        )}
         <StatTile
           label="DISPUTES"
           value="⚡"
@@ -342,12 +358,14 @@ export default async function WorkspacePage(
           hint="audit log entries"
           href={`/workspaces/${id}/activity`}
         />
-        <StatTile
-          label="EVAL-RUN"
-          value="↗"
-          hint="start an agent run"
-          href={`/workspaces/${id}/eval-runs/new`}
-        />
+        {workspace.templateMode === 'agent-trace-eval' && (
+          <StatTile
+            label="EVAL-RUN"
+            value="↗"
+            hint="start an agent run"
+            href={`/workspaces/${id}/eval-runs/new`}
+          />
+        )}
         <StatTile
           label="MEMBERS"
           value="↗"

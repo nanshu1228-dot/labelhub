@@ -111,6 +111,15 @@ export default async function TopicAnnotatePage(props: {
   let auditTimeline: TimelineEntry[] = []
   let displayPayload: Record<string, unknown> = {}
   let displayStatus = topic.status
+  /**
+   * True when the URL had `?annotationId=…` but the lookup couldn't
+   * resolve it to a valid review context (bad id, wrong workspace, or
+   * the annotation doesn't actually belong to THIS topic). Surfaces a
+   * warning banner instead of silently dropping the user into normal
+   * mode — confusing UX otherwise, since the page just looks like a
+   * fresh draft with no explanation.
+   */
+  let reviewLookupFailed = false
 
   if (reviewAnnotationIdFromUrl) {
     const ctx = await getAnnotationReviewContext({
@@ -151,11 +160,15 @@ export default async function TopicAnnotatePage(props: {
         reviewThread = thread
         peerConsensus = peer
         auditTimeline = audit
+      } else {
+        reviewLookupFailed = true
       }
+    } else {
+      reviewLookupFailed = true
     }
-    // If ctx lookup failed (bad id, cross-workspace, etc.) we fall through
+    // If lookup failed (bad id, cross-workspace, etc.) we fall through
     // to NORMAL mode rather than 404 — matches the trajectory page's
-    // forgiving behavior. The banner just won't render.
+    // forgiving behavior. The fallback banner explains what happened.
   }
 
   if (!reviewContext) {
@@ -240,51 +253,114 @@ export default async function TopicAnnotatePage(props: {
   if (!formNode) notFound()
 
   return (
-    <div className="max-w-[1100px] mx-auto px-6 py-8">
-      {reviewContext && (
-        <div className="mb-4">
-          <ReviewModeBanner
-            submitter={
-              reviewContext.submitterDisplayName ??
-              reviewContext.submitterEmail?.split('@')[0] ??
-              'this annotator'
-            }
-            status={reviewContext.topicStatus}
-            workspaceId={workspaceId}
-            topicId={topicId}
-          />
-        </div>
-      )}
+    <div className="app-light min-h-screen" style={{ background: 'var(--bg)' }}>
+      <div className="max-w-[1100px] mx-auto px-6 py-8">
+        {reviewLookupFailed && (
+          <div className="mb-4">
+            <ReviewLookupFailedBanner
+              workspaceId={workspaceId}
+              topicId={topicId}
+            />
+          </div>
+        )}
 
-      {reviewContext && (
-        <div className="mb-6">
-          <ReviewVerdictControls
-            annotationId={reviewContext.annotationId}
-            topicStatus={reviewContext.topicStatus}
-            viewerRole={viewerRole}
-            viewerIsSubmitter={viewerIsSubmitter}
-            submitterDisplayName={reviewContext.submitterDisplayName}
-          />
-        </div>
-      )}
+        {reviewContext && (
+          <div className="mb-4">
+            <ReviewModeBanner
+              submitter={
+                reviewContext.submitterDisplayName ??
+                reviewContext.submitterEmail?.split('@')[0] ??
+                'this annotator'
+              }
+              status={reviewContext.topicStatus}
+              workspaceId={workspaceId}
+              topicId={topicId}
+            />
+          </div>
+        )}
 
-      {formNode}
+        {reviewContext && (
+          <div className="mb-6">
+            <ReviewVerdictControls
+              annotationId={reviewContext.annotationId}
+              topicStatus={reviewContext.topicStatus}
+              viewerRole={viewerRole}
+              viewerIsSubmitter={viewerIsSubmitter}
+              submitterDisplayName={reviewContext.submitterDisplayName}
+            />
+          </div>
+        )}
 
-      {reviewContext && reviewThread.length > 0 && (
-        <div className="mt-8">
-          <ReviewThread
-            annotationId={reviewContext.annotationId}
-            messages={reviewThread}
-            canReply={viewerIsSubmitter}
-          />
-        </div>
-      )}
+        {formNode}
 
-      {reviewContext && auditTimeline.length > 0 && (
-        <div className="mt-8">
-          <AnnotationAuditTimeline entries={auditTimeline} />
-        </div>
-      )}
+        {reviewContext && reviewThread.length > 0 && (
+          <div className="mt-8">
+            <ReviewThread
+              annotationId={reviewContext.annotationId}
+              messages={reviewThread}
+              canReply={viewerIsSubmitter}
+            />
+          </div>
+        )}
+
+        {reviewContext && auditTimeline.length > 0 && (
+          <div className="mt-8">
+            <AnnotationAuditTimeline entries={auditTimeline} />
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Warning banner for the silent-fallback case: the URL had an
+ * `?annotationId=…` but it didn't resolve to a valid review context
+ * for this topic. Without this banner the user sees a fresh-looking
+ * draft form with no explanation of why review didn't load.
+ *
+ * Reasons it can fire:
+ *   - annotation id doesn't exist
+ *   - annotation belongs to a different workspace (cross-tenant click)
+ *   - annotation belongs to a different topic on this workspace
+ *
+ * We don't differentiate the cause in the message — the user fix is
+ * the same: go back to the queue and pick the right link.
+ */
+function ReviewLookupFailedBanner({
+  workspaceId,
+  topicId,
+}: {
+  workspaceId: string
+  topicId: string
+}) {
+  return (
+    <div
+      className="rounded-md flex items-center justify-between gap-3 px-3 py-2"
+      style={{
+        background: 'var(--warn-soft)',
+        border: '1px solid oklch(0.6 0.14 75 / 0.4)',
+      }}
+    >
+      <div className="ts-12">
+        <span className="lbl" style={{ color: 'oklch(0.55 0.14 75)' }}>
+          § REVIEW UNAVAILABLE
+        </span>
+        <span className="ml-2" style={{ color: 'var(--text)' }}>
+          The annotation in the URL doesn&apos;t belong to this topic (or
+          no longer exists). Falling back to your own draft view.
+        </span>
+      </div>
+      <a
+        href={`/workspaces/${workspaceId}/topics/${topicId}/annotate`}
+        className="ts-11 mono shrink-0"
+        style={{
+          color: 'oklch(0.55 0.14 75)',
+          textDecoration: 'none',
+        }}
+      >
+        clear url →
+      </a>
     </div>
   )
 }

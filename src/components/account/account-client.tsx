@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { updateProfile } from '@/lib/actions/membership'
+import { claimSeededWorkspaces } from '@/lib/actions/admin-claim'
 
 /**
  * Account page client.
@@ -31,6 +32,7 @@ export function AccountClient({
   displayName,
   workspaces,
   isAdminAnywhere = false,
+  unclaimedSeededCount = 0,
 }: {
   email: string
   displayName: string | null
@@ -39,6 +41,11 @@ export function AccountClient({
    *  unlocks the /admin dashboard entry card. Default false so older
    *  callers (none currently) don't surface it accidentally. */
   isAdminAnywhere?: boolean
+  /** Number of seeded workspaces (admin_id matches the
+   *  `00000000-0000-0000-0000-…` sentinel) that nobody has claimed yet.
+   *  When > 0 we surface the ClaimSeededCard so a fresh signed-in user
+   *  can take over the demo workspaces in one click. */
+  unclaimedSeededCount?: number
 }) {
   return (
     <div className="space-y-10">
@@ -48,6 +55,10 @@ export function AccountClient({
           Your profile
         </h1>
       </div>
+
+      {unclaimedSeededCount > 0 && (
+        <ClaimSeededCard count={unclaimedSeededCount} />
+      )}
 
       {isAdminAnywhere && <AdminEntryCard />}
 
@@ -63,6 +74,126 @@ export function AccountClient({
       <WorkspacesSection workspaces={workspaces} />
 
       <SignOutCard />
+    </div>
+  )
+}
+
+/**
+ * Claim-orphan-seed card. Surfaces only when `countUnclaimedSeededWorkspaces`
+ * returns >0 — i.e. the seed scripts populated workspaces with sentinel
+ * admin UUIDs (`00000000-0000-0000-0000-…`) and no real user has taken
+ * them over yet. One click promotes the viewer to admin of all of them.
+ *
+ * Idempotent on the server side, so a double-click can't break anything.
+ * After success the page refreshes so the workspace list + AdminEntryCard
+ * appear immediately.
+ */
+function ClaimSeededCard({ count }: { count: number }) {
+  const router = useRouter()
+  const [isPending, startTransition] = useTransition()
+  const [error, setError] = useState<string | null>(null)
+  const [done, setDone] = useState<{ count: number } | null>(null)
+
+  function claim() {
+    setError(null)
+    startTransition(async () => {
+      try {
+        const r = await claimSeededWorkspaces()
+        setDone({ count: r.claimed.length })
+        router.refresh()
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Claim failed.')
+      }
+    })
+  }
+
+  if (done) {
+    return (
+      <div
+        className="rounded-xl p-5"
+        style={{
+          background: 'oklch(0.5 0.13 150 / 0.08)',
+          border: '1px solid oklch(0.5 0.13 150 / 0.35)',
+        }}
+      >
+        <div className="lbl" style={{ color: 'oklch(0.45 0.15 150)' }}>
+          § CLAIMED
+        </div>
+        <h3
+          className="ts-16 mt-1"
+          style={{ color: 'var(--hi)', fontWeight: 500 }}
+        >
+          You&apos;re now admin of {done.count} workspace
+          {done.count === 1 ? '' : 's'}.
+        </h3>
+        <p className="ts-13 mt-1" style={{ color: 'var(--mute)' }}>
+          The page is refreshing — your workspace list will appear below.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div
+      className="rounded-xl p-5"
+      style={{
+        background:
+          'linear-gradient(135deg, oklch(0.7 0.14 75 / 0.16), oklch(0.6 0.18 280 / 0.10))',
+        border: '1px solid oklch(0.7 0.14 75 / 0.35)',
+      }}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="lbl" style={{ color: 'oklch(0.55 0.14 75)' }}>
+            § DEMO READY · UNCLAIMED
+          </div>
+          <h3
+            className="ts-18 mt-1"
+            style={{ color: 'var(--hi)', fontWeight: 500 }}
+          >
+            Take over {count} seeded workspace{count === 1 ? '' : 's'}
+          </h3>
+          <p
+            className="ts-13 mt-1"
+            style={{ color: 'var(--mute)', maxWidth: 540 }}
+          >
+            The seed scripts populated demo workspaces with placeholder
+            admin IDs. Click below to make yourself admin of all of
+            them — full access to tasks, members, billing, and the
+            admin cockpit.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={claim}
+          disabled={isPending}
+          className="ts-13 mono shrink-0"
+          style={{
+            background: 'oklch(0.55 0.14 75)',
+            color: 'white',
+            border: '1px solid oklch(0.55 0.14 75)',
+            borderRadius: 6,
+            padding: '8px 14px',
+            fontWeight: 500,
+            cursor: isPending ? 'not-allowed' : 'pointer',
+            opacity: isPending ? 0.6 : 1,
+          }}
+        >
+          {isPending ? 'claiming…' : 'claim as admin'}
+        </button>
+      </div>
+      {error && (
+        <div
+          className="ts-12 rounded-md p-2 mt-3"
+          style={{
+            background: 'var(--danger-soft)',
+            border: '1px solid oklch(0.55 0.2 25 / 0.35)',
+            color: 'var(--danger)',
+          }}
+        >
+          {error}
+        </div>
+      )}
     </div>
   )
 }

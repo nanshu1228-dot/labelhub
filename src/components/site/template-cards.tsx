@@ -2,7 +2,11 @@
 import { useLang, type DictKey } from '@/lib/i18n'
 
 /**
- * §02 Templates — 6 mode cards, each with its own mini visualization.
+ * §02 Templates — three mode cards, each with its own mini visualization.
+ *
+ * The three cards correspond 1:1 to the three template modes that actually
+ * ship in the engine (`pair-rubric`, `arena-gsb`, `agent-trace-eval`).
+ *
  * Cards share a single bordered container; gap: 1px reveals the divider.
  */
 export function TemplateCards() {
@@ -37,7 +41,7 @@ export function TemplateCards() {
         </div>
 
         <div
-          className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-[1px]"
+          className="grid grid-cols-1 md:grid-cols-3 gap-[1px]"
           style={{
             background: 'oklch(0.22 0 0)',
             border: '1px solid oklch(0.22 0 0)',
@@ -45,12 +49,9 @@ export function TemplateCards() {
             overflow: 'hidden',
           }}
         >
-          <CardClassic />
-          <CardPair />
-          <CardArena />
-          <CardToken />
-          <CardGame />
-          <CardApprentice />
+          <CardPairRubric />
+          <CardArenaGsb />
+          <CardAgentTraceEval />
         </div>
 
         <div className="mt-12 flex flex-wrap items-center justify-between gap-4">
@@ -61,7 +62,7 @@ export function TemplateCards() {
             {t('tpl_closing')}
           </p>
           <div className="flex items-center gap-3">
-            <a href="#" className="lh-btn lh-btn-ghost">{t('tpl_spec')}</a>
+            <a href="/docs" className="lh-btn lh-btn-ghost">{t('tpl_spec')}</a>
             <a href="/workspaces/new" className="lh-btn lh-btn-solid">
               <span>{t('cta_start')}</span>
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
@@ -104,303 +105,337 @@ function CardFooter({ title, body }: { title: DictKey; body: DictKey }) {
   )
 }
 
-/* ── 01 Classic Survey — rubric grid ─────────────────────────────────────── */
-function CardClassic() {
+/* ── 01 Pair Rubric — yes/no per model checklist ─────────────────────────── */
+function CardPairRubric() {
   const { t } = useLang()
-  const rows = [
-    [1, 0, 0.5, 0],
-    [0, 1, 0, 0],
-    [0.5, 1, 1, 0],
-    [0, 0, 0, 1],
-    [1, 0, 0.5, 0],
+  // Visual: 5 rubric rows × A/B columns of yes/no chips.
+  // Mix of yes (violet), no (muted), and pending (faint) cells so it
+  // reads as "in progress".
+  const rows: Array<{ a: 1 | 0 | -1; b: 1 | 0 | -1; label: string }> = [
+    { a: 1, b: 0, label: 'cites sources' },
+    { a: 1, b: 1, label: 'no hallucination' },
+    { a: 0, b: 1, label: 'follows format' },
+    { a: 1, b: 0, label: 'reasoning shown' },
+    { a: -1, b: -1, label: 'safety check' },
   ]
-  // 0 = empty, 0.5 = hover, 1 = on
   return (
     <CardShell>
       <CardHeader tag="c1_tag" badge={<span className="badge">{t('c1_badge')}</span>} />
-      <div className="rubric mb-5">
-        <div className="rubric-cell col" />
-        <div className="rubric-cell col">A</div>
-        <div className="rubric-cell col">B</div>
-        <div className="rubric-cell col">C</div>
-        <div className="rubric-cell col">D</div>
-        {rows.map((row, ri) => (
-          <RubricRow key={ri} idx={ri + 1} cells={row} />
+      <div className="space-y-1.5 mb-2">
+        <div className="grid grid-cols-[1fr_44px_44px] gap-2 items-center">
+          <span />
+          <span
+            className="lh-mono lh-caption text-center"
+            style={{ color: 'oklch(0.65 0.18 200)' }}
+          >
+            A
+          </span>
+          <span
+            className="lh-mono lh-caption text-center"
+            style={{ color: 'oklch(0.7 0.18 30)' }}
+          >
+            B
+          </span>
+        </div>
+        {rows.map((r, i) => (
+          <div
+            key={i}
+            className="grid grid-cols-[1fr_44px_44px] gap-2 items-center"
+          >
+            <span
+              className="lh-mono"
+              style={{ color: 'oklch(0.62 0 0)', fontSize: 11.5 }}
+            >
+              {r.label}
+            </span>
+            <YesNoChip v={r.a} side="a" />
+            <YesNoChip v={r.b} side="b" />
+          </div>
         ))}
-        <div className="rubric-cell lbl">…</div>
-        <div className="rubric-cell" style={{ opacity: 0.4 }} />
-        <div className="rubric-cell" style={{ opacity: 0.4 }} />
-        <div className="rubric-cell" style={{ opacity: 0.4 }} />
-        <div className="rubric-cell" style={{ opacity: 0.4 }} />
       </div>
       <CardFooter title="c1_title" body="c1_body" />
     </CardShell>
   )
 }
 
-function RubricRow({ idx, cells }: { idx: number; cells: number[] }) {
+function YesNoChip({ v, side }: { v: 1 | 0 | -1; side: 'a' | 'b' }) {
+  const sideColor = side === 'a' ? 'oklch(0.65 0.18 200)' : 'oklch(0.7 0.18 30)'
+  if (v === -1) {
+    return (
+      <span
+        className="lh-mono"
+        style={{
+          fontSize: 10,
+          color: 'oklch(0.42 0 0)',
+          textAlign: 'center',
+          padding: '2px 0',
+          border: '1px dashed oklch(0.27 0 0)',
+          borderRadius: 4,
+        }}
+      >
+        —
+      </span>
+    )
+  }
+  if (v === 1) {
+    return (
+      <span
+        className="lh-mono"
+        style={{
+          fontSize: 10,
+          color: 'white',
+          background: sideColor,
+          textAlign: 'center',
+          padding: '2px 0',
+          borderRadius: 4,
+          fontWeight: 600,
+        }}
+      >
+        yes
+      </span>
+    )
+  }
   return (
-    <>
-      <div className="rubric-cell lbl">{String(idx).padStart(3, '0')}</div>
-      {cells.map((v, i) => (
-        <div
-          key={i}
-          className={`rubric-cell ${v === 1 ? 'on' : v === 0.5 ? 'h' : ''}`}
-        />
-      ))}
-    </>
+    <span
+      className="lh-mono"
+      style={{
+        fontSize: 10,
+        color: 'oklch(0.55 0 0)',
+        background: 'transparent',
+        textAlign: 'center',
+        padding: '2px 0',
+        borderRadius: 4,
+        border: '1px solid oklch(0.27 0 0)',
+      }}
+    >
+      no
+    </span>
   )
 }
 
-/* ── 02 Pair Annotation — two cursors ────────────────────────────────────── */
-function CardPair() {
+/* ── 02 Arena GSB — head-to-head 1-5 ─────────────────────────────────────── */
+function CardArenaGsb() {
   const { t } = useLang()
+  // Visual: two model "scorecards" with 3 dimensions each, plus a
+  // verdict bar at the bottom showing A/B/tie split.
+  const dims = [
+    { name: 'helpful', a: 4, b: 3 },
+    { name: 'factual', a: 5, b: 3 },
+    { name: 'concise', a: 3, b: 4 },
+  ]
   return (
     <CardShell>
       <CardHeader
         tag="c2_tag"
-        badge={
-          <span className="badge">
-            <span className="pulse" />
-            <span>{t('c2_badge')}</span>
-          </span>
-        }
-      />
-      <div
-        className="pair-canvas mb-5"
-        style={{ border: '1px dashed oklch(0.22 0 0)', borderRadius: 8 }}
-      >
-        <div className="pair-trail" style={{ left: '12%', right: '12%', top: '38%' }} />
-        <div className="pair-trail violet" style={{ left: '12%', right: '12%', top: '62%' }} />
-        <div className="pair-target" />
-        <div className="cursor cursor-a" style={{ left: '14%', top: '28%', color: 'oklch(0.92 0 0)' }}>
-          <svg viewBox="0 0 14 14" fill="currentColor">
-            <path d="M1 1l5 12 2-5 5-2L1 1z" />
-          </svg>
-          <div
-            className="lh-mono mt-1 inline-block px-1.5 py-0.5 rounded"
-            style={{ background: 'oklch(0.22 0 0)', color: 'oklch(0.78 0 0)', fontSize: 10 }}
-          >
-            you
-          </div>
-        </div>
-        <div className="cursor cursor-b" style={{ right: '14%', bottom: '28%', color: 'oklch(0.6 0.18 280)' }}>
-          <svg viewBox="0 0 14 14" fill="currentColor">
-            <path d="M13 13L8 1 6 6 1 8l12 5z" />
-          </svg>
-          <div
-            className="lh-mono mt-1 inline-block px-1.5 py-0.5 rounded"
-            style={{
-              background: 'oklch(0.6 0.18 280 / 0.18)',
-              color: 'oklch(0.6 0.18 280)',
-              fontSize: 10,
-            }}
-          >
-            claude
-          </div>
-        </div>
-      </div>
-      <CardFooter title="c2_title" body="c2_body" />
-    </CardShell>
-  )
-}
-
-/* ── 03 Arena Battle — head-to-head ──────────────────────────────────────── */
-function CardArena() {
-  const { t } = useLang()
-  return (
-    <CardShell>
-      <CardHeader
-        tag="c3_tag"
         badge={
           <span className="badge lh-mono">
             elo <span style={{ color: 'oklch(0.78 0 0)' }}>1284</span>
           </span>
         }
       />
-      <div className="arena mb-3">
-        <div className="arena-side win">
-          <div className="flex items-center justify-between">
-            <span className="lh-mono lh-caption" style={{ color: 'oklch(0.6 0.18 280)' }}>A</span>
-            <span className="lh-mono lh-caption" style={{ color: 'oklch(0.42 0 0)' }}>claude-4.7</span>
-          </div>
-          <div className="space-y-1">
-            <div className="h-1 rounded-full" style={{ background: 'oklch(0.27 0 0)', width: '78%' }} />
-            <div className="h-1 rounded-full" style={{ background: 'oklch(0.27 0 0)', width: '92%' }} />
-            <div className="h-1 rounded-full" style={{ background: 'oklch(0.27 0 0)', width: '64%' }} />
-          </div>
+      <div
+        className="rounded-lg overflow-hidden mb-3"
+        style={{ border: '1px solid oklch(0.22 0 0)' }}
+      >
+        <div
+          className="grid grid-cols-[1fr_46px_46px] items-center px-3 py-2"
+          style={{ borderBottom: '1px solid oklch(0.22 0 0)', background: 'oklch(0.155 0 0)' }}
+        >
+          <span className="lh-mono lh-caption" style={{ color: 'oklch(0.42 0 0)' }}>
+            dimension
+          </span>
+          <span
+            className="lh-mono lh-caption text-center"
+            style={{ color: 'oklch(0.65 0.18 200)' }}
+          >
+            A
+          </span>
+          <span
+            className="lh-mono lh-caption text-center"
+            style={{ color: 'oklch(0.7 0.18 30)' }}
+          >
+            B
+          </span>
         </div>
-        <div className="vs">vs</div>
-        <div className="arena-side">
-          <div className="flex items-center justify-between">
-            <span className="lh-mono lh-caption" style={{ color: 'oklch(0.55 0 0)' }}>B</span>
-            <span className="lh-mono lh-caption" style={{ color: 'oklch(0.42 0 0)' }}>gpt-5o</span>
+        {dims.map((d, i) => (
+          <div
+            key={d.name}
+            className="grid grid-cols-[1fr_46px_46px] items-center px-3 py-2"
+            style={{
+              borderTop: i === 0 ? 'none' : '1px solid oklch(0.22 0 0)',
+            }}
+          >
+            <span
+              className="lh-mono"
+              style={{ color: 'oklch(0.78 0 0)', fontSize: 11.5 }}
+            >
+              {d.name}
+            </span>
+            <ScorePip n={d.a} side="a" />
+            <ScorePip n={d.b} side="b" />
           </div>
-          <div className="space-y-1">
-            <div className="h-1 rounded-full" style={{ background: 'oklch(0.22 0 0)', width: '56%' }} />
-            <div className="h-1 rounded-full" style={{ background: 'oklch(0.22 0 0)', width: '71%' }} />
-            <div className="h-1 rounded-full" style={{ background: 'oklch(0.22 0 0)', width: '40%' }} />
-          </div>
-        </div>
+        ))}
       </div>
 
       <div
-        className="flex items-center justify-between mb-3 lh-caption lh-mono"
+        className="flex items-center justify-between mb-2 lh-caption lh-mono"
         style={{ color: 'oklch(0.55 0 0)' }}
       >
-        <span style={{ color: 'oklch(0.6 0.18 280)' }}>{t('c3_wins')}</span>
-        <span>{t('c3_b')}</span>
+        <span style={{ color: 'oklch(0.6 0.18 280)' }}>{t('c2_wins')}</span>
+        <span>{t('c2_b')}</span>
       </div>
-      <div className="vote-bar mb-5">
+      <div className="vote-bar mb-1">
         <div className="a" style={{ width: '64%' }} />
         <div className="b" style={{ width: '36%' }} />
       </div>
 
+      <CardFooter title="c2_title" body="c2_body" />
+    </CardShell>
+  )
+}
+
+function ScorePip({ n, side }: { n: number; side: 'a' | 'b' }) {
+  const color = side === 'a' ? 'oklch(0.65 0.18 200)' : 'oklch(0.7 0.18 30)'
+  return (
+    <span
+      className="lh-mono"
+      style={{
+        fontSize: 11,
+        textAlign: 'center',
+        padding: '2px 0',
+        background: `${color}1f`,
+        color,
+        border: `1px solid ${color}55`,
+        borderRadius: 4,
+        fontWeight: 600,
+      }}
+    >
+      {n}
+    </span>
+  )
+}
+
+/* ── 03 Agent Trace Eval — per-step rubric ───────────────────────────────── */
+function CardAgentTraceEval() {
+  const { t } = useLang()
+  // Visual: a vertical agent-trajectory timeline with step kinds
+  // (thinking, tool, result, final), each annotated with a tiny
+  // rubric verdict on the right.
+  const steps: Array<{
+    kind: 'think' | 'tool' | 'result' | 'final'
+    label: string
+    verdict: 'ok' | 'flag' | 'miss' | null
+  }> = [
+    { kind: 'think', label: 'plan: search → verify → cite', verdict: 'ok' },
+    { kind: 'tool', label: 'web_search("ICD-10 R51")', verdict: 'ok' },
+    { kind: 'result', label: 'returned 12 candidates', verdict: 'flag' },
+    { kind: 'tool', label: 'fetch_url(top result)', verdict: 'miss' },
+    { kind: 'final', label: 'answer with citation', verdict: null },
+  ]
+  return (
+    <CardShell>
+      <CardHeader
+        tag="c3_tag"
+        badge={
+          <span className="badge">
+            <span className="pulse" />
+            <span>{t('c3_badge')}</span>
+          </span>
+        }
+      />
+      <div
+        className="rounded-lg overflow-hidden mb-2"
+        style={{ border: '1px solid oklch(0.22 0 0)' }}
+      >
+        {steps.map((s, i) => (
+          <div
+            key={i}
+            className="grid grid-cols-[16px_1fr_44px] items-center gap-2 px-2.5 py-1.5"
+            style={{
+              borderTop: i === 0 ? 'none' : '1px solid oklch(0.22 0 0)',
+              background: i === steps.length - 1 ? 'oklch(0.155 0 0)' : 'transparent',
+            }}
+          >
+            <KindGlyph kind={s.kind} />
+            <span
+              className="lh-mono"
+              style={{
+                color: s.kind === 'final' ? 'oklch(0.92 0 0)' : 'oklch(0.72 0 0)',
+                fontSize: 11.5,
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
+              {s.label}
+            </span>
+            <VerdictPip v={s.verdict} />
+          </div>
+        ))}
+      </div>
       <CardFooter title="c3_title" body="c3_body" />
     </CardShell>
   )
 }
 
-/* ── 04 Token Economy — LBH ledger ───────────────────────────────────────── */
-function CardToken() {
-  const { t } = useLang()
+function KindGlyph({ kind }: { kind: 'think' | 'tool' | 'result' | 'final' }) {
+  // Each step kind gets its own glyph + color so the trajectory reads
+  // at a glance the way it does in the real annotator.
+  const config = {
+    think: { ch: '◇', color: 'oklch(0.55 0 0)' },
+    tool: { ch: '▸', color: 'oklch(0.6 0.18 280)' },
+    result: { ch: '◂', color: 'oklch(0.5 0.13 150)' },
+    final: { ch: '★', color: 'oklch(0.92 0 0)' },
+  }[kind]
   return (
-    <CardShell>
-      <CardHeader tag="c4_tag" badge={<span className="badge lh-mono">{t('c4_badge')}</span>} />
-
-      <div className="mb-1 flex items-baseline gap-2">
-        <span className="lh-h2 lh-mono" style={{ color: 'oklch(0.92 0 0)', letterSpacing: '-0.02em' }}>
-          2,184
-        </span>
-        <span className="lh-mono lh-caption" style={{ color: 'oklch(0.55 0 0)' }}>
-          {t('c4_balance')}
-        </span>
-      </div>
-      <div className="lh-caption lh-mono mb-4" style={{ color: 'oklch(0.6 0.18 280)' }}>
-        ▲ +6.2% · 7d
-      </div>
-
-      <div className="ledger-bar mb-2" />
-      <div className="space-y-1.5">
-        <LedgerRow up label={t('c4_l1')} amt="+42" />
-        <LedgerRow up label={t('c4_l2')} amt="+38" />
-        <LedgerRow label={t('c4_l3')} amt="+24" />
-        <LedgerRow label={t('c4_l4')} amt="+18" />
-      </div>
-
-      <CardFooter title="c4_title" body="c4_body" />
-    </CardShell>
-  )
-}
-
-function LedgerRow({ up, label, amt }: { up?: boolean; label: string; amt: string }) {
-  return (
-    <div className={`ledger-row ${up ? 'up' : ''}`}>
-      <span className="dot" />
-      <span className="lbl">{label}</span>
-      <span className="amt">{amt}</span>
-    </div>
-  )
-}
-
-/* ── 05 Game Mode — streak chips ─────────────────────────────────────────── */
-function CardGame() {
-  const { t } = useLang()
-  return (
-    <CardShell>
-      <CardHeader
-        tag="c5_tag"
-        badge={
-          <span className="badge lh-mono">
-            <span style={{ color: 'oklch(0.78 0 0)' }}>{t('c5_diamond')}</span> · <span>{t('c5_league')}</span>
-          </span>
-        }
-      />
-
-      <div className="flex items-baseline gap-3 mb-3">
-        <span className="lh-h2 lh-mono" style={{ color: 'oklch(0.92 0 0)', letterSpacing: '-0.02em' }}>
-          17
-        </span>
-        <span className="lh-mono lh-caption" style={{ color: 'oklch(0.55 0 0)' }}>
-          {t('c5_streak')}
-        </span>
-      </div>
-
-      <div className="chip-tiles mb-4">
-        {(['done', 'done', 'done', 'streak', 'streak', 'streak', 'today',
-           'done', 'done', 'streak', 'streak', 'streak', 'streak', 'done'] as const).map((s, i) => (
-          <div key={i} className={`chip ${s}`} />
-        ))}
-      </div>
-
-      <div className="grid grid-cols-3 gap-2 mb-1">
-        <StatTile label={t('c5_rank')} value="#42" />
-        <StatTile label={t('c5_xp')} value="12.4k" />
-        <StatTile label={t('c5_mult')} value="×1.8" accent />
-      </div>
-
-      <CardFooter title="c5_title" body="c5_body" />
-    </CardShell>
-  )
-}
-
-function StatTile({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
-  return (
-    <div
-      className="text-center py-2 rounded"
-      style={{ background: 'oklch(0.155 0 0)', border: '1px solid oklch(0.22 0 0)' }}
+    <span
+      className="lh-mono"
+      style={{
+        color: config.color,
+        fontSize: 12,
+        textAlign: 'center',
+      }}
     >
-      <div className="lh-mono lh-caption" style={{ color: 'oklch(0.42 0 0)' }}>{label}</div>
-      <div
-        className="lh-mono lh-body-sm"
-        style={{ color: accent ? 'oklch(0.6 0.18 280)' : 'oklch(0.92 0 0)' }}
-      >
-        {value}
-      </div>
-    </div>
+      {config.ch}
+    </span>
   )
 }
 
-/* ── 06 Apprentice Mode — chat ───────────────────────────────────────────── */
-function CardApprentice() {
-  const { t } = useLang()
-  return (
-    <CardShell>
-      <CardHeader
-        tag="c6_tag"
-        badge={
-          <span className="badge">
-            <span className="pulse" />
-            <span>{t('c6_badge')}</span>
-          </span>
-        }
-      />
-
-      <div className="space-y-2 mb-5" style={{ minHeight: 132 }}>
-        <Bubble role="ai" html={t('c6_msg1')} />
-        <Bubble role="you" html={t('c6_msg2')} />
-        <Bubble role="ai" html={t('c6_msg3')} />
-        <Bubble role="you" html={t('c6_msg4')} />
-      </div>
-
-      <div
-        className="flex items-center gap-2 lh-caption lh-mono pt-3"
-        style={{ borderTop: '1px solid oklch(0.22 0 0)', color: 'oklch(0.42 0 0)' }}
+function VerdictPip({ v }: { v: 'ok' | 'flag' | 'miss' | null }) {
+  if (v === null) {
+    return (
+      <span
+        className="lh-mono"
+        style={{
+          fontSize: 9.5,
+          color: 'oklch(0.42 0 0)',
+          textAlign: 'center',
+          letterSpacing: '0.04em',
+        }}
       >
-        <span style={{ color: 'oklch(0.6 0.18 280)' }}>●</span>
-        <span>{t('c6_foot')}</span>
-      </div>
-
-      <CardFooter title="c6_title" body="c6_body" />
-    </CardShell>
-  )
-}
-
-function Bubble({ role, html }: { role: 'you' | 'ai'; html: string }) {
+        pending
+      </span>
+    )
+  }
+  const config = {
+    ok: { ch: '✓', color: 'oklch(0.5 0.13 150)' },
+    flag: { ch: '!', color: 'oklch(0.7 0.14 75)' },
+    miss: { ch: '×', color: 'oklch(0.6 0.2 25)' },
+  }[v]
   return (
-    <div
-      className={`bub ${role}`}
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
+    <span
+      className="lh-mono"
+      style={{
+        fontSize: 10,
+        color: 'white',
+        background: config.color,
+        textAlign: 'center',
+        padding: '2px 0',
+        borderRadius: 4,
+        fontWeight: 700,
+      }}
+    >
+      {config.ch}
+    </span>
   )
 }
