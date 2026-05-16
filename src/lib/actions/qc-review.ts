@@ -47,6 +47,7 @@ import {
   NotFoundError,
 } from '@/lib/errors'
 import { fanoutWebhook } from '@/lib/webhooks/fanout'
+import { emitNotification } from '@/lib/notifications/emit'
 
 const qcReviewSchema = z.object({
   annotationId: z.string().uuid(),
@@ -148,6 +149,45 @@ export async function qcReviewAnnotation(
       reviewerRole: role,
     },
   })
+
+  // Notify the submitter. QC has two outcomes — pass (escalates to
+  // admin acceptance, so submitter sees "your work passed QC") vs
+  // request_revision (打回, submitter needs to fix it). Different
+  // inbox titles so the user knows whether to relax or get to work.
+  const trimmedFeedback = parsed.feedback?.trim().slice(0, 140) || undefined
+  if (parsed.decision === 'pass') {
+    await emitNotification({
+      userId: annotation.userId,
+      workspaceId: task.workspaceId,
+      type: 'annotation.awaiting_acceptance',
+      title: 'Passed QC — awaiting admin acceptance',
+      body: trimmedFeedback,
+      linkUrl: `/workspaces/${task.workspaceId}/topics/${topic.id}/annotate?annotationId=${annotation.id}`,
+      payload: {
+        annotationId: annotation.id,
+        topicId: topic.id,
+        taskId: task.id,
+        reviewerRole: role,
+      },
+      actorId: user.id,
+    })
+  } else {
+    await emitNotification({
+      userId: annotation.userId,
+      workspaceId: task.workspaceId,
+      type: 'annotation.revising',
+      title: 'QC asked for a revision',
+      body: trimmedFeedback ?? 'Open the annotation to see what to fix.',
+      linkUrl: `/workspaces/${task.workspaceId}/topics/${topic.id}/annotate?annotationId=${annotation.id}`,
+      payload: {
+        annotationId: annotation.id,
+        topicId: topic.id,
+        taskId: task.id,
+        reviewerRole: role,
+      },
+      actorId: user.id,
+    })
+  }
 
   // Fire webhooks AFTER the response so QC's click stays snappy.
   after(() =>

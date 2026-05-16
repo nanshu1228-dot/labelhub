@@ -33,6 +33,7 @@ export function AccountClient({
   workspaces,
   isAdminAnywhere = false,
   unclaimedSeeded = [],
+  unreadInboxCount = 0,
 }: {
   email: string
   displayName: string | null
@@ -46,6 +47,10 @@ export function AccountClient({
    *  When non-empty we surface the ClaimSeededCard with a name list
    *  so the user knows exactly what they're about to take over. */
   unclaimedSeeded?: Array<{ id: string; name: string }>
+  /** Unread notifications. Drives the inbox preview badge alongside
+   *  the queue CTA — gives the user a "you have N pending reviews to
+   *  look at" signal without forcing a separate nav. */
+  unreadInboxCount?: number
 }) {
   return (
     <div className="space-y-10">
@@ -65,6 +70,7 @@ export function AccountClient({
       {workspaces.length > 0 && (
         <>
           <QueueCTA />
+          {unreadInboxCount > 0 && <InboxPreviewCard count={unreadInboxCount} />}
           <QuickLinksRow />
         </>
       )}
@@ -355,6 +361,71 @@ function QuickLinksRow() {
         </Link>
       ))}
     </div>
+  )
+}
+
+/**
+ * Inbox-preview card. Only renders when the signed-in user has
+ * unread notifications. Sits between the queue CTA and the
+ * quick-links row so a returning user sees "you have 3 unread
+ * reviews to read" before they dive into fresh work. Visually
+ * distinct from QueueCTA (no gradient — softer accent border) so
+ * it reads as informational, not as a primary CTA.
+ */
+function InboxPreviewCard({ count }: { count: number }) {
+  return (
+    <Link
+      href="/my/inbox"
+      className="block rounded-lg p-4 -mt-4"
+      style={{
+        background: 'var(--accent-soft)',
+        border: '1px solid var(--accent-line)',
+        textDecoration: 'none',
+      }}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <span
+            className="mono"
+            style={{
+              width: 28,
+              height: 28,
+              background: 'var(--accent)',
+              color: 'white',
+              borderRadius: 6,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 11,
+              fontWeight: 700,
+            }}
+          >
+            {count > 99 ? '99+' : count}
+          </span>
+          <div>
+            <div
+              className="ts-13"
+              style={{ color: 'var(--hi)', fontWeight: 500 }}
+            >
+              {count} unread notification{count === 1 ? '' : 's'}
+            </div>
+            <div
+              className="ts-12 mono mt-0.5"
+              style={{ color: 'var(--mute2)' }}
+            >
+              review verdicts · 打回 · replies on your work
+            </div>
+          </div>
+        </div>
+        <span
+          className="ts-13 mono"
+          style={{ color: 'var(--accent)' }}
+          aria-hidden
+        >
+          open →
+        </span>
+      </div>
+    </Link>
   )
 }
 

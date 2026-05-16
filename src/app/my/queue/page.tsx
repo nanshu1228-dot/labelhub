@@ -11,6 +11,7 @@ import {
   listMyTopicQueueForUser,
   type TopicQueueItem,
 } from '@/lib/queries/topic-queue'
+import { countUnreadNotifications } from '@/lib/queries/notifications'
 
 export const metadata: Metadata = {
   title: 'My Queue — LabelHub',
@@ -44,7 +45,7 @@ export default async function MyQueuePage(props: {
   const me = await optionalUser()
   if (!me) redirect('/signin?next=/my/queue')
 
-  const [workspaces, queue, stats, topicQueue] = await Promise.all([
+  const [workspaces, queue, stats, topicQueue, unreadCount] = await Promise.all([
     listMyAnnotatableWorkspaces({ userId: me.id }),
     listMyQueueForUser({
       userId: me.id,
@@ -60,6 +61,7 @@ export default async function MyQueuePage(props: {
       workspaceId: workspaceFilter,
       limit: 50,
     }),
+    countUnreadNotifications(me.id).catch(() => 0),
   ])
 
   return (
@@ -80,21 +82,26 @@ export default async function MyQueuePage(props: {
               fresh captures.
             </p>
           </div>
-          <Link
-            href="/my/submissions"
-            className="ts-12 mono shrink-0"
-            style={{
-              background: 'var(--panel)',
-              color: 'var(--mute)',
-              border: '1px solid var(--line)',
-              borderRadius: 6,
-              padding: '6px 12px',
-              textDecoration: 'none',
-            }}
-          >
-            history →
-          </Link>
+          <div className="flex items-center gap-2 shrink-0">
+            <InboxLink unread={unreadCount} />
+            <Link
+              href="/my/submissions"
+              className="ts-12 mono"
+              style={{
+                background: 'var(--panel)',
+                color: 'var(--mute)',
+                border: '1px solid var(--line)',
+                borderRadius: 6,
+                padding: '6px 12px',
+                textDecoration: 'none',
+              }}
+            >
+              history →
+            </Link>
+          </div>
         </div>
+
+        {unreadCount > 0 && <InboxBanner unread={unreadCount} />}
 
         <StatsRow stats={stats} />
 
@@ -118,6 +125,93 @@ export default async function MyQueuePage(props: {
         </section>
       </div>
     </main>
+  )
+}
+
+/**
+ * Header-strip link to /my/inbox with an unread badge. Renders even
+ * when unread=0 so the inbox is always discoverable from the queue
+ * page; the badge just hides when empty.
+ */
+function InboxLink({ unread }: { unread: number }) {
+  const hasUnread = unread > 0
+  return (
+    <Link
+      href="/my/inbox"
+      className="ts-12 mono inline-flex items-center gap-2"
+      style={{
+        background: hasUnread ? 'var(--accent-soft)' : 'var(--panel)',
+        color: hasUnread ? 'var(--accent)' : 'var(--mute)',
+        border: `1px solid ${hasUnread ? 'var(--accent-line)' : 'var(--line)'}`,
+        borderRadius: 6,
+        padding: '6px 12px',
+        textDecoration: 'none',
+      }}
+    >
+      <span>inbox</span>
+      {hasUnread && (
+        <span
+          className="mono"
+          style={{
+            background: 'var(--accent)',
+            color: 'white',
+            fontSize: 10,
+            fontWeight: 700,
+            padding: '1px 6px',
+            borderRadius: 999,
+            minWidth: 18,
+            textAlign: 'center',
+          }}
+        >
+          {unread}
+        </span>
+      )}
+    </Link>
+  )
+}
+
+/**
+ * Full-width attention banner — only renders when unread > 0. The
+ * idea: a busy annotator scrolling to the queue should see a clear
+ * "go check your inbox" callout before they start picking new work,
+ * so they don't miss a 打回 from their last session.
+ */
+function InboxBanner({ unread }: { unread: number }) {
+  return (
+    <Link
+      href="/my/inbox"
+      className="block rounded-md px-4 py-3 mb-5"
+      style={{
+        background: 'var(--accent-soft)',
+        border: '1px solid var(--accent-line)',
+        textDecoration: 'none',
+      }}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div
+            className="lbl"
+            style={{ color: 'var(--accent)', letterSpacing: '0.05em' }}
+          >
+            § INBOX
+          </div>
+          <div
+            className="ts-13 mt-0.5"
+            style={{ color: 'var(--hi)', fontWeight: 500 }}
+          >
+            You have {unread} unread notification{unread === 1 ? '' : 's'} —
+            review verdicts, replies, and 打回 messages.
+          </div>
+        </div>
+        <span
+          className="ts-13 mono"
+          style={{ color: 'var(--accent)' }}
+          aria-hidden
+        >
+          open →
+        </span>
+      </div>
+    </Link>
   )
 }
 

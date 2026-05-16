@@ -1,7 +1,7 @@
 'use server'
 import { z } from 'zod'
 import { after } from 'next/server'
-import { and, eq } from 'drizzle-orm'
+import { and, desc, eq, sql } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { tasks, topics, annotations, events } from '@/lib/db/schema'
 import {
@@ -10,6 +10,7 @@ import {
   requireWorkspaceMember,
 } from '@/lib/auth/guards'
 import { fanoutWebhook } from '@/lib/webhooks/fanout'
+import { emitNotification } from '@/lib/notifications/emit'
 import { uuidLike } from '@/lib/validators/uuid'
 import {
   ConflictError,
@@ -373,6 +374,33 @@ export async function reviewAnnotation(input: z.infer<typeof reviewSchema>) {
     },
   })
 
+  // Notify the submitter their work was reviewed. Skip the self-case
+  // (admin reviewing their own annotation — unusual but possible). The
+  // emit helper swallows errors, so a notification hiccup never blocks
+  // the verdict commit.
+  if (annotation.userId !== user.id) {
+    const { title, body, type: notifType } = verdictNotificationCopy(
+      parsed.decision,
+      parsed.feedback,
+    )
+    await emitNotification({
+      userId: annotation.userId,
+      workspaceId: task.workspaceId,
+      type: notifType,
+      title,
+      body,
+      linkUrl: `/workspaces/${task.workspaceId}/topics/${topic.id}/annotate?annotationId=${annotation.id}`,
+      payload: {
+        decision: parsed.decision,
+        annotationId: annotation.id,
+        topicId: topic.id,
+        taskId: task.id,
+        templateMode: task.templateMode,
+      },
+      actorId: user.id,
+    })
+  }
+
   // Fire any registered webhook subscribers AFTER the response — keeps the
   // admin's review action snappy even when downstream receivers are slow.
   after(() =>
@@ -394,6 +422,37 @@ export async function reviewAnnotation(input: z.infer<typeof reviewSchema>) {
   )
 
   return { ok: true as const }
+}
+
+/**
+ * Render the inbox row title/body/type for a given verdict decision.
+ * Centralized here (instead of inline) so QC + admin paths produce
+ * identical inbox UX for the same outcome.
+ */
+function verdictNotificationCopy(
+  decision: 'approve' | 'reject' | 'request_revision',
+  feedback: string | null | undefined,
+): { type: string; title: string; body?: string } {
+  const trimmed = feedback?.trim() ? feedback.trim().slice(0, 140) : undefined
+  if (decision === 'approve') {
+    return {
+      type: 'annotation.approved',
+      title: 'Your annotation was approved',
+      body: trimmed,
+    }
+  }
+  if (decision === 'reject') {
+    return {
+      type: 'annotation.rejected',
+      title: 'Your annotation was rejected',
+      body: trimmed ?? 'Open the annotation to see the reviewer’s notes.',
+    }
+  }
+  return {
+    type: 'annotation.revising',
+    title: 'Reviewer asked for a revision',
+    body: trimmed ?? 'Open the annotation to see what to fix.',
+  }
 }
 
 // ─── Review thread — submitter replies to a reviewer's feedback ───────────
@@ -468,6 +527,41 @@ export async function respondToReview(
       },
     })
     .returning({ id: events.id })
+
+  // Notify the most recent reviewer that the submitter wrote back.
+  // We pick the latest verdict/qc event on this annotation as the
+  // notification target — that's the person whose decision triggered
+  // this reply. If multiple reviewers are involved we only ping the
+  // most recent; full participant-list fan-out is overkill for v1.
+  const reviewerEvents = await db
+    .select({ actorId: events.actorId })
+    .from(events)
+    .where(
+      and(
+        eq(events.workspaceId, task.workspaceId),
+        sql`${events.payload} ->> 'annotationId' = ${parsed.annotationId}`,
+        sql`${events.type} IN ('annotation.approved', 'annotation.rejected', 'annotation.revised', 'annotation.qc_passed')`,
+      ),
+    )
+    .orderBy(desc(events.ts))
+    .limit(1)
+  const lastReviewerId = reviewerEvents[0]?.actorId ?? null
+  if (lastReviewerId && lastReviewerId !== me.id) {
+    await emitNotification({
+      userId: lastReviewerId,
+      workspaceId: task.workspaceId,
+      type: 'review.reply',
+      title: 'New reply on a review you wrote',
+      body: trimmed.slice(0, 140),
+      linkUrl: `/workspaces/${task.workspaceId}/topics/${topic.id}/annotate?annotationId=${parsed.annotationId}`,
+      payload: {
+        annotationId: parsed.annotationId,
+        topicId: topic.id,
+        taskId: task.id,
+      },
+      actorId: me.id,
+    })
+  }
 
   return { ok: true as const, eventId: evt.id }
 }

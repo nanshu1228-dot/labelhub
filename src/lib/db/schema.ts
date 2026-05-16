@@ -1022,6 +1022,77 @@ export const walletBalance = pgTable(
 )
 
 // =================================================================
+// Notifications — annotator-facing inbox
+//
+// Append-only feed of "things that happened to this user" — their
+// annotation was rejected, someone replied in their review thread,
+// admin approved their work, etc. Surfaced in /my/inbox and a small
+// header bell with an unread badge.
+//
+// Why a dedicated table instead of projecting from `events`:
+//   - events is workspace-scoped (actor + payload); to find "events
+//     about user X" we'd need to scan + filter every workspace
+//   - read state is per-recipient, not per-event
+//   - we want a denormalized link_url + snippet so the inbox renders
+//     fast without N+1 lookups
+//   - notifications can be safely deleted (e.g. when underlying
+//     annotation is hard-deleted); events stay immutable
+//
+// Notification types live in code (`NotificationType` in
+// `lib/notifications/emit.ts`), not enum, so adding new ones doesn't
+// need a migration.
+// =================================================================
+export const notifications = pgTable(
+  'notifications',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    /** Recipient — the user whose inbox this lands in. */
+    userId: uuid('user_id')
+      .references(() => users.id)
+      .notNull(),
+    /** Workspace scope. Helps filter "show me only Acme inbox" and
+     *  prevents cross-tenant leakage when a user is in multiple
+     *  workspaces. */
+    workspaceId: uuid('workspace_id')
+      .references(() => workspaces.id)
+      .notNull(),
+    /** Free-form type string ('annotation.rejected', 'review.reply',
+     *  'annotation.approved', 'annotation.revising'). Kept as text
+     *  not enum so adding new types is migration-free. */
+    type: text('type').notNull(),
+    /** Short human-readable title shown in the inbox list. */
+    title: text('title').notNull(),
+    /** Optional 1-line preview (annotation snippet, reviewer reply
+     *  excerpt, etc.). Kept short — UI truncates beyond ~120 chars. */
+    body: text('body'),
+    /** Where clicking the notification jumps to (review page,
+     *  submissions list, etc.). Stored denormalized so we don't
+     *  re-resolve routes on render. */
+    linkUrl: text('link_url').notNull(),
+    /** Free-form payload for the UI to render richer states later
+     *  (e.g. show the verdict color, render a snippet diff). */
+    payload: jsonb('payload').default({}).notNull(),
+    /** Who triggered this notification (reviewer / admin). Null for
+     *  system-generated ones (auto-approval, etc.). Useful in the
+     *  inbox row for "from X". */
+    actorId: uuid('actor_id').references(() => users.id),
+    /** When the recipient marked the notification as read. Null = unread. */
+    readAt: timestamp('read_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    /** Hot path: count + list unread for current user. */
+    userUnreadIdx: index('notifications_user_unread_idx')
+      .on(table.userId, table.readAt),
+    /** Hot path: list-by-date for current user. */
+    userCreatedIdx: index('notifications_user_created_idx').on(
+      table.userId,
+      table.createdAt,
+    ),
+  }),
+)
+
+// =================================================================
 // Relations
 // =================================================================
 export const usersRelations = relations(users, ({ many }) => ({

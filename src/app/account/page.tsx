@@ -8,6 +8,7 @@ import { optionalUser } from '@/lib/auth/guards'
 import { listMyWorkspaces } from '@/lib/actions/membership'
 import { userAdminsAnyWorkspace } from '@/lib/queries/admin-dashboard'
 import { listUnclaimedSeededWorkspaces } from '@/lib/actions/admin-claim'
+import { countUnreadNotifications } from '@/lib/queries/notifications'
 import { AccountClient } from '@/components/account/account-client'
 
 export const metadata: Metadata = {
@@ -37,13 +38,15 @@ export default async function AccountPage() {
     .where(eq(users.id, me.id))
     .limit(1)
 
-  const [myWorkspaces, isAdminAnywhere, unclaimedSeeded] = await Promise.all([
-    listMyWorkspaces().catch(() => []),
-    userAdminsAnyWorkspace(me.id).catch(() => false),
-    listUnclaimedSeededWorkspaces().catch(
-      () => [] as Array<{ id: string; name: string }>,
-    ),
-  ])
+  const [myWorkspaces, isAdminAnywhere, unclaimedSeeded, unreadInbox] =
+    await Promise.all([
+      listMyWorkspaces().catch(() => []),
+      userAdminsAnyWorkspace(me.id).catch(() => false),
+      listUnclaimedSeededWorkspaces().catch(
+        () => [] as Array<{ id: string; name: string }>,
+      ),
+      countUnreadNotifications(me.id).catch(() => 0),
+    ])
 
   return (
     <div className="app-light min-h-screen" style={{ background: 'var(--bg)' }}>
@@ -79,6 +82,7 @@ export default async function AccountPage() {
           workspaces={myWorkspaces}
           isAdminAnywhere={isAdminAnywhere}
           unclaimedSeeded={unclaimedSeeded}
+          unreadInboxCount={unreadInbox}
         />
       </main>
     </div>
