@@ -53,11 +53,11 @@ function parseConfig(raw: unknown): TaskTemplateConfig | null {
   const out: TaskTemplateConfig = {}
   if (Array.isArray(obj.pairChecklist)) {
     const items = obj.pairChecklist.filter(isChecklistItem)
-    if (items.length > 0) out.pairChecklist = items
+    if (items.length > 0) out.pairChecklist = pruneOrphanConditions(items)
   }
   if (Array.isArray(obj.arenaDimensions)) {
     const items = obj.arenaDimensions.filter(isChecklistItem)
-    if (items.length > 0) out.arenaDimensions = items
+    if (items.length > 0) out.arenaDimensions = pruneOrphanConditions(items)
   }
   return Object.keys(out).length > 0 ? out : null
 }
@@ -73,5 +73,58 @@ function isChecklistItem(v: unknown): v is PairChecklistItem {
   ) {
     return false
   }
+  // showWhen validation: when present, must be { parentId: string,
+  // when: boolean | number }. We accept malformed showWhen by dropping
+  // it (the item just renders unconditionally) rather than rejecting
+  // the whole item — keeps forward-compat with future condition shapes.
+  if (item.showWhen !== undefined) {
+    if (!isConditionalDisplay(item.showWhen)) {
+      // Drop the bad showWhen but keep the item.
+      delete item.showWhen
+    }
+  }
   return true
+}
+
+function isConditionalDisplay(v: unknown): boolean {
+  if (!v || typeof v !== 'object') return false
+  const c = v as Record<string, unknown>
+  if (typeof c.parentId !== 'string' || c.parentId.length === 0) return false
+  if (typeof c.when !== 'boolean' && typeof c.when !== 'number') return false
+  if (typeof c.when === 'number') {
+    if (!Number.isFinite(c.when) || c.when < 1 || c.when > 5) return false
+  }
+  return true
+}
+
+/**
+ * Sweep an item list to remove any showWhen reference that points at a
+ * missing parent OR creates a cycle. We allow only ONE level of nesting
+ * (a conditional item's parent must itself be unconditional) to keep
+ * eval simple and avoid the need for topological resolution.
+ *
+ * Bad references silently drop to "unconditional" — same forward-compat
+ * stance as `isChecklistItem` above.
+ */
+function pruneOrphanConditions(
+  items: readonly PairChecklistItem[],
+): readonly PairChecklistItem[] {
+  const idSet = new Set(items.map((i) => i.id))
+  // Map parentId → does that parent itself have a showWhen
+  const hasOwnCondition = new Set(
+    items.filter((i) => i.showWhen).map((i) => i.id),
+  )
+  return items.map((i) => {
+    if (!i.showWhen) return i
+    const refOk =
+      idSet.has(i.showWhen.parentId) &&
+      i.showWhen.parentId !== i.id &&
+      !hasOwnCondition.has(i.showWhen.parentId)
+    if (!refOk) {
+      const { showWhen: _drop, ...rest } = i
+      void _drop
+      return rest
+    }
+    return i
+  })
 }

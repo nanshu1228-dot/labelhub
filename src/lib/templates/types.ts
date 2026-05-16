@@ -119,6 +119,36 @@ export const uiHintsSchema = z.object({
 export type UIHints = z.infer<typeof uiHintsSchema>
 
 /**
+ * Conditional-display predicate for a follow-up rubric item.
+ *
+ * The intent is to support nested check-then-detail flows: "is there code
+ * in the response?" → if yes, "does the code compile?". Letting authors
+ * declare this in the template config (vs hardcoding it in React) keeps
+ * the engine in charge — the form code reads `showWhen` and decides what
+ * to render.
+ *
+ * Two flavors, picked by the host template:
+ *   - pair-rubric (boolean answers) → `when: true | false`. The child
+ *     item renders when the parent's answer on the SAME side equals the
+ *     declared boolean. We evaluate per-side: if A=true and B=false, then
+ *     "child requires parent=true" shows for A only.
+ *   - arena-gsb (1-5 scores) → `when: number` in [1, 5]. The child
+ *     renders when the parent's score on that side is `>= when` (so
+ *     `when: 4` means "only ask if the parent dimension scored ≥4").
+ *     We picked min-threshold-only for v1; we can extend to operator+rhs
+ *     later if real workflows need < or =.
+ *
+ * `parentId` MUST reference another item in the same list. Validation in
+ * `effective.parseConfig` ensures the parent exists and isn't itself
+ * conditional (one level of nesting, not arbitrary trees — that keeps
+ * the cycle detection trivial).
+ */
+export interface ConditionalDisplay {
+  parentId: string
+  when: boolean | number
+}
+
+/**
  * Pair-comparison checklist item — used by `pair-rubric` (each item is
  * a yes/no check) and `arena-gsb` (each item is a 1-5 scoring dimension).
  *
@@ -136,6 +166,12 @@ export interface PairChecklistItem {
   name: string
   /** Optional one-liner shown under the label. */
   description?: string
+  /**
+   * When set, this item renders only after the parent has been answered
+   * in a matching way. See `ConditionalDisplay`. Items WITHOUT showWhen
+   * are always visible — that's the only top-level case.
+   */
+  showWhen?: ConditionalDisplay
 }
 
 /**

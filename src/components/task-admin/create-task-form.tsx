@@ -4,7 +4,9 @@ import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { createTask } from '@/lib/actions/tasks'
+import { generateTemplateFromDescription } from '@/lib/actions/template-generator'
 import type {
+  ConditionalDisplay,
   PairChecklistItem,
   TemplateMode,
 } from '@/lib/templates/types'
@@ -39,8 +41,21 @@ function toEditable(items: readonly PairChecklistItem[]): EditableItem[] {
     id: i.id,
     name: i.name,
     description: i.description,
+    showWhen: i.showWhen,
     _key: nextKey(),
   }))
+}
+
+function formatShowWhen(
+  cond: ConditionalDisplay,
+  mode: TemplateMode,
+): string {
+  if (typeof cond.when === 'boolean') {
+    return `${cond.parentId} = ${cond.when ? 'yes' : 'no'}`
+  }
+  // arena-gsb: numeric threshold
+  void mode
+  return `${cond.parentId} ≥ ${cond.when}`
 }
 
 export function CreateTaskForm({
@@ -77,6 +92,13 @@ export function CreateTaskForm({
   )
   const [error, setError] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
+  // 🪄 NL → rubric generator UI state. Modal stays self-contained so
+  // the form's existing flow is unchanged when the admin doesn't use AI.
+  const [genOpen, setGenOpen] = useState(false)
+  const [genDescription, setGenDescription] = useState('')
+  const [genPending, startGenTransition] = useTransition()
+  const [genError, setGenError] = useState<string | null>(null)
+  const [genSummary, setGenSummary] = useState<string | null>(null)
 
   const supportsRubricEditor =
     templateMode === 'pair-rubric' || templateMode === 'arena-gsb'
@@ -100,6 +122,46 @@ export function CreateTaskForm({
   }
   function restoreDefaults() {
     setItems(toEditable(initialChecklist))
+  }
+
+  /**
+   * Call the NL → rubric server action with the modal's description and
+   * REPLACE the current rubric items with the result. The admin then
+   * reviews each row + can edit names/descriptions before saving.
+   *
+   * We don't append — we replace. If the admin wanted to keep their
+   * existing rows, they'd close the modal without generating.
+   */
+  function generateFromDescription() {
+    if (!supportsRubricEditor) return
+    const desc = genDescription.trim()
+    if (desc.length < 8) {
+      setGenError('Describe the task in a sentence or two (≥ 8 chars).')
+      return
+    }
+    setGenError(null)
+    setGenSummary(null)
+    startGenTransition(async () => {
+      try {
+        const r = await generateTemplateFromDescription({
+          workspaceId,
+          mode: templateMode as 'pair-rubric' | 'arena-gsb',
+          description: desc,
+        })
+        setItems(
+          r.template.items.map((i) => ({
+            _key: nextKey(),
+            id: i.id,
+            name: i.name,
+            description: i.description,
+            showWhen: i.showWhen,
+          })),
+        )
+        setGenSummary(r.template.summary)
+      } catch (e) {
+        setGenError(e instanceof Error ? e.message : 'Generation failed.')
+      }
+    })
   }
 
   function submit() {
@@ -137,6 +199,11 @@ export function CreateTaskForm({
           id: idTrim,
           name: nameTrim,
           description: it.description?.trim() || undefined,
+          // Preserve conditional follow-up from AI generation or
+          // restore-defaults. The form doesn't yet expose direct
+          // editing of showWhen — admins curate it via the modal +
+          // delete-row workflow.
+          showWhen: it.showWhen,
         })
       }
       if (cleaned.length === 0) {
@@ -154,6 +221,17 @@ export function CreateTaskForm({
           : { arenaDimensions: cleaned }
       // Only ship the override if it actually differs from the preset —
       // saves a row of JSON in the DB and is honest about "default".
+      // Compares showWhen too: a rubric that swaps a default item for a
+      // conditional follow-up is NOT preset-equal even if the surface
+      // text matches.
+      const sameCondition = (
+        a: ConditionalDisplay | undefined,
+        b: ConditionalDisplay | undefined,
+      ) => {
+        if (!a && !b) return true
+        if (!a || !b) return false
+        return a.parentId === b.parentId && a.when === b.when
+      }
       const presetEqual =
         cleaned.length === initialChecklist.length &&
         cleaned.every((c, i) => {
@@ -161,7 +239,8 @@ export function CreateTaskForm({
           return (
             p.id === c.id &&
             p.name === c.name &&
-            (p.description ?? undefined) === c.description
+            (p.description ?? undefined) === c.description &&
+            sameCondition(p.showWhen, c.showWhen)
           )
         })
       if (presetEqual) templateConfig = undefined
@@ -274,6 +353,25 @@ export function CreateTaskForm({
             <div className="flex items-center gap-3 ts-11 mono">
               <button
                 type="button"
+                onClick={() => {
+                  setGenOpen(true)
+                  setGenError(null)
+                }}
+                className="ts-11 mono"
+                style={{
+                  background: 'var(--accent-soft)',
+                  color: 'var(--accent)',
+                  border: '1px dashed var(--accent-line)',
+                  borderRadius: 4,
+                  padding: '2px 10px',
+                  cursor: 'pointer',
+                }}
+                title="Describe the task in natural language and let Claude propose the rubric"
+              >
+                🪄 generate from description
+              </button>
+              <button
+                type="button"
                 onClick={restoreDefaults}
                 style={{ color: 'var(--mute2)', background: 'none', border: 'none', cursor: 'pointer' }}
               >
@@ -296,6 +394,21 @@ export function CreateTaskForm({
               </button>
             </div>
           </div>
+          {genOpen && (
+            <GenerateModal
+              mode={templateMode}
+              description={genDescription}
+              setDescription={setGenDescription}
+              pending={genPending}
+              error={genError}
+              summary={genSummary}
+              onClose={() => {
+                setGenOpen(false)
+                setGenSummary(null)
+              }}
+              onGenerate={generateFromDescription}
+            />
+          )}
           <p
             className="ts-12 mb-3"
             style={{ color: 'var(--mute2)' }}
@@ -377,6 +490,20 @@ export function CreateTaskForm({
                         className="w-full px-2 py-1 ts-13"
                         style={inlineInputStyle}
                       />
+                      {it.showWhen && (
+                        <div
+                          className="ts-11 mono mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded"
+                          style={{
+                            background: 'var(--accent-soft)',
+                            color: 'var(--accent)',
+                            border: '1px solid var(--accent-line)',
+                          }}
+                          title="Conditional follow-up — only shown to raters when the parent answer matches"
+                        >
+                          <span>↳</span>
+                          <span>show when {formatShowWhen(it.showWhen, templateMode)}</span>
+                        </div>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-right">
                       <button
@@ -498,5 +625,175 @@ function Field({
       </span>
       {children}
     </label>
+  )
+}
+
+/**
+ * NL → rubric generator modal.
+ *
+ * Admin describes the task in a textarea, clicks generate. The action
+ * shows a summary line (so they spot misinterpretations) and replaces
+ * the form's rubric items in-place. Closing without generating keeps
+ * the existing items untouched.
+ *
+ * UX intent: this is a sketch tool, not a one-click "ship it". The
+ * admin always reviews + tweaks individual items before saving the
+ * task — same as if they'd typed the rubric by hand.
+ */
+function GenerateModal({
+  mode,
+  description,
+  setDescription,
+  pending,
+  error,
+  summary,
+  onClose,
+  onGenerate,
+}: {
+  mode: TemplateMode
+  description: string
+  setDescription: (v: string) => void
+  pending: boolean
+  error: string | null
+  summary: string | null
+  onClose: () => void
+  onGenerate: () => void
+}) {
+  const example =
+    mode === 'pair-rubric'
+      ? '比如:评估两个客服回答的质量,检查回答是否切题、是否礼貌、是否提供了可执行步骤;如果提供了步骤,再检查步骤是否完整。'
+      : '比如:评估两个翻译版本,从准确性、流畅度、文化适配三个维度1-5评分;如果准确性≥4,再细评术语精确度。'
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'oklch(0 0 0 / 0.45)',
+        zIndex: 100,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 24,
+      }}
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="rounded-md p-5"
+        style={{
+          width: 560,
+          maxWidth: '100%',
+          background: 'var(--bg)',
+          border: '1px solid var(--line)',
+          boxShadow: '0 12px 40px rgba(0,0,0,0.18)',
+        }}
+      >
+        <div className="flex items-baseline justify-between mb-2">
+          <div className="lbl" style={{ color: 'var(--accent)' }}>
+            🪄 GENERATE RUBRIC FROM DESCRIPTION
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="ts-12 mono"
+            style={{
+              color: 'var(--mute2)',
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+            }}
+          >
+            close
+          </button>
+        </div>
+        <p className="ts-12 mb-3" style={{ color: 'var(--mute)' }}>
+          Describe what you want raters to check. Claude returns a draft
+          rubric — you can edit every row before saving the task.
+        </p>
+        <textarea
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          rows={6}
+          maxLength={4000}
+          placeholder={example}
+          className="w-full px-3 py-2 ts-13 rounded-md"
+          style={{
+            background: 'var(--panel)',
+            border: '1px solid var(--line)',
+            color: 'var(--text)',
+            outline: 'none',
+            resize: 'vertical',
+            fontFamily: 'var(--font-geist-sans), system-ui',
+          }}
+        />
+        {summary && (
+          <div
+            className="ts-12 mt-2 p-2 rounded"
+            style={{
+              background: 'var(--success-soft)',
+              border: '1px solid oklch(0.5 0.13 150 / 0.35)',
+              color: 'var(--text)',
+            }}
+          >
+            <span
+              className="lbl mr-2"
+              style={{ color: 'oklch(0.45 0.15 150)' }}
+            >
+              CLAUDE READ THIS AS:
+            </span>
+            {summary}
+          </div>
+        )}
+        {error && (
+          <div
+            className="ts-12 mt-2 p-2 rounded"
+            style={{
+              background: 'var(--danger-soft)',
+              border: '1px solid oklch(0.55 0.2 25 / 0.35)',
+              color: 'var(--danger)',
+            }}
+          >
+            {error}
+          </div>
+        )}
+        <div className="flex items-center justify-end gap-2 mt-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="ts-13 mono"
+            style={{
+              background: 'transparent',
+              color: 'var(--text)',
+              border: '1px solid var(--line)',
+              borderRadius: 6,
+              padding: '6px 14px',
+              cursor: 'pointer',
+            }}
+          >
+            cancel
+          </button>
+          <button
+            type="button"
+            onClick={onGenerate}
+            disabled={pending}
+            className="ts-13 mono"
+            style={{
+              background: 'var(--accent)',
+              color: 'white',
+              border: '1px solid var(--accent)',
+              borderRadius: 6,
+              padding: '6px 14px',
+              fontWeight: 500,
+              cursor: pending ? 'not-allowed' : 'pointer',
+              opacity: pending ? 0.6 : 1,
+            }}
+          >
+            {pending ? 'generating…' : '✨ generate'}
+          </button>
+        </div>
+      </div>
+    </div>
   )
 }

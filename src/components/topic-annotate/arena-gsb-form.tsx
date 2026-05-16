@@ -74,13 +74,42 @@ function dimensionsToPayload(state: DimensionsState) {
   return out
 }
 
+/**
+ * For arena-gsb, a conditional dimension renders when the parent's score
+ * on at least one side is ≥ `showWhen.when`. Lets admins set up follow-
+ * ups like "if accuracy ≥ 4, ask about citation quality" — when the
+ * parent dimension is low we never bother the rater with the deep-dive
+ * question.
+ *
+ * Items without showWhen are always visible.
+ */
+function isDimensionVisible(
+  dim: PairChecklistItem,
+  state: DimensionsState,
+): boolean {
+  if (!dim.showWhen) return true
+  if (typeof dim.showWhen.when !== 'number') return false
+  const parent = state[dim.showWhen.parentId]
+  if (!parent) return false
+  const min = dim.showWhen.when
+  return (
+    (typeof parent.a === 'number' && parent.a >= min) ||
+    (typeof parent.b === 'number' && parent.b >= min)
+  )
+}
+
 function isComplete(
+  spec: readonly PairChecklistItem[],
   state: DimensionsState,
   verdict: Verdict,
   reasoning: string,
 ): { ok: true } | { ok: false; reason: string } {
-  for (const [, v] of Object.entries(state)) {
-    if (typeof v.a !== 'number' || typeof v.b !== 'number') {
+  // Check only currently-visible dimensions — hidden follow-ups behind
+  // an unmet threshold are NOT required.
+  for (const dim of spec) {
+    if (!isDimensionVisible(dim, state)) continue
+    const v = state[dim.id]
+    if (typeof v?.a !== 'number' || typeof v?.b !== 'number') {
       return { ok: false, reason: 'Score every dimension for both models.' }
     }
   }
@@ -173,7 +202,7 @@ export function ArenaGsbForm({
 
   function submit() {
     if (isReadOnly) return
-    const check = isComplete(dimensions, verdict, reasoning)
+    const check = isComplete(spec, dimensions, verdict, reasoning)
     if (!check.ok) {
       setError(check.reason)
       return
@@ -289,7 +318,12 @@ export function ArenaGsbForm({
               </tr>
             </thead>
             <tbody>
-              {spec.map((dim, idx) => {
+              {spec
+                // Hide conditional dimensions whose parent score hasn't
+                // crossed the threshold yet. Listed in template order so
+                // a follow-up always appears after its parent row.
+                .filter((dim) => isDimensionVisible(dim, dimensions))
+                .map((dim, idx) => {
                 const row = dimensions[dim.id] ?? { a: null, b: null }
                 const gsb =
                   typeof row.a === 'number' && typeof row.b === 'number'
@@ -301,17 +335,33 @@ export function ArenaGsbForm({
                     style={{
                       borderTop:
                         idx === 0 ? 'none' : '1px solid var(--line)',
+                      background: dim.showWhen ? 'var(--panel2)' : undefined,
                     }}
                   >
-                    <td className="px-4 py-3 align-top">
-                      <div
-                        className="ts-13"
-                        style={{
-                          color: 'var(--text)',
-                          fontWeight: 500,
-                        }}
-                      >
-                        {dim.name}
+                    <td
+                      className="px-4 py-3 align-top"
+                      style={{ paddingLeft: dim.showWhen ? 32 : undefined }}
+                    >
+                      <div className="flex items-center gap-2">
+                        {dim.showWhen && (
+                          <span
+                            className="ts-11 mono"
+                            style={{ color: 'var(--accent)' }}
+                            aria-hidden
+                            title={`Follow-up — only asked when ${dim.showWhen.parentId} ≥ ${dim.showWhen.when}`}
+                          >
+                            ↳
+                          </span>
+                        )}
+                        <span
+                          className="ts-13"
+                          style={{
+                            color: 'var(--text)',
+                            fontWeight: 500,
+                          }}
+                        >
+                          {dim.name}
+                        </span>
                       </div>
                       {dim.description && (
                         <div

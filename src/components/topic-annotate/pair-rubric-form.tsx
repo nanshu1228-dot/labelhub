@@ -106,6 +106,47 @@ function countComplete(state: RatingsState): { done: number; total: number } {
 }
 
 /**
+ * Decide whether a conditional item should be visible given the parent's
+ * current answer. For pair-rubric: parent.a or parent.b must equal
+ * showWhen.when on at least one side. (We surface the item the moment
+ * EITHER side matches; the annotator can still choose to leave the
+ * unmatched side blank.)
+ *
+ * Items without a showWhen are always visible (true).
+ */
+function isItemVisible(
+  item: PairChecklistItem,
+  state: RatingsState,
+): boolean {
+  if (!item.showWhen) return true
+  if (typeof item.showWhen.when !== 'boolean') return false
+  const parent = state[item.showWhen.parentId]
+  if (!parent) return false
+  return parent.a === item.showWhen.when || parent.b === item.showWhen.when
+}
+
+/**
+ * Same as countComplete but only counts items currently visible. Hidden
+ * conditional items are excluded so the "fully filled" gate doesn't ask
+ * for answers that aren't shown.
+ */
+function countCompleteVisible(
+  checklist: readonly PairChecklistItem[],
+  customItems: readonly CustomItem[],
+  state: RatingsState,
+): { done: number; total: number } {
+  let done = 0
+  let total = 0
+  for (const item of [...checklist, ...customItems]) {
+    if (!isItemVisible(item, state)) continue
+    total += 1
+    const val = state[item.id]
+    if (typeof val?.a === 'boolean' && typeof val?.b === 'boolean') done += 1
+  }
+  return { done, total }
+}
+
+/**
  * Generate a stable-ish id for a new custom item. Format:
  * `custom_<slug>_<short-random>` — keeps ids snake_case-ish so they
  * pass the rubric-id regex if anyone ever validates server-side, and
@@ -172,7 +213,10 @@ export function PairRubricForm({
   const [error, setError] = useState<string | null>(null)
   const [savedAt, setSavedAt] = useState<Date | null>(null)
 
-  const { done, total } = countComplete(ratings)
+  // Count completion only for items currently visible. Conditional items
+  // hidden behind an unmatched parent answer aren't required, otherwise
+  // submit would be blocked on questions the annotator can't even see.
+  const { done, total } = countCompleteVisible(checklist, customItems, ratings)
   const isReadOnly =
     topicStatus !== 'drafting' && topicStatus !== 'revising'
 
@@ -317,19 +361,47 @@ export function PairRubricForm({
             <tbody>
               {[
                 ...checklist.map((item) => ({ ...item, kind: 'preset' as const })),
+                // Custom items never carry a showWhen — annotator-added
+                // rubric items are always unconditional. Stamping
+                // showWhen=undefined keeps the union type uniform so
+                // the isItemVisible call below typechecks.
                 ...customItems.map((item) => ({
                   ...item,
+                  showWhen: undefined,
                   kind: 'custom' as const,
                 })),
-              ].map((item, idx) => (
+              ]
+                // Hide conditional items whose parent answer doesn't match
+                // the showWhen predicate yet. Once the annotator answers
+                // the parent, the row fades in below it.
+                .filter((item) => isItemVisible(item, ratings))
+                .map((item, idx) => (
                 <tr
                   key={item.id}
                   style={{
                     borderTop: idx === 0 ? 'none' : '1px solid var(--line)',
+                    // Subtly tint conditional follow-ups so the relationship
+                    // is visible without a separate column.
+                    background: item.showWhen ? 'var(--panel2)' : undefined,
                   }}
                 >
-                  <td className="px-4 py-3 align-top">
+                  <td
+                    className="px-4 py-3 align-top"
+                    style={{
+                      paddingLeft: item.showWhen ? 32 : undefined,
+                    }}
+                  >
                     <div className="flex items-center gap-2">
+                      {item.showWhen && (
+                        <span
+                          className="ts-11 mono"
+                          style={{ color: 'var(--accent)' }}
+                          aria-hidden
+                          title="Conditional follow-up — depends on the answer to a parent item"
+                        >
+                          ↳
+                        </span>
+                      )}
                       <span
                         className="ts-13"
                         style={{ color: 'var(--text)', fontWeight: 500 }}
