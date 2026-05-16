@@ -388,6 +388,12 @@ export default async function WorkspacePage(
           hint="audit log entries"
           href={`/workspaces/${id}/activity`}
         />
+        <StatTile
+          label="AUDIT"
+          value="🔍"
+          hint="search 打回 / restore / trust by person"
+          href={`/workspaces/${id}/audit`}
+        />
         {workspace.templateMode === 'agent-trace-eval' && (
           <StatTile
             label="EVAL-RUN"

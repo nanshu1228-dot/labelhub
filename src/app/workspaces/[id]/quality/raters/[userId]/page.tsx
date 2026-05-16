@@ -68,7 +68,7 @@ export default async function RaterDrilldownPage(props: {
       style={{ background: 'var(--bg)' }}
     >
       <main className="max-w-[1000px] mx-auto">
-        <nav className="ts-12 mono flex items-center gap-1.5 mb-4">
+        <nav className="ts-12 mono flex items-center gap-1.5 mb-4 flex-wrap">
           <Link
             href={`/workspaces/${workspaceId}`}
             style={{ color: 'var(--mute)' }}
@@ -88,6 +88,19 @@ export default async function RaterDrilldownPage(props: {
           <span style={{ color: 'var(--text)' }}>
             {drill.displayName ?? drill.email?.split('@')[0] ?? 'rater'}
           </span>
+          <Link
+            href={`/workspaces/${workspaceId}/audit?user=${userId}`}
+            className="ml-auto ts-11 mono px-2 py-0.5 rounded"
+            style={{
+              background: 'var(--panel)',
+              color: 'var(--accent)',
+              border: '1px solid var(--accent-line)',
+              textDecoration: 'none',
+            }}
+            title="See every 打回 / restore / status change for this rater"
+          >
+            audit trail →
+          </Link>
         </nav>
 
         <div className="mb-2">
