@@ -38,6 +38,14 @@ export type TopicQueueItem = {
    */
   state: 'mine' | 'fresh' | 'submitted'
   createdAt: Date
+  /**
+   * AI-estimated 1-5 difficulty score (null = not estimated). Shown as
+   * a chip on the queue card so the annotator knows what they're
+   * picking up before clicking.
+   */
+  difficulty: number | null
+  /** One-line AI rationale, surfaced in a tooltip on the chip. */
+  difficultyReason: string | null
 }
 
 export interface ListMyTopicQueueOpts {
@@ -88,6 +96,8 @@ export async function listMyTopicQueueForUser(
       topicStatus: topics.status,
       assignedTo: topics.assignedTo,
       topicCreatedAt: topics.createdAt,
+      difficulty: topics.difficulty,
+      difficultyReason: topics.difficultyReason,
       myAnnotationSubmittedAt: annotations.submittedAt,
     })
     .from(topics)
@@ -151,6 +161,8 @@ export async function listMyTopicQueueForUser(
       topicStatus: r.topicStatus,
       state,
       createdAt: r.topicCreatedAt,
+      difficulty: r.difficulty,
+      difficultyReason: r.difficultyReason,
     })
   }
 

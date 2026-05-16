@@ -254,6 +254,12 @@ function TopicQueueList({ items }: { items: TopicQueueItem[] }) {
                   {item.workspaceName} · {item.taskName}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
+                  {item.difficulty != null && (
+                    <DifficultyChip
+                      difficulty={item.difficulty}
+                      reason={item.difficultyReason}
+                    />
+                  )}
                   <span
                     className="mono ts-11 px-2 py-0.5 rounded"
                     style={{
@@ -289,6 +295,48 @@ function TopicQueueList({ items }: { items: TopicQueueItem[] }) {
         )
       })}
     </ul>
+  )
+}
+
+/**
+ * Difficulty chip surfaced on each queue card — gives the annotator a
+ * heads-up about how hard the AI thinks the topic is so they can plan
+ * their session. Color ramp tracks the payout multiplier:
+ *   1-2 (cheap)  → muted gray
+ *   3   (normal) → neutral
+ *   4   (harder) → warm yellow
+ *   5   (expert) → red, "this one pays"
+ */
+function DifficultyChip({
+  difficulty,
+  reason,
+}: {
+  difficulty: number
+  reason: string | null
+}) {
+  const palette: Record<number, { bg: string; fg: string; label: string }> = {
+    1: { bg: 'oklch(0.5 0 0 / 0.1)', fg: 'oklch(0.6 0 0)', label: 'easy' },
+    2: { bg: 'oklch(0.5 0 0 / 0.12)', fg: 'oklch(0.5 0 0)', label: 'light' },
+    3: { bg: 'oklch(0.55 0 0 / 0.14)', fg: 'oklch(0.45 0 0)', label: 'standard' },
+    4: { bg: 'oklch(0.7 0.14 75 / 0.15)', fg: 'oklch(0.55 0.14 75)', label: 'hard' },
+    5: { bg: 'oklch(0.55 0.2 25 / 0.15)', fg: 'var(--danger)', label: 'expert' },
+  }
+  const p = palette[Math.max(1, Math.min(5, difficulty))]
+  return (
+    <span
+      className="mono ts-11 px-2 py-0.5 rounded inline-flex items-center gap-1"
+      style={{
+        background: p.bg,
+        color: p.fg,
+        border: `1px solid ${p.fg}33`,
+      }}
+      title={reason ?? `AI rated this topic difficulty ${difficulty}/5`}
+    >
+      <span aria-hidden>🔥</span>
+      <span>
+        {p.label} · {difficulty}/5
+      </span>
+    </span>
   )
 }
 

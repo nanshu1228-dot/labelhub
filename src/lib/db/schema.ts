@@ -211,6 +211,23 @@ export const topics = pgTable(
     status: workflowStageEnum('status').default('drafting').notNull(),
     assignedTo: uuid('assigned_to').references(() => users.id),
     version: integer('version').default(1).notNull(), // optimistic concurrency
+    /**
+     * AI-estimated difficulty 1..5. Null = not estimated yet (legacy
+     * topics + admins who opted out). Feeds the adaptive-pricing
+     * multiplier: harder topics pay more.
+     *
+     * Set by the AI difficulty estimator (one-shot Claude call) at
+     * topic-create time when the admin opts in. Once set, never
+     * changes — if admin disagrees they can re-run estimation, but
+     * the historical value is preserved in `events` via the audit
+     * trail. (Phase-8.)
+     */
+    difficulty: integer('difficulty'),
+    /** One-line AI rationale for the difficulty score. Surfaced in
+     *  /my/queue and admin task pages so the call is interpretable. */
+    difficultyReason: text('difficulty_reason'),
+    /** When the estimator ran. Null mirrors `difficulty` null. */
+    difficultyAt: timestamp('difficulty_at'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (table) => ({

@@ -20,6 +20,29 @@
 import { z } from 'zod'
 import { economyConfigSchema, type EconomyConfig } from '@/lib/templates/types'
 
+/**
+ * Translate difficulty (1-5) into a payout multiplier in basis points.
+ * Defined here (instead of imported from lib/ai/difficulty-estimator)
+ * because this whole module is intentionally side-effect-free and
+ * callable from client code — pulling in the `server-only` AI module
+ * breaks Turbopack's client/server boundary check.
+ *
+ * Curve:
+ *   1 → 70bp  (0.70×)   - trivial topics, small discount
+ *   2 → 85bp  (0.85×)
+ *   3 → 100bp (1.00×)   - baseline (the average topic)
+ *   4 → 130bp (1.30×)
+ *   5 → 160bp (1.60×)   - expert topics, meaningful bump
+ *
+ * Capped at 1.6× so the trust-score multiplier (up to 2.5× by default)
+ * stays the dominant force on final pay — calibration > difficulty.
+ */
+function difficultyMultiplierBp(difficulty: number | null | undefined): number {
+  if (difficulty == null || !Number.isFinite(difficulty)) return 100
+  const d = Math.max(1, Math.min(5, Math.round(difficulty)))
+  return [70, 85, 100, 130, 160][d - 1]
+}
+
 // ─── Inputs ─────────────────────────────────────────────────────────────
 
 export interface PayoutCalcInput {
@@ -31,6 +54,20 @@ export interface PayoutCalcInput {
    * The pricing engine maps this onto economy.qualityMultiplierMin..Max.
    */
   trustScore: number
+  /**
+   * Optional AI-estimated topic difficulty (1-5). When set, applied
+   * MULTIPLICATIVELY on top of the trust multiplier. Defaults to
+   * difficulty=3 (1.0× — no adjustment) when missing.
+   *
+   * Curve lives in `difficultyMultiplierBp()`:
+   *   1→0.70× · 2→0.85× · 3→1.00× · 4→1.30× · 5→1.60×
+   *
+   * Why multiplicative instead of additive: keeps trust score's
+   * relative effect intact (a trusted rater still earns 2.5× as much
+   * as a fresh one on any topic), and keeps the formula auditable —
+   * one knob, one explanation.
+   */
+  difficulty?: number | null
   /** Positive bumps surfaced from upstream (streak, gold-standard hit, etc.). */
   bonusAmountMinor?: number
   /** Negative bumps surfaced from upstream (clawback, late submission, etc.). */
@@ -44,9 +81,15 @@ export interface PayoutCalcResult {
   baseAmountMinor: number
   /** Quality multiplier in BASIS POINTS (100 = 1.00x, 250 = 2.50x). Stored as int to avoid float drift. */
   qualityMultiplierBp: number
+  /**
+   * Difficulty multiplier in BP. 100 = 1.00× (no adjustment). Stored
+   * separately from quality so the UI can show "you earned more here
+   * because the topic was hard, not because you got better at it".
+   */
+  difficultyMultiplierBp: number
   bonusAmountMinor: number
   penaltyAmountMinor: number
-  /** base × multiplier/100 + bonus − penalty. Floored to integer. */
+  /** base × qualityBp/100 × difficultyBp/100 + bonus − penalty. Floored. */
   totalAmountMinor: number
   /** When >0, the rest of the line is computed; when 0, the annotation isn't billable. */
   isBillable: boolean
@@ -89,6 +132,7 @@ export function calculatePayoutLineItem(
       currency: economy.currency ?? 'NONE',
       baseAmountMinor: 0,
       qualityMultiplierBp: 100,
+      difficultyMultiplierBp: 100,
       bonusAmountMinor: 0,
       penaltyAmountMinor: 0,
       totalAmountMinor: 0,
@@ -102,6 +146,7 @@ export function calculatePayoutLineItem(
       currency: economy.currency ?? 'ELO',
       baseAmountMinor: 0,
       qualityMultiplierBp: 100,
+      difficultyMultiplierBp: 100,
       bonusAmountMinor: 0,
       penaltyAmountMinor: 0,
       totalAmountMinor: 0,
@@ -117,6 +162,7 @@ export function calculatePayoutLineItem(
       currency: economy.currency ?? 'UNKNOWN',
       baseAmountMinor: 0,
       qualityMultiplierBp: 100,
+      difficultyMultiplierBp: 100,
       bonusAmountMinor: 0,
       penaltyAmountMinor: 0,
       totalAmountMinor: 0,
@@ -133,6 +179,7 @@ export function calculatePayoutLineItem(
       currency: 'UNKNOWN',
       baseAmountMinor: economy.baseAmountMinor,
       qualityMultiplierBp: 100,
+      difficultyMultiplierBp: 100,
       bonusAmountMinor: 0,
       penaltyAmountMinor: 0,
       totalAmountMinor: 0,
@@ -148,10 +195,18 @@ export function calculatePayoutLineItem(
   const multiplier = minMult + (maxMult - minMult) * trust
   const multiplierBp = Math.round(multiplier * 100)
 
-  // base × multiplier — done in BP space to avoid float drift.
-  const adjustedBase = Math.floor(
+  // Difficulty multiplier — defaults to 1.00× when the topic wasn't
+  // estimated. Applied multiplicatively after quality so the trust-
+  // score curve stays intact.
+  const difficultyBp = difficultyMultiplierBp(input.difficulty ?? null)
+
+  // base × qualityBp/100 × difficultyBp/100 — done in BP space to avoid float drift.
+  // Two-stage rounding (each Math.floor introduces ≤ 1bp of drift, which
+  // is < 0.0001 cents — well below any payout precision we care about).
+  const afterQuality = Math.floor(
     (economy.baseAmountMinor * multiplierBp) / 100,
   )
+  const adjustedBase = Math.floor((afterQuality * difficultyBp) / 100)
   const total = Math.max(0, adjustedBase + bonus - penalty)
 
   return {
@@ -159,6 +214,7 @@ export function calculatePayoutLineItem(
     currency,
     baseAmountMinor: economy.baseAmountMinor,
     qualityMultiplierBp: multiplierBp,
+    difficultyMultiplierBp: difficultyBp,
     bonusAmountMinor: bonus,
     penaltyAmountMinor: penalty,
     totalAmountMinor: total,
@@ -197,6 +253,7 @@ function clamp(n: number, lo: number, hi: number): number {
 export const payoutCalcInputSchema = z.object({
   economy: economyConfigSchema,
   trustScore: z.number().min(0).max(1),
+  difficulty: z.number().int().min(1).max(5).nullable().optional(),
   bonusAmountMinor: z.number().int().nonnegative().optional(),
   penaltyAmountMinor: z.number().int().nonnegative().optional(),
 })

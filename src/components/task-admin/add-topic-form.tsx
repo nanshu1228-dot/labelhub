@@ -32,6 +32,7 @@ export function AddTopicForm({
   const [bName, setBName] = useState('')
   const [bContent, setBContent] = useState('')
   const [context, setContext] = useState('')
+  const [autoDifficulty, setAutoDifficulty] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [okMsg, setOkMsg] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
@@ -63,7 +64,7 @@ export function AddTopicForm({
     setOkMsg(null)
     startTransition(async () => {
       try {
-        await createTopic({
+        const topic = await createTopic({
           taskId,
           itemData: {
             prompt: p,
@@ -77,8 +78,16 @@ export function AddTopicForm({
             },
             context: context.trim() || undefined,
           },
+          autoEstimateDifficulty: autoDifficulty,
         })
-        setOkMsg('Topic added — added to the list below.')
+        // Surface what the AI estimated so the admin knows it ran (and
+        // can spot a misjudgment immediately). NULL difficulty means
+        // we either disabled it or the call failed silently.
+        const note =
+          autoDifficulty && topic.difficulty != null
+            ? ` · 🔥 difficulty ${topic.difficulty}/5 — ${topic.difficultyReason ?? ''}`
+            : ''
+        setOkMsg(`Topic added — added to the list below.${note}`)
         reset()
         router.refresh()
       } catch (e) {
@@ -175,7 +184,19 @@ export function AddTopicForm({
         </div>
       )}
 
-      <div className="flex items-center justify-end mt-3">
+      <div className="flex items-center justify-between mt-3 gap-3 flex-wrap">
+        <label
+          className="ts-12 mono inline-flex items-center gap-2"
+          style={{ color: 'var(--mute)', cursor: 'pointer' }}
+        >
+          <input
+            type="checkbox"
+            checked={autoDifficulty}
+            onChange={(e) => setAutoDifficulty(e.target.checked)}
+            style={{ accentColor: 'var(--accent)' }}
+          />
+          <span>🪄 auto-estimate difficulty (adjusts payout)</span>
+        </label>
         <button
           onClick={submit}
           disabled={pending}
@@ -191,7 +212,11 @@ export function AddTopicForm({
             opacity: pending ? 0.5 : 1,
           }}
         >
-          {pending ? 'adding…' : 'add topic'}
+          {pending
+            ? autoDifficulty
+              ? 'adding + estimating…'
+              : 'adding…'
+            : 'add topic'}
         </button>
       </div>
     </div>
