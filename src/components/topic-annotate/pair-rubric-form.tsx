@@ -8,6 +8,7 @@ import {
 } from '@/lib/actions/annotations'
 import type { PairChecklistItem } from '@/lib/templates/types'
 import { TopicHeader } from './topic-header'
+import { AIPrecheckButton } from './ai-precheck'
 
 /**
  * Pair-Rubric annotator.
@@ -449,6 +450,12 @@ export function PairRubricForm({
             {error}
           </div>
         )}
+
+        <AIPrecheckButton
+          topicId={topicId}
+          buildDraft={buildPayload}
+          disabled={isReadOnly}
+        />
 
         <div className="mt-6 flex items-center gap-3">
           <button

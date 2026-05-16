@@ -9,6 +9,7 @@ import {
 import type { PairChecklistItem } from '@/lib/templates/types'
 import { dimensionGsb } from '@/lib/templates/modes/arena-gsb'
 import { TopicHeader } from './topic-header'
+import { AIPrecheckButton } from './ai-precheck'
 
 /**
  * Arena-GSB annotator.
@@ -421,6 +422,12 @@ export function ArenaGsbForm({
             {error}
           </div>
         )}
+
+        <AIPrecheckButton
+          topicId={topicId}
+          buildDraft={payload}
+          disabled={isReadOnly}
+        />
 
         <div className="mt-6 flex items-center gap-3">
           <button
