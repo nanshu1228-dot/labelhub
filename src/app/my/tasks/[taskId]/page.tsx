@@ -214,15 +214,18 @@ export default async function MyTaskDetailPage(props: {
             No topics in this filter.
           </div>
         ) : (
-          <ul className="flex flex-col gap-2">
-            {visible.map((t) => (
-              <TopicRow
-                key={t.topicId}
-                topic={t}
-                workspaceId={detail.task.workspaceId}
-              />
-            ))}
-          </ul>
+          <>
+            <ActiveLearningHint visible={visible} />
+            <ul className="flex flex-col gap-2">
+              {visible.map((t) => (
+                <TopicRow
+                  key={t.topicId}
+                  topic={t}
+                  workspaceId={detail.task.workspaceId}
+                />
+              ))}
+            </ul>
+          </>
         )}
       </div>
     </main>
@@ -277,6 +280,38 @@ function FilterChip({
     >
       {label} · {count}
     </Link>
+  )
+}
+
+/**
+ * Banner above the fresh topic list explaining the active-learning
+ * ordering. We only show it when (a) at least one fresh topic has a
+ * non-null IG score (meaning the DS pipeline has data to work with)
+ * AND (b) the IG scores aren't all the same (no point telling the
+ * user "we sorted by X" if X is uniform).
+ */
+function ActiveLearningHint({ visible }: { visible: MyTaskTopicRow[] }) {
+  const freshWithIg = visible.filter(
+    (t) => t.state === 'fresh' && t.igScore != null,
+  )
+  if (freshWithIg.length < 2) return null
+  const scores = freshWithIg.map((t) => t.igScore as number)
+  const spread = Math.max(...scores) - Math.min(...scores)
+  if (spread < 0.1) return null
+  const top = freshWithIg[0].igScore as number
+  return (
+    <div
+      className="ts-12 mono mb-3 px-3 py-2 rounded inline-flex items-center gap-2"
+      style={{
+        background: 'oklch(0.55 0.18 320 / 0.08)',
+        border: '1px solid oklch(0.55 0.18 320 / 0.3)',
+        color: 'oklch(0.55 0.18 320)',
+      }}
+    >
+      🎯 Active-learning ordering — top fresh topic has IG{' '}
+      {Math.round(top * 100)} (uncertainty + coverage gap). Tackle these
+      first to teach the model faster.
+    </div>
   )
 }
 
@@ -370,6 +405,21 @@ function TopicRow({
               🔥 {difficultyLabel(topic.difficulty)} · {topic.difficulty}/5
             </span>
           )}
+          {topic.state === 'fresh' &&
+            topic.igScore != null &&
+            topic.igScore >= 0.5 && (
+              <span
+                className="px-1.5 py-0.5 rounded"
+                style={{
+                  background: 'oklch(0.55 0.18 320 / 0.1)',
+                  color: 'oklch(0.55 0.18 320)',
+                  border: '1px solid oklch(0.55 0.18 320 / 0.4)',
+                }}
+                title={`Active-Learning information gain (DS posterior entropy + coverage gap). Higher = labeling this topic next reduces uncertainty more.`}
+              >
+                🎯 IG {Math.round(topic.igScore * 100)}
+              </span>
+            )}
           <span>{topic.createdAt.toISOString().slice(0, 10)}</span>
         </div>
       </div>

@@ -8,6 +8,7 @@ import {
   workspaceMembers,
   workspaces,
 } from '@/lib/db/schema'
+import { getActiveLearningScores } from '@/lib/queries/active-learning'
 
 /**
  * Annotator-facing "my tasks" view — the two-tier flow described by
@@ -202,6 +203,14 @@ export interface MyTaskTopicRow {
   difficulty: number | null
   difficultyReason: string | null
   createdAt: Date
+  /**
+   * Active-Learning information-gain score in [0, 1] (Phase-12). Higher
+   * = labeling this topic now reduces our uncertainty the most. Used to
+   * order the 'fresh' bucket so annotators tackle the most valuable
+   * topics first. Null when no DS run has happened yet AND there's no
+   * coverage gap to drive the score.
+   */
+  igScore: number | null
 }
 
 export interface MyTaskDetail {
@@ -291,6 +300,13 @@ export async function getMyTaskDetail(opts: {
     .where(eq(topics.taskId, opts.taskId))
     .limit(500)
 
+  // Active-learning IG scores for this task (scoped to one task — DS
+  // is workspace-scoped but only this task's topics matter for sort).
+  const igScores = await getActiveLearningScores({
+    workspaceId: task.workspaceId,
+    taskIds: [opts.taskId],
+  })
+
   const counts = { fresh: 0, mine: 0, submitted: 0, others: 0 }
   const out: MyTaskTopicRow[] = []
   for (const r of rows) {
@@ -321,12 +337,15 @@ export async function getMyTaskDetail(opts: {
       difficulty: r.difficulty,
       difficultyReason: r.difficultyReason,
       createdAt: r.createdAt,
+      igScore: igScores.get(r.topicId) ?? null,
     })
   }
 
   // Order: my drafts first (resume), then fresh (claimable),
-  // then submitted, then others (greyed). Within bucket: oldest first
-  // = FIFO so claims don't all stack on the newest topic.
+  // then submitted, then others (greyed). Within the FRESH bucket we
+  // sort by IG descending (high-value topics first) instead of FIFO —
+  // active learning takes precedence. Within the other buckets the
+  // old FIFO rule still holds (claims spread across topics).
   const rank: Record<MyTaskTopicRow['state'], number> = {
     mine: 0,
     fresh: 1,
@@ -336,6 +355,11 @@ export async function getMyTaskDetail(opts: {
   out.sort((a, b) => {
     const r = rank[a.state] - rank[b.state]
     if (r !== 0) return r
+    if (a.state === 'fresh' && b.state === 'fresh') {
+      const ai = a.igScore ?? 0
+      const bi = b.igScore ?? 0
+      if (ai !== bi) return bi - ai // higher IG first
+    }
     return a.createdAt.getTime() - b.createdAt.getTime()
   })
 
