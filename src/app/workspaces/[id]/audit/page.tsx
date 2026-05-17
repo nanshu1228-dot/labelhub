@@ -28,7 +28,7 @@ export const dynamic = 'force-dynamic'
  * Search params:
  *   ?q=alice       → fuzzy match on display_name + email
  *   ?user=<uuid>   → exact subject filter (used by drilldown links)
- *   ?group=verdict|restore|trust|inbox|judge
+ *   ?group=verdict|restore|trust|inbox|judge|consensus
  *
  * Multiple groups can stack via repeated query params, but for v1 we
  * keep it single-select since one tab usually answers one question.
@@ -244,6 +244,7 @@ const GROUP_LABEL: Record<AuditGroup, string> = {
   trust: 'trust status',
   inbox: 'inbox',
   judge: 'llm-judge runs',
+  consensus: 'consensus (DS)',
 }
 
 function buildHref(
@@ -323,6 +324,7 @@ function AuditRowCard({
     trust: 'oklch(0.55 0.14 75)',
     inbox: 'var(--mute)',
     judge: 'oklch(0.5 0.13 150)',
+    consensus: 'oklch(0.55 0.18 320)',
     other: 'var(--mute)',
   }
   const fg = groupColor[row.group]
@@ -417,6 +419,8 @@ function verbForEvent(
       return 'completed an LLM judge run'
     case 'llm_judge.run_failed':
       return 'failed an LLM judge run'
+    case 'ds.run_completed':
+      return 'ran Dawid-Skene EM truth inference'
     default:
       return type
   }
@@ -460,6 +464,20 @@ function describeDetail(
     const samples = payload.samples
     if (typeof score === 'number' && typeof samples === 'number') {
       return `${Math.round(score * 100)}% agreement · ${samples} samples`
+    }
+    return null
+  }
+  if (type === 'ds.run_completed') {
+    const cells = payload.cellCount
+    const raters = payload.raterCount
+    const iters = payload.iterations
+    const converged = payload.converged
+    if (
+      typeof cells === 'number' &&
+      typeof raters === 'number' &&
+      typeof iters === 'number'
+    ) {
+      return `${cells} cells · ${raters} raters · ${iters} EM iter${converged ? ' ✓' : ' (cap)'}`
     }
     return null
   }

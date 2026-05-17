@@ -1,10 +1,13 @@
 import 'server-only'
-import { desc, eq } from 'drizzle-orm'
+import { and, desc, eq, gt, sql } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import {
+  annotations,
   dsConsensusRuns,
   dsInferredLabels,
   dsRaterConfusion,
+  tasks,
+  topics,
   users,
 } from '@/lib/db/schema'
 import type {
@@ -125,5 +128,51 @@ export async function getLatestDsRunReport(
     },
     raters,
     topics: topicSummaries,
+  }
+}
+
+/**
+ * Count submitted annotations newer than the run timestamp — drives the
+ * "X new submissions since DS ran" staleness hint in the UI. Returns 0
+ * when no run exists or no fresher work has arrived.
+ *
+ * Why a separate query: pulling this in the main `getLatestDsRunReport`
+ * adds a join the admin doesn't always need (e.g. on the audit-log
+ * surface). Keep it cheap and opt-in.
+ */
+export async function countAnnotationsSinceLatestDsRun(opts: {
+  workspaceId: string
+  templateMode: string
+}): Promise<{
+  hasRun: boolean
+  newSubmissions: number
+  runCreatedAt: Date | null
+}> {
+  const db = getDb()
+  const [run] = await db
+    .select({ createdAt: dsConsensusRuns.createdAt })
+    .from(dsConsensusRuns)
+    .where(eq(dsConsensusRuns.workspaceId, opts.workspaceId))
+    .orderBy(desc(dsConsensusRuns.createdAt))
+    .limit(1)
+  if (!run) {
+    return { hasRun: false, newSubmissions: 0, runCreatedAt: null }
+  }
+  const [row] = await db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(annotations)
+    .innerJoin(topics, eq(topics.id, annotations.topicId))
+    .innerJoin(tasks, eq(tasks.id, topics.taskId))
+    .where(
+      and(
+        eq(tasks.workspaceId, opts.workspaceId),
+        eq(tasks.templateMode, opts.templateMode),
+        gt(annotations.submittedAt, run.createdAt),
+      ),
+    )
+  return {
+    hasRun: true,
+    newSubmissions: Number(row?.n ?? 0),
+    runCreatedAt: run.createdAt,
   }
 }

@@ -27,9 +27,13 @@ import {
 export function DawidSkeneSection({
   workspaceId,
   initial,
+  newSubmissionsSince = 0,
 }: {
   workspaceId: string
   initial: DsRunReport | null
+  /** Submitted annotations newer than the run timestamp — drives the
+   *  "stale" hint that prompts the admin to rerun. */
+  newSubmissionsSince?: number
 }) {
   const [report, setReport] = useState<DsRunReport | null>(initial)
   const [error, setError] = useState<string | null>(null)
@@ -95,7 +99,10 @@ export function DawidSkeneSection({
         <EmptyDsCard />
       ) : (
         <div className="space-y-4">
-          <RunHeader report={report} />
+          <RunHeader
+            report={report}
+            newSubmissionsSince={newSubmissionsSince}
+          />
           <RaterConfusionTable report={report} />
           <TopicConfidenceTable
             report={report}
@@ -124,7 +131,13 @@ function EmptyDsCard() {
   )
 }
 
-function RunHeader({ report }: { report: DsRunReport }) {
+function RunHeader({
+  report,
+  newSubmissionsSince,
+}: {
+  report: DsRunReport
+  newSubmissionsSince: number
+}) {
   const { run } = report
   return (
     <div
@@ -152,6 +165,20 @@ function RunHeader({ report }: { report: DsRunReport }) {
           value={new Date(run.createdAt).toLocaleString()}
         />
       </div>
+      {newSubmissionsSince > 0 && (
+        <div
+          className="ts-12 mono mt-3 inline-flex items-center gap-2 px-2 py-1 rounded"
+          style={{
+            background: 'var(--warn-soft, oklch(0.92 0.06 80 / 0.4))',
+            color: 'var(--warn, oklch(0.5 0.18 75))',
+            border: '1px solid oklch(0.7 0.14 75 / 0.4)',
+          }}
+        >
+          ⓘ {newSubmissionsSince} new submission
+          {newSubmissionsSince === 1 ? '' : 's'} since this run — rerun
+          to fold them in.
+        </div>
+      )}
     </div>
   )
 }
@@ -361,7 +388,10 @@ function TopicConfidenceTable({
                 >
                   <td className="px-4 py-2 mono ts-12">
                     <Link
-                      href={`/workspaces/${workspaceId}/topics/${t.topicId}`}
+                      // The bare /topics/[id] route doesn't exist —
+                      // /annotate is the page admins open to see the
+                      // topic alongside every rater's submission.
+                      href={`/workspaces/${workspaceId}/topics/${t.topicId}/annotate`}
                       style={{
                         color: 'var(--accent)',
                         textDecoration: 'none',

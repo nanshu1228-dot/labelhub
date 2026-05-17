@@ -34,6 +34,7 @@ import {
 } from '@/lib/queries/quality-trend'
 import {
   getLatestDsRunReport,
+  countAnnotationsSinceLatestDsRun,
   type DsRunReport,
 } from '@/lib/queries/dawid-skene'
 import { TrustBadge } from '@/components/quality/trust-badge'
@@ -187,6 +188,7 @@ async function QualityContent({
     pairIaa,
     trend,
     dsReport,
+    dsFreshness,
   ] = await Promise.all([
     listWorkspaceGoldStandards(workspaceId).catch(
       () => [] as GoldStandardRow[],
@@ -206,6 +208,14 @@ async function QualityContent({
       () => [] as QualityTrendBucket[],
     ),
     getLatestDsRunReport(workspaceId).catch(() => null as DsRunReport | null),
+    countAnnotationsSinceLatestDsRun({
+      workspaceId,
+      templateMode,
+    }).catch(() => ({
+      hasRun: false,
+      newSubmissions: 0,
+      runCreatedAt: null as Date | null,
+    })),
   ])
 
   const isPairOrArena =
@@ -231,6 +241,7 @@ async function QualityContent({
         <DawidSkeneSection
           workspaceId={workspaceId}
           initial={dsReport}
+          newSubmissionsSince={dsFreshness.newSubmissions}
         />
       )}
       {!isPairOrArena && (

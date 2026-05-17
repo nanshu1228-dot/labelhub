@@ -42,6 +42,9 @@ export const AUDIT_EVENT_GROUPS = {
   ],
   inbox: ['notification.bulk_mark_read'],
   judge: ['llm_judge.run_completed', 'llm_judge.run_failed'],
+  /** Dawid-Skene EM truth-inference runs (Phase-11) — admin-triggered,
+   *  visible in audit so an admin's coworker can see "Alice ran DS at 4pm". */
+  consensus: ['ds.run_completed'],
 } as const
 
 export type AuditGroup = keyof typeof AUDIT_EVENT_GROUPS
