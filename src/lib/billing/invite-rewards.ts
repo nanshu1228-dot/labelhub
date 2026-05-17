@@ -111,23 +111,27 @@ export function decideInviteRewardAbuse(opts: {
 }
 
 /**
- * Post a credit transaction + bump the wallet_balance materialized
- * snapshot. Returns the transaction id.
+ * Tx-aware wallet credit: write a `transactions` row + upsert the
+ * `wallet_balance` materialized snapshot inside the caller's open
+ * drizzle transaction. Returns the transaction id.
  *
- * We use UPSERT semantics on `wallet_balance` so a brand-new inviter
- * (no prior balance row) lands cleanly. The transactions row is the
- * source of truth — wallet_balance is rebuildable from it.
+ * Caller is required to pass `tx` so the insert + upsert commit
+ * atomically with the surrounding invite_rewards row write — the whole
+ * "row + ledger + balance" must either all land or all roll back.
+ * (Phase-13 audit fix #1 + #4: prior version made these three
+ * statements as independent writes, leaving the door open for a
+ * partial-commit window where a granted row had no wallet credit.)
  */
-async function creditInviterWallet(opts: {
+async function creditInviterWalletTx(opts: {
+  tx: TxRunner
   inviterUserId: string
   workspaceId: string
   amountMinor: number
   currency: string
   refRewardId: string
+  memo: string
 }): Promise<string> {
-  const db = getDb()
-
-  const [txn] = await db
+  const [txn] = await opts.tx
     .insert(transactions)
     .values({
       userId: opts.inviterUserId,
@@ -137,13 +141,11 @@ async function creditInviterWallet(opts: {
       workspaceId: opts.workspaceId,
       refTable: 'invite_rewards',
       refId: opts.refRewardId,
-      memo: `Invite reward — invitee hit ${INVITE_REWARD_THRESHOLD} approved annotations`,
+      memo: opts.memo,
     })
     .returning({ id: transactions.id })
 
-  // Upsert wallet_balance via raw SQL (drizzle doesn't expose a clean
-  // onConflict update for materialized snapshots like this one).
-  await db.execute(sql`
+  await opts.tx.execute(sql`
     INSERT INTO wallet_balance ("user_id", "workspace_id", "currency", "balance_minor", "last_settled_at")
     VALUES (${opts.inviterUserId}, ${opts.workspaceId}, ${opts.currency}, ${opts.amountMinor}, now())
     ON CONFLICT ON CONSTRAINT wallet_balance_uniq
@@ -155,6 +157,18 @@ async function creditInviterWallet(opts: {
 
   return txn.id
 }
+
+/**
+ * Internal type alias for the drizzle transaction runner. Defined here
+ * (instead of pulling from drizzle's deep typings) so the action layer
+ * can share the same helper.
+ */
+type TxRunner = Parameters<
+  Parameters<ReturnType<typeof getDb>['transaction']>[0]
+>[0]
+/** Re-exported for the action layer's reviewInviteReward path. */
+export { creditInviterWalletTx }
+export type { TxRunner }
 
 /**
  * Main entry. Called from `reviewAnnotation` (inside `after()`) on
@@ -212,10 +226,15 @@ export async function scanInviteRewardOnApproval(opts: {
   if (existing) return
 
   // 3. Count approved annotations by this invitee in this workspace.
-  //    Uses event log so the count matches the authoritative trust
-  //    source (annotation.approved events keyed on submitterUserId).
+  //    Phase-13 audit fix #9: use COUNT(DISTINCT annotationId) so a
+  //    duplicate annotation.approved event for the same annotation
+  //    can't inflate the count. The reviewAnnotation path is the only
+  //    writer today and it's status-gated, but DISTINCT keeps the
+  //    threshold tamper-resistant against any future emit-path bug.
   const [tally] = await db
-    .select({ n: sql<number>`count(*)::int` })
+    .select({
+      n: sql<number>`count(DISTINCT ${events.payload} ->> 'annotationId')::int`,
+    })
     .from(events)
     .where(
       and(
@@ -273,44 +292,83 @@ export async function scanInviteRewardOnApproval(opts: {
   const currency = INVITE_REWARD_DEFAULT_CURRENCY
   const grantedAt = status === 'granted' ? new Date() : null
 
-  // Use raw SQL ON CONFLICT to belt-and-suspenders against double-
-  // grant if two approvals race. If a row already exists (unique
-  // violation), DO NOTHING and bail out cleanly.
-  const inserted = await db
-    .insert(inviteRewards)
-    .values({
-      inviterUserId,
-      inviteeUserId: opts.inviteeUserId,
+  // 5. Atomic write — Phase-13 audit fix #1+#4: insert the reward row,
+  //    credit the wallet (only when status='granted'), and write the
+  //    audit event inside ONE transaction. Either all four land or
+  //    none do; no partial-commit window where a row is 'granted' but
+  //    the wallet wasn't actually bumped.
+  //
+  //    onConflictDoNothing handles the race where two approvals fire
+  //    simultaneously — the unique (inviter, invitee, workspace)
+  //    index makes one winner. The loser bails out with no side
+  //    effects because we short-circuit on inserted.length===0
+  //    BEFORE crediting.
+  const rewardId = await db.transaction(async (tx) => {
+    const inserted = await tx
+      .insert(inviteRewards)
+      .values({
+        inviterUserId,
+        inviteeUserId: opts.inviteeUserId,
+        workspaceId: opts.workspaceId,
+        status,
+        blockReason,
+        amountMinor,
+        currency,
+        triggerAnnotationId: opts.triggerAnnotationId,
+        grantedAt,
+      })
+      .onConflictDoNothing({
+        target: [
+          inviteRewards.inviterUserId,
+          inviteRewards.inviteeUserId,
+          inviteRewards.workspaceId,
+        ],
+      })
+      .returning({ id: inviteRewards.id })
+    if (inserted.length === 0) return null // raced; let the winner finish
+
+    const id = inserted[0].id
+
+    if (status === 'granted') {
+      await creditInviterWalletTx({
+        tx,
+        inviterUserId,
+        workspaceId: opts.workspaceId,
+        amountMinor,
+        currency,
+        refRewardId: id,
+        memo: `Invite reward — invitee hit ${INVITE_REWARD_THRESHOLD} approved annotations`,
+      })
+    }
+
+    await tx.insert(events).values({
+      type:
+        status === 'granted'
+          ? 'invite_reward.granted'
+          : status === 'manual_review'
+            ? 'invite_reward.manual_review'
+            : 'invite_reward.blocked',
       workspaceId: opts.workspaceId,
-      status,
-      blockReason,
-      amountMinor,
-      currency,
-      triggerAnnotationId: opts.triggerAnnotationId,
-      grantedAt,
+      actorId: null, // system-triggered
+      payload: {
+        rewardId: id,
+        inviterUserId,
+        inviteeUserId: opts.inviteeUserId,
+        amountMinor,
+        currency,
+        reason: blockReason,
+      },
     })
-    .onConflictDoNothing({
-      target: [
-        inviteRewards.inviterUserId,
-        inviteRewards.inviteeUserId,
-        inviteRewards.workspaceId,
-      ],
-    })
-    .returning({ id: inviteRewards.id })
-  if (inserted.length === 0) return // someone else raced us; their row wins
 
-  const rewardId = inserted[0].id
+    return id
+  })
 
-  // 6. If granted: credit the wallet + notify inviter.
+  if (!rewardId) return // raced; nothing more to do
+
+  // 6. Out-of-transaction side effects — notification is best-effort;
+  //    a failure here cannot rollback the wallet credit (which is what
+  //    we want — the money moved correctly, the inbox row didn't).
   if (status === 'granted') {
-    await creditInviterWallet({
-      inviterUserId,
-      workspaceId: opts.workspaceId,
-      amountMinor,
-      currency,
-      refRewardId: rewardId,
-    })
-
     await emitNotification({
       userId: inviterUserId,
       workspaceId: opts.workspaceId,
@@ -326,29 +384,5 @@ export async function scanInviteRewardOnApproval(opts: {
     }).catch(() => {
       // Inbox is best-effort; don't fail the credit on notification glitch.
     })
-  } else if (status === 'manual_review') {
-    // Notify workspace admins (we don't have a "broadcast to admins"
-    // helper; rely on the audit log + admin dashboard to surface it).
-    // Event row below covers the audit surface.
   }
-
-  // 7. Audit event — surfaces in /audit "consensus/inbox/judge/…" log.
-  await db.insert(events).values({
-    type:
-      status === 'granted'
-        ? 'invite_reward.granted'
-        : status === 'manual_review'
-          ? 'invite_reward.manual_review'
-          : 'invite_reward.blocked',
-    workspaceId: opts.workspaceId,
-    actorId: null, // system-triggered
-    payload: {
-      rewardId,
-      inviterUserId,
-      inviteeUserId: opts.inviteeUserId,
-      amountMinor,
-      currency,
-      reason: blockReason,
-    },
-  })
 }

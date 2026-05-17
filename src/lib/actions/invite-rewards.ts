@@ -17,22 +17,21 @@
 
 import { z } from 'zod'
 import { revalidatePath } from 'next/cache'
-import { eq, sql } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import {
   events,
   inviteRewards,
-  transactions,
   users,
 } from '@/lib/db/schema'
 import { requireWorkspaceAdmin } from '@/lib/auth/guards'
 import { uuidLike } from '@/lib/validators/uuid'
 import {
-  ConflictError,
   NotFoundError,
   ValidationError,
 } from '@/lib/errors'
 import { emitNotification } from '@/lib/notifications/emit'
+import { creditInviterWalletTx } from '@/lib/billing/invite-rewards'
 
 const reviewSchema = z.object({
   rewardId: uuidLike,
@@ -97,55 +96,51 @@ export async function reviewInviteReward(
     return { ok: true as const, status: 'blocked' }
   }
 
-  // 4. Approve path — flip to granted, credit wallet, notify inviter.
-  //    Belt-and-suspenders: a row that's already granted should never
-  //    get re-credited (but the unique-pair index also protects).
-  if (row.status === 'blocked') {
-    // We're un-blocking — allowed but log the reversal.
-  }
-
+  // 4. Approve path — flip to granted, credit wallet, write audit event
+  //    inside a single transaction so a partial failure can't leave the
+  //    row 'granted' without a matching wallet credit (Phase-13 audit
+  //    fix #1+#4).
   const now = new Date()
-  await db
-    .update(inviteRewards)
-    .set({
-      status: 'granted',
-      reviewedBy: user.id,
-      grantedAt: now,
-      blockReason: null,
-    })
-    .where(eq(inviteRewards.id, row.id))
+  await db.transaction(async (tx) => {
+    await tx
+      .update(inviteRewards)
+      .set({
+        status: 'granted',
+        reviewedBy: user.id,
+        grantedAt: now,
+        blockReason: null,
+      })
+      .where(eq(inviteRewards.id, row.id))
 
-  // Wallet credit (same shape as the auto-grant path in
-  // billing/invite-rewards.ts).
-  const [txn] = await db
-    .insert(transactions)
-    .values({
-      userId: row.inviterUserId,
-      type: 'invite_reward',
+    await creditInviterWalletTx({
+      tx,
+      inviterUserId: row.inviterUserId,
+      workspaceId: row.workspaceId,
       amountMinor: row.amountMinor,
       currency: row.currency,
-      workspaceId: row.workspaceId,
-      refTable: 'invite_rewards',
-      refId: row.id,
+      refRewardId: row.id,
       memo: parsed.note
         ? `Invite reward (admin-approved): ${parsed.note.slice(0, 80)}`
         : 'Invite reward (admin-approved)',
     })
-    .returning({ id: transactions.id })
-  if (!txn) {
-    throw new ConflictError('Failed to write reward transaction.')
-  }
 
-  await db.execute(sql`
-    INSERT INTO wallet_balance ("user_id", "workspace_id", "currency", "balance_minor", "last_settled_at")
-    VALUES (${row.inviterUserId}, ${row.workspaceId}, ${row.currency}, ${row.amountMinor}, now())
-    ON CONFLICT ON CONSTRAINT wallet_balance_uniq
-    DO UPDATE SET
-      balance_minor = wallet_balance.balance_minor + EXCLUDED.balance_minor,
-      last_settled_at = now()
-  `)
+    await tx.insert(events).values({
+      type: 'invite_reward.granted',
+      workspaceId: row.workspaceId,
+      actorId: user.id,
+      payload: {
+        rewardId: row.id,
+        inviterUserId: row.inviterUserId,
+        inviteeUserId: row.inviteeUserId,
+        amountMinor: row.amountMinor,
+        currency: row.currency,
+        reason: parsed.note ?? null,
+        via: 'admin_review',
+      },
+    })
+  })
 
-  // Notify the inviter that their reward was approved.
+  // Out-of-transaction side effect: inbox notification (best-effort).
   const [invitee] = await db
     .select({ email: users.email })
     .from(users)
@@ -169,21 +164,6 @@ export async function reviewInviteReward(
     actorId: user.id,
   }).catch(() => {
     // Notification glitch never blocks the credit.
-  })
-
-  await db.insert(events).values({
-    type: 'invite_reward.granted',
-    workspaceId: row.workspaceId,
-    actorId: user.id,
-    payload: {
-      rewardId: row.id,
-      inviterUserId: row.inviterUserId,
-      inviteeUserId: row.inviteeUserId,
-      amountMinor: row.amountMinor,
-      currency: row.currency,
-      reason: parsed.note ?? null,
-      via: 'admin_review',
-    },
   })
 
   revalidatePath(`/workspaces/${row.workspaceId}/members`)
