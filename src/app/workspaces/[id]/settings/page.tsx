@@ -7,6 +7,8 @@ import { getTemplate } from '@/lib/templates/registry'
 import '@/lib/templates/init'
 import type { TemplateMode } from '@/lib/templates/types'
 import { SettingsClient } from '@/components/workspaces/settings-client'
+import { listDatasetVersions } from '@/lib/queries/dataset-versions'
+import { DatasetVersionsCard } from '@/components/workspaces/dataset-versions-card'
 
 export const metadata: Metadata = {
   title: 'Workspace settings — LabelHub',
@@ -43,6 +45,10 @@ export default async function WorkspaceSettingsPage(
   const isAdmin = role === 'admin' || workspace.adminId === me.id
 
   const template = getTemplate(workspace.templateMode as TemplateMode)
+
+  // Phase-14: dataset version list (anyone with read access sees the
+  // history; only admins see the freeze form, which the card gates).
+  const versions = await listDatasetVersions(workspaceId).catch(() => [])
 
   return (
     <div className="app-light min-h-screen" style={{ background: 'var(--bg)' }}>
@@ -91,6 +97,12 @@ export default async function WorkspaceSettingsPage(
           templateLabel={template?.name ?? workspace.templateMode}
           templateDescription={template?.description ?? ''}
           createdAt={workspace.createdAt}
+          isAdmin={isAdmin}
+        />
+
+        <DatasetVersionsCard
+          workspaceId={workspaceId}
+          initialVersions={versions}
           isAdmin={isAdmin}
         />
       </main>

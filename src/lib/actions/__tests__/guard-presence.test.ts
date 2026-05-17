@@ -87,6 +87,8 @@ const EXPECTED_GUARDS: Record<string, RegExp> = {
   // Invite-reward admin moderation (Phase-13) — money path; admin
   // approves/denies manual_review rows.
   'invite-rewards.ts': /requireWorkspaceAdmin\(/,
+  // Dataset version freeze (Phase-14) — admin-only snapshot action.
+  'dataset-versions.ts': /requireWorkspaceAdmin\(/,
   // Notification read-state mutations — caller's own inbox only;
   // requireUser plus a userId WHERE clause defends against forged ids.
   'notifications.ts': /requireUser\(/,

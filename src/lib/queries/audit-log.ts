@@ -53,6 +53,8 @@ export const AUDIT_EVENT_GROUPS = {
     'invite_reward.blocked',
     'invite_reward.denied',
   ],
+  /** Dataset-version freeze + export (Phase-14). */
+  dataset: ['dataset.version_frozen', 'dataset.version_exported'],
 } as const
 
 export type AuditGroup = keyof typeof AUDIT_EVENT_GROUPS

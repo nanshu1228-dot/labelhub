@@ -28,7 +28,7 @@ export const dynamic = 'force-dynamic'
  * Search params:
  *   ?q=alice       → fuzzy match on display_name + email
  *   ?user=<uuid>   → exact subject filter (used by drilldown links)
- *   ?group=verdict|restore|trust|inbox|judge|consensus|invite
+ *   ?group=verdict|restore|trust|inbox|judge|consensus|invite|dataset
  *
  * Multiple groups can stack via repeated query params, but for v1 we
  * keep it single-select since one tab usually answers one question.
@@ -246,6 +246,7 @@ const GROUP_LABEL: Record<AuditGroup, string> = {
   judge: 'llm-judge runs',
   consensus: 'consensus (DS)',
   invite: 'invite rewards',
+  dataset: 'dataset versions',
 }
 
 function buildHref(
@@ -327,6 +328,7 @@ function AuditRowCard({
     judge: 'oklch(0.5 0.13 150)',
     consensus: 'oklch(0.55 0.18 320)',
     invite: 'oklch(0.62 0.16 30)',
+    dataset: 'oklch(0.55 0.15 230)',
     other: 'var(--mute)',
   }
   const fg = groupColor[row.group]
@@ -431,6 +433,10 @@ function verbForEvent(
       return 'invite reward auto-blocked for'
     case 'invite_reward.denied':
       return 'invite reward denied for'
+    case 'dataset.version_frozen':
+      return 'froze a dataset version'
+    case 'dataset.version_exported':
+      return 'exported a dataset version'
     default:
       return type
   }
@@ -490,6 +496,21 @@ function describeDetail(
       return `${cells} cells · ${raters} raters · ${iters} EM iter${converged ? ' ✓' : ' (cap)'}`
     }
     return null
+  }
+  if (
+    type === 'dataset.version_frozen' ||
+    type === 'dataset.version_exported'
+  ) {
+    const label = payload.label
+    const items = payload.itemCount
+    const bytes = payload.bytes ?? payload.byteSize
+    const parts: string[] = []
+    if (typeof label === 'string') parts.push(label)
+    if (typeof items === 'number')
+      parts.push(`${items} item${items === 1 ? '' : 's'}`)
+    if (typeof bytes === 'number')
+      parts.push(`${Math.round(bytes / 1024)} KB`)
+    return parts.length > 0 ? parts.join(' · ') : null
   }
   if (
     type === 'invite_reward.granted' ||

@@ -1359,6 +1359,71 @@ export const notifications = pgTable(
 )
 
 // =================================================================
+// Dataset versions — Phase-14.
+//
+// Admin "freezes" the current set of approved annotations into a
+// labeled snapshot ("v1", "v2", …). The manifest is a fully self-
+// contained jsonb array of {annotationId, topicId, taskId, payload,
+// userId, submittedAt, approvedAt} — readers can rebuild the
+// historical dataset without joining live tables (which may have
+// changed via restore / revision / soft-delete since).
+//
+// Why a jsonb manifest instead of a join table:
+//   - Future-proof against schema drift — a manifest snapshot doesn't
+//     break if annotations.payload's shape changes.
+//   - Read path is one row → one parse, not a 4-way join per export.
+//   - Bytes are bounded by the count cap (5k items/version) so the
+//     row stays under Postgres's 1GB cell limit comfortably.
+//
+// Tradeoffs:
+//   - We're storing data twice (annotations rows + manifest copy).
+//     Acceptable: the manifest IS the contract — that's the point of
+//     a versioned export.
+//   - The manifest doesn't include trajectory_steps / step_annotations.
+//     Trajectory exports stay on the legacy /api/export/trajectories
+//     route; this surface is for the pair/arena/agent-trace payload
+//     modes whose dataset is one annotation per row.
+// =================================================================
+export const datasetVersions = pgTable(
+  'dataset_versions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    workspaceId: uuid('workspace_id')
+      .references(() => workspaces.id)
+      .notNull(),
+    /** Admin-chosen or auto-generated ("v1", "v2", …). Unique per ws. */
+    label: text('label').notNull(),
+    /** Optional admin note about why this version was frozen
+     *  ("after rubric v3 retraining"). */
+    description: text('description'),
+    /** Count of items in the manifest — denormalized so the list view
+     *  doesn't have to parse the manifest just to show "N items". */
+    itemCount: integer('item_count').notNull(),
+    /** The frozen content. Array of:
+     *    { annotationId, topicId, taskId, userId, payload,
+     *      submittedAt, approvedAt, templateMode } */
+    manifest: jsonb('manifest').notNull(),
+    /** Size of the serialized manifest in bytes — admin sees this on
+     *  the version card for storage planning. */
+    byteSize: integer('byte_size').notNull(),
+    /** Admin who clicked freeze. Null only for system seeds. */
+    frozenBy: uuid('frozen_by').references(() => users.id),
+    frozenAt: timestamp('frozen_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    /** No two versions share a label inside one workspace. */
+    wsLabelUniq: uniqueIndex('dataset_versions_ws_label_uniq').on(
+      table.workspaceId,
+      table.label,
+    ),
+    wsFrozenIdx: index('dataset_versions_ws_frozen_idx').on(
+      table.workspaceId,
+      table.frozenAt,
+    ),
+  }),
+)
+
+// =================================================================
 // Invite-reward automation — Phase-13.
 //
 // When an admin approves the Nth (default 5) annotation from a user
