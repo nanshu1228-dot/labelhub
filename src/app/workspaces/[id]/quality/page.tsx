@@ -32,9 +32,14 @@ import {
   getWorkspaceQualityTrend,
   type QualityTrendBucket,
 } from '@/lib/queries/quality-trend'
+import {
+  getLatestDsRunReport,
+  type DsRunReport,
+} from '@/lib/queries/dawid-skene'
 import { TrustBadge } from '@/components/quality/trust-badge'
 import { GoldBadge } from '@/components/quality/gold-badge'
 import { QualityTrendPanel } from '@/components/quality/quality-trend-panel'
+import { DawidSkeneSection } from '@/components/quality/dawid-skene-section'
 
 export const metadata: Metadata = {
   title: 'Quality — LabelHub',
@@ -173,26 +178,35 @@ async function QualityContent({
   workspaceId: string
   templateMode: string
 }) {
-  const [golds, calibration, trust, violations, times, pairIaa, trend] =
-    await Promise.all([
-      listWorkspaceGoldStandards(workspaceId).catch(
-        () => [] as GoldStandardRow[],
-      ),
-      getWorkspaceCalibration(workspaceId).catch(
-        () => [] as UserCalibration[],
-      ),
-      getWorkspaceTrust(workspaceId).catch(() => [] as UserTrust[]),
-      listWorkspaceCriticalViolations(workspaceId).catch(
-        () => [] as CriticalViolation[],
-      ),
-      listWorkspaceAnnotationTimes(workspaceId).catch(
-        () => [] as AnnotationTimeRow[],
-      ),
-      getPairOrArenaIAA({ workspaceId, templateMode }).catch(() => null),
-      getWorkspaceQualityTrend({ workspaceId, weeks: 12 }).catch(
-        () => [] as QualityTrendBucket[],
-      ),
-    ])
+  const [
+    golds,
+    calibration,
+    trust,
+    violations,
+    times,
+    pairIaa,
+    trend,
+    dsReport,
+  ] = await Promise.all([
+    listWorkspaceGoldStandards(workspaceId).catch(
+      () => [] as GoldStandardRow[],
+    ),
+    getWorkspaceCalibration(workspaceId).catch(
+      () => [] as UserCalibration[],
+    ),
+    getWorkspaceTrust(workspaceId).catch(() => [] as UserTrust[]),
+    listWorkspaceCriticalViolations(workspaceId).catch(
+      () => [] as CriticalViolation[],
+    ),
+    listWorkspaceAnnotationTimes(workspaceId).catch(
+      () => [] as AnnotationTimeRow[],
+    ),
+    getPairOrArenaIAA({ workspaceId, templateMode }).catch(() => null),
+    getWorkspaceQualityTrend({ workspaceId, weeks: 12 }).catch(
+      () => [] as QualityTrendBucket[],
+    ),
+    getLatestDsRunReport(workspaceId).catch(() => null as DsRunReport | null),
+  ])
 
   const isPairOrArena =
     templateMode === 'pair-rubric' || templateMode === 'arena-gsb'
@@ -210,6 +224,14 @@ async function QualityContent({
       */}
       {isPairOrArena && pairIaa && pairIaa.mode !== 'unsupported' && (
         <PairIaaQualitySection iaa={pairIaa} />
+      )}
+      {/* Dawid-Skene EM truth inference — only for pair/arena (the modes
+          whose payload encodes per-cell votes that DS can consume). */}
+      {isPairOrArena && (
+        <DawidSkeneSection
+          workspaceId={workspaceId}
+          initial={dsReport}
+        />
       )}
       {!isPairOrArena && (
         <>

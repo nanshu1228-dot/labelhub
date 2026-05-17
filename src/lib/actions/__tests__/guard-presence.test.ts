@@ -81,6 +81,9 @@ const EXPECTED_GUARDS: Record<string, RegExp> = {
   'trust-coach.ts': /requireUser\(/,
   // Annotation revisions / restore — admin-only forensic surface.
   'annotation-revisions.ts': /requireWorkspaceAdmin\(/,
+  // Dawid-Skene EM truth inference (Phase-11) — admin-only ops surface
+  // (writes consensus runs + persists per-rater confusion matrices).
+  'dawid-skene.ts': /requireWorkspaceAdmin\(/,
   // Notification read-state mutations — caller's own inbox only;
   // requireUser plus a userId WHERE clause defends against forged ids.
   'notifications.ts': /requireUser\(/,
