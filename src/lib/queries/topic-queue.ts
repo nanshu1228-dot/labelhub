@@ -8,6 +8,7 @@ import {
   workspaceMembers,
   workspaces,
 } from '@/lib/db/schema'
+import { getActiveLearningScores } from '@/lib/queries/active-learning'
 
 /**
  * Topic-queue helper for the pair-rubric and arena-gsb modes.
@@ -46,6 +47,9 @@ export type TopicQueueItem = {
   difficulty: number | null
   /** One-line AI rationale, surfaced in a tooltip on the chip. */
   difficultyReason: string | null
+  /** Active-Learning IG score in [0, 1] (Phase-12). Drives the 'fresh'
+   *  bucket ordering — high-IG topics surface first. */
+  igScore: number | null
 }
 
 export interface ListMyTopicQueueOpts {
@@ -163,10 +167,37 @@ export async function listMyTopicQueueForUser(
       createdAt: r.topicCreatedAt,
       difficulty: r.difficulty,
       difficultyReason: r.difficultyReason,
+      igScore: null, // filled in below per-workspace
     })
   }
 
-  // 4. Priority order: mine > fresh > submitted.
+  // 4. Active-learning IG scores. DS runs are workspace-scoped, so we
+  //    fan out one query per workspace present in the queue. For the
+  //    typical user in 1-3 workspaces this is fine; if a user joins
+  //    20+ workspaces this becomes 20 queries and we'd batch by ws.
+  const taskIdsByWs = new Map<string, Set<string>>()
+  for (const it of out) {
+    const s = taskIdsByWs.get(it.workspaceId) ?? new Set<string>()
+    s.add(it.taskId)
+    taskIdsByWs.set(it.workspaceId, s)
+  }
+  const igByTopic = new Map<string, number>()
+  await Promise.all(
+    Array.from(taskIdsByWs.entries()).map(async ([wsId, taskSet]) => {
+      const scores = await getActiveLearningScores({
+        workspaceId: wsId,
+        taskIds: Array.from(taskSet),
+      })
+      for (const [tid, sc] of scores) igByTopic.set(tid, sc)
+    }),
+  )
+  for (const it of out) {
+    it.igScore = igByTopic.get(it.topicId) ?? null
+  }
+
+  // 5. Priority order: mine > fresh > submitted.
+  //    Within 'fresh' we now sort by IG descending; older-first is the
+  //    tiebreaker. Other buckets keep the old FIFO.
   const rank: Record<TopicQueueItem['state'], number> = {
     mine: 0,
     fresh: 1,
@@ -175,7 +206,11 @@ export async function listMyTopicQueueForUser(
   out.sort((a, b) => {
     const r = rank[a.state] - rank[b.state]
     if (r !== 0) return r
-    // Within a bucket, older topics first (FIFO).
+    if (a.state === 'fresh' && b.state === 'fresh') {
+      const ai = a.igScore ?? 0
+      const bi = b.igScore ?? 0
+      if (ai !== bi) return bi - ai
+    }
     return a.createdAt.getTime() - b.createdAt.getTime()
   })
 

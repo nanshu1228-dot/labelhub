@@ -60,6 +60,20 @@ function clampScore(n: unknown): number | null {
 }
 
 /**
+ * Restrict cell-key iteration to *real* plain-object payload shapes.
+ *
+ * Phase-12 audit fix #3: if `payload.ratings` is an array, Object.entries
+ * yields ["0", v] pairs, letting a rater forge cell keys that inflate the
+ * run's cellCount or collide with real rubric ids. We refuse anything
+ * that's not a non-array object.
+ */
+function isPlainObject(x: unknown): x is Record<string, unknown> {
+  return (
+    typeof x === 'object' && x !== null && !Array.isArray(x)
+  )
+}
+
+/**
  * Extract DS cells from submitted pair-rubric annotations.
  * Cell key encodes (rubricId, side) so the run can be joined back to
  * topic+rubric metadata in the UI. K=2 (boolean).
@@ -70,19 +84,19 @@ function buildPairCells(
   // Map<topicId|cellSubKey, Map<userId, classIdx>>
   const buckets = new Map<string, Map<string, number>>()
   for (const r of annoRows) {
-    const ratings = (r.payload.ratings ?? {}) as Record<string, {
-      a?: unknown
-      b?: unknown
-    }>
-    for (const [rubricId, v] of Object.entries(ratings)) {
+    if (!isPlainObject(r.payload.ratings)) continue
+    const ratings = r.payload.ratings as Record<string, unknown>
+    for (const [rubricId, raw] of Object.entries(ratings)) {
+      if (!isPlainObject(raw)) continue
+      const v = raw as { a?: unknown; b?: unknown }
       for (const side of ['a', 'b'] as const) {
-        const raw = v?.[side]
-        if (typeof raw !== 'boolean') continue
+        const obs = v?.[side]
+        if (typeof obs !== 'boolean') continue
         const key = `${r.topicId}::pair:${rubricId}:${side}`
         const inner = buckets.get(key) ?? new Map<string, number>()
         // Latest write wins per (topic, user) — submitted annotations
         // are immutable but a user might appear twice across reruns.
-        inner.set(r.userId, raw ? 1 : 0)
+        inner.set(r.userId, obs ? 1 : 0)
         buckets.set(key, inner)
       }
     }
@@ -101,11 +115,11 @@ function buildArenaCells(
 ): DSCell[] {
   const buckets = new Map<string, Map<string, number>>()
   for (const r of annoRows) {
-    const dims = (r.payload.dimensions ?? {}) as Record<string, {
-      a?: unknown
-      b?: unknown
-    }>
-    for (const [dimId, v] of Object.entries(dims)) {
+    if (!isPlainObject(r.payload.dimensions)) continue
+    const dims = r.payload.dimensions as Record<string, unknown>
+    for (const [dimId, raw] of Object.entries(dims)) {
+      if (!isPlainObject(raw)) continue
+      const v = raw as { a?: unknown; b?: unknown }
       for (const side of ['a', 'b'] as const) {
         const cls = clampScore(v?.[side])
         if (cls === null) continue
@@ -199,6 +213,20 @@ export async function runWorkspaceDawidSkene(
   if (cells.length === 0) {
     throw new ValidationError(
       'No submitted annotations to infer truth from. Wait until raters submit work.',
+    )
+  }
+
+  // Memory guard (Phase-12 audit fix #4): EM allocates R*K*K floats and
+  // iterates over cells*votes*K per E/M step. At workspace scale this is
+  // cheap, but a pathological workspace (100k+ cells × many raters)
+  // could OOM the Node process. We cap at 50k cells per run — admins
+  // hitting this should split their workspace into smaller scopes.
+  // This is intentionally generous (50k cells = ~10k topics × 5
+  // rubrics × 2 sides) so legitimate runs never trip it.
+  const CELL_CAP = 50_000
+  if (cells.length > CELL_CAP) {
+    throw new ValidationError(
+      `DS run would touch ${cells.length} cells, exceeding the safety cap of ${CELL_CAP}. Split the workspace into smaller scopes (per-task runs are on the backlog).`,
     )
   }
 

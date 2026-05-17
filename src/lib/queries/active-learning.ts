@@ -44,10 +44,23 @@ export async function getActiveLearningScores(opts: {
     .limit(1)
 
   // 2. Topic list for the requested tasks.
+  //
+  //    Defense-in-depth (Phase-12 audit fix #7): JOIN tasks and enforce
+  //    `tasks.workspaceId = opts.workspaceId`. Today's callers
+  //    (my-tasks.ts / topic-queue.ts) already filter by membership
+  //    before calling here, but if a future caller forwards untrusted
+  //    `taskIds` we don't want it to leak posteriors from other
+  //    workspaces' tasks that happen to share an id namespace.
   const topicRows = await db
     .select({ id: topics.id })
     .from(topics)
-    .where(inArray(topics.taskId, opts.taskIds))
+    .innerJoin(tasks, eq(tasks.id, topics.taskId))
+    .where(
+      and(
+        inArray(topics.taskId, opts.taskIds),
+        eq(tasks.workspaceId, opts.workspaceId),
+      ),
+    )
   const topicIds = topicRows.map((t) => t.id)
   if (topicIds.length === 0) return new Map()
 
