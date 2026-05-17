@@ -89,11 +89,16 @@ export function EarningsDashboard({
   data,
   userId: _userId,
   contribution,
+  inviteRewardsSlot,
 }: {
   data: DashboardData
   userId: string
   /** Cold counts — submitted / approved / rejected / pending review. NO score. */
   contribution: MyContribution
+  /** Server-rendered slot for InviteRewardsSection (Phase-13). Kept as
+   *  a slot prop instead of an internal fetch so this dashboard stays
+   *  presentational + the page-level data fetches all live together. */
+  inviteRewardsSlot?: React.ReactNode
 }) {
   return (
     <div className="app-light min-h-screen" style={{ background: 'var(--bg)' }}>
@@ -105,6 +110,7 @@ export function EarningsDashboard({
           pendingByCurrency={data.pendingByCurrency}
           pendingItems={data.pendingItems}
         />
+        {inviteRewardsSlot}
         <PayoutHistorySection recentPayouts={data.recentPayouts} />
         <LedgerSection recentTxns={data.recentTxns} />
         <PaymentMethodsSection methods={data.methods} />

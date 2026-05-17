@@ -15,7 +15,14 @@ import {
   getWorkspaceCalibration,
   type UserCalibration,
 } from '@/lib/queries/gold-standards'
+import {
+  getWorkspaceInviteFunnel,
+  listManualReviewRewards,
+  type InviteFunnel,
+  type ManualReviewRow,
+} from '@/lib/queries/invite-rewards'
 import { MembersClient } from '@/components/workspaces/members-client'
+import { InviteFunnelPanel } from '@/components/workspaces/invite-funnel-panel'
 
 export const metadata: Metadata = {
   title: 'Members — LabelHub',
@@ -54,21 +61,46 @@ export default async function MembersPage(
 
   // Trust + calibration scores are admin-only operational data — only fetch
   // when the viewer can see them. Saves the workspace-wide scans for non-admins.
-  const [members, pendingInvites, trustList, calibrationList] =
-    await Promise.all([
-      listWorkspaceMembers(workspaceId),
-      isAdmin
-        ? listPendingInvites(workspaceId).catch(() => [])
-        : Promise.resolve([]),
-      isAdmin
-        ? getWorkspaceTrust(workspaceId).catch(() => [] as UserTrust[])
-        : Promise.resolve([] as UserTrust[]),
-      isAdmin
-        ? getWorkspaceCalibration(workspaceId).catch(
-            () => [] as UserCalibration[],
-          )
-        : Promise.resolve([] as UserCalibration[]),
-    ])
+  const [
+    members,
+    pendingInvites,
+    trustList,
+    calibrationList,
+    inviteFunnel,
+    manualReviewQueue,
+  ] = await Promise.all([
+    listWorkspaceMembers(workspaceId),
+    isAdmin
+      ? listPendingInvites(workspaceId).catch(() => [])
+      : Promise.resolve([]),
+    isAdmin
+      ? getWorkspaceTrust(workspaceId).catch(() => [] as UserTrust[])
+      : Promise.resolve([] as UserTrust[]),
+    isAdmin
+      ? getWorkspaceCalibration(workspaceId).catch(
+          () => [] as UserCalibration[],
+        )
+      : Promise.resolve([] as UserCalibration[]),
+    isAdmin
+      ? getWorkspaceInviteFunnel(workspaceId).catch(
+          () =>
+            ({
+              invited: 0,
+              joined: 0,
+              completed: 0,
+              granted: 0,
+              pendingReview: 0,
+              blocked: 0,
+              grantedByCurrency: {},
+            }) as InviteFunnel,
+        )
+      : Promise.resolve(null),
+    isAdmin
+      ? listManualReviewRewards(workspaceId).catch(
+          () => [] as ManualReviewRow[],
+        )
+      : Promise.resolve([] as ManualReviewRow[]),
+  ])
 
   // Serialize lists into plain {userId → row} records so the client component
   // receives serializable props. Empty for non-admins.
@@ -127,6 +159,15 @@ export default async function MembersPage(
           trustByUserId={trustByUserId}
           calibrationByUserId={calibrationByUserId}
         />
+
+        {/* Phase-13: invite-reward funnel + manual-review queue.
+            Admin-only; presence of `inviteFunnel` is the gate. */}
+        {isAdmin && inviteFunnel && (
+          <InviteFunnelPanel
+            funnel={inviteFunnel}
+            queue={manualReviewQueue}
+          />
+        )}
       </main>
     </div>
   )

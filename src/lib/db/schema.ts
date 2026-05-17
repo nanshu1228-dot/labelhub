@@ -1359,6 +1359,82 @@ export const notifications = pgTable(
 )
 
 // =================================================================
+// Invite-reward automation — Phase-13.
+//
+// When an admin approves the Nth (default 5) annotation from a user
+// who originally joined via someone else's invite, the inviter earns
+// a flat reward (¥200 default) credited to their workspace wallet.
+//
+// One row per (inviter, invitee, workspace) — unique index prevents
+// double-credit. Status machine:
+//
+//   pending        — invitee joined but hasn't crossed the threshold yet
+//                    (row may not exist at this stage; we insert at trigger)
+//   manual_review  — anti-abuse rule fired (same email domain, suspended
+//                    inviter, or fast-burst threshold); admin must
+//                    approve or block
+//   granted        — credit posted, wallet incremented, invitee notified
+//   blocked        — admin denied (counts as resolved; no retry)
+//
+// Money-path table — see /docs (and the Phase-13 audit) for the threat
+// model. Triggered out-of-band via `after()` in the approval action so
+// the verdict commit is never blocked.
+// =================================================================
+export const inviteRewards = pgTable(
+  'invite_rewards',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    inviterUserId: uuid('inviter_user_id')
+      .references(() => users.id)
+      .notNull(),
+    inviteeUserId: uuid('invitee_user_id')
+      .references(() => users.id)
+      .notNull(),
+    workspaceId: uuid('workspace_id')
+      .references(() => workspaces.id)
+      .notNull(),
+    /** 'pending' | 'manual_review' | 'granted' | 'blocked' */
+    status: text('status').notNull().default('pending'),
+    /** Why the row is in manual_review / blocked. Surfaced verbatim to
+     *  the admin queue and stored in audit. */
+    blockReason: text('block_reason'),
+    /** Frozen at row-create time so a reward setting change later
+     *  doesn't retroactively change historical amounts. */
+    amountMinor: integer('amount_minor').notNull(),
+    currency: text('currency').notNull(),
+    /** The Nth approved annotation that pushed the invitee over the
+     *  threshold — useful for the audit trail ("this row was created
+     *  because annotation X got approved"). Nullable because admin-
+     *  granted rows might not reference a specific annotation. */
+    triggerAnnotationId: uuid('trigger_annotation_id').references(
+      () => annotations.id,
+    ),
+    /** When the credit actually hit the wallet. Null until granted. */
+    grantedAt: timestamp('granted_at'),
+    /** Admin who manually approved / denied. Null for auto-grant rows. */
+    reviewedBy: uuid('reviewed_by').references(() => users.id),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => ({
+    /** Idempotency anchor — never double-credit the same pair in the
+     *  same workspace. The trigger flow ON CONFLICT-no-ops on this. */
+    pairUniq: uniqueIndex('invite_rewards_pair_uniq').on(
+      table.inviterUserId,
+      table.inviteeUserId,
+      table.workspaceId,
+    ),
+    inviterIdx: index('invite_rewards_inviter_idx').on(
+      table.inviterUserId,
+      table.createdAt,
+    ),
+    workspaceIdx: index('invite_rewards_workspace_idx').on(
+      table.workspaceId,
+      table.status,
+    ),
+  }),
+)
+
+// =================================================================
 // Dawid-Skene EM truth inference — Phase-11.
 //
 // When ≥2 raters disagree on a cell (pair-rubric bool, arena-gsb 1-5),

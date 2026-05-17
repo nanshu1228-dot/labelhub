@@ -84,6 +84,9 @@ const EXPECTED_GUARDS: Record<string, RegExp> = {
   // Dawid-Skene EM truth inference (Phase-11) — admin-only ops surface
   // (writes consensus runs + persists per-rater confusion matrices).
   'dawid-skene.ts': /requireWorkspaceAdmin\(/,
+  // Invite-reward admin moderation (Phase-13) — money path; admin
+  // approves/denies manual_review rows.
+  'invite-rewards.ts': /requireWorkspaceAdmin\(/,
   // Notification read-state mutations — caller's own inbox only;
   // requireUser plus a userId WHERE clause defends against forged ids.
   'notifications.ts': /requireUser\(/,

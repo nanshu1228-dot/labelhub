@@ -3,7 +3,9 @@ import { redirect } from 'next/navigation'
 import { optionalUser } from '@/lib/auth/guards'
 import { getMyEarnings } from '@/lib/queries/billing'
 import { getMyContribution } from '@/lib/queries/trust-consensus'
+import { listMyInviteRewards } from '@/lib/queries/invite-rewards'
 import { EarningsDashboard } from '@/components/billing/earnings-dashboard'
+import { InviteRewardsSection } from '@/components/billing/invite-rewards-section'
 
 export const metadata: Metadata = {
   title: 'My earnings — LabelHub',
@@ -36,15 +38,17 @@ export default async function MyEarningsPage() {
   if (!me) {
     redirect('/signin?next=/my/earnings')
   }
-  const [data, contribution] = await Promise.all([
+  const [data, contribution, inviteRewards] = await Promise.all([
     getMyEarnings(me.id),
     getMyContribution({ userId: me.id }),
+    listMyInviteRewards({ userId: me.id }).catch(() => []),
   ])
   return (
     <EarningsDashboard
       data={data}
       userId={me.id}
       contribution={contribution}
+      inviteRewardsSlot={<InviteRewardsSection rows={inviteRewards} />}
     />
   )
 }

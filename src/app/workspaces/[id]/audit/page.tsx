@@ -28,7 +28,7 @@ export const dynamic = 'force-dynamic'
  * Search params:
  *   ?q=alice       → fuzzy match on display_name + email
  *   ?user=<uuid>   → exact subject filter (used by drilldown links)
- *   ?group=verdict|restore|trust|inbox|judge|consensus
+ *   ?group=verdict|restore|trust|inbox|judge|consensus|invite
  *
  * Multiple groups can stack via repeated query params, but for v1 we
  * keep it single-select since one tab usually answers one question.
@@ -245,6 +245,7 @@ const GROUP_LABEL: Record<AuditGroup, string> = {
   inbox: 'inbox',
   judge: 'llm-judge runs',
   consensus: 'consensus (DS)',
+  invite: 'invite rewards',
 }
 
 function buildHref(
@@ -325,6 +326,7 @@ function AuditRowCard({
     inbox: 'var(--mute)',
     judge: 'oklch(0.5 0.13 150)',
     consensus: 'oklch(0.55 0.18 320)',
+    invite: 'oklch(0.62 0.16 30)',
     other: 'var(--mute)',
   }
   const fg = groupColor[row.group]
@@ -421,6 +423,14 @@ function verbForEvent(
       return 'failed an LLM judge run'
     case 'ds.run_completed':
       return 'ran Dawid-Skene EM truth inference'
+    case 'invite_reward.granted':
+      return 'invite reward granted to'
+    case 'invite_reward.manual_review':
+      return 'invite reward queued for review for'
+    case 'invite_reward.blocked':
+      return 'invite reward auto-blocked for'
+    case 'invite_reward.denied':
+      return 'invite reward denied for'
     default:
       return type
   }
@@ -480,6 +490,24 @@ function describeDetail(
       return `${cells} cells · ${raters} raters · ${iters} EM iter${converged ? ' ✓' : ' (cap)'}`
     }
     return null
+  }
+  if (
+    type === 'invite_reward.granted' ||
+    type === 'invite_reward.manual_review' ||
+    type === 'invite_reward.blocked' ||
+    type === 'invite_reward.denied'
+  ) {
+    const amount = payload.amountMinor
+    const currency = payload.currency
+    const reason = payload.reason
+    const parts: string[] = []
+    if (typeof amount === 'number' && typeof currency === 'string') {
+      parts.push(`${currency} ${(amount / 100).toFixed(2)}`)
+    }
+    if (typeof reason === 'string' && reason.trim().length > 0) {
+      parts.push(`"${truncate(reason.trim(), 200)}"`)
+    }
+    return parts.length > 0 ? parts.join(' · ') : null
   }
   return null
 }

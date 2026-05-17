@@ -45,6 +45,14 @@ export const AUDIT_EVENT_GROUPS = {
   /** Dawid-Skene EM truth-inference runs (Phase-11) — admin-triggered,
    *  visible in audit so an admin's coworker can see "Alice ran DS at 4pm". */
   consensus: ['ds.run_completed'],
+  /** Invite-reward lifecycle (Phase-13) — money-path events that admins
+   *  must be able to retroactively audit. */
+  invite: [
+    'invite_reward.granted',
+    'invite_reward.manual_review',
+    'invite_reward.blocked',
+    'invite_reward.denied',
+  ],
 } as const
 
 export type AuditGroup = keyof typeof AUDIT_EVENT_GROUPS

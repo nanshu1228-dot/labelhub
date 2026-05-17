@@ -12,6 +12,7 @@ import {
 import { fanoutWebhook } from '@/lib/webhooks/fanout'
 import { emitNotification } from '@/lib/notifications/emit'
 import { recomputeAndPersistTrust } from '@/lib/quality/trust-recompute'
+import { scanInviteRewardOnApproval } from '@/lib/billing/invite-rewards'
 import { readTrustStatus } from '@/lib/actions/trust-status'
 import { writeRevision } from '@/lib/quality/annotation-revisions'
 import { uuidLike } from '@/lib/validators/uuid'
@@ -530,6 +531,24 @@ export async function reviewAnnotation(input: z.infer<typeof reviewSchema>) {
       console.warn('[trust] recompute failed', e)
     }),
   )
+
+  // Phase-13: invite-reward scan. Only triggers when (a) the verdict
+  // is approve, (b) the submitter was invited by someone, and (c) the
+  // submitter's approval count just crossed the threshold. The helper
+  // is idempotent (unique index) so even if this fires for a non-
+  // qualifying approval the no-op is cheap.
+  if (parsed.decision === 'approve') {
+    after(() =>
+      scanInviteRewardOnApproval({
+        inviteeUserId: annotation.userId,
+        workspaceId: task.workspaceId,
+        triggerAnnotationId: annotation.id,
+      }).catch((e) => {
+        // eslint-disable-next-line no-console
+        console.warn('[invite] reward scan failed', e)
+      }),
+    )
+  }
 
   return { ok: true as const }
 }
