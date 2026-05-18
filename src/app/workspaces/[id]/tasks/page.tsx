@@ -115,17 +115,11 @@ export default async function WorkspaceTasksPage(props: {
       </div>
 
       {tasks.length === 0 ? (
-        <div
-          className="rounded-md px-4 py-8 text-center ts-13 mono"
-          style={{
-            background: 'var(--panel)',
-            border: '1px solid var(--line)',
-            color: 'var(--mute2)',
-          }}
-        >
-          No tasks in this workspace yet.
-          {isAdmin && ' Click "+ new task" to create one.'}
-        </div>
+        <EmptyTasksCard
+          workspaceId={workspaceId}
+          templateMode={workspace.templateMode}
+          isAdmin={isAdmin}
+        />
       ) : (
         <div
           className="rounded-md overflow-hidden"
@@ -223,6 +217,87 @@ export default async function WorkspaceTasksPage(props: {
             </tbody>
           </table>
         </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Empty-state CTA card (Phase-17 17a). Replaces the prior flat
+ * "No tasks yet" sentence with a centered card that points the
+ * admin at the right next-step button based on the workspace's
+ * template mode — trajectory workspaces should usually capture
+ * before they author a task, while pair/arena workspaces start
+ * with a task.
+ */
+function EmptyTasksCard({
+  workspaceId,
+  templateMode,
+  isAdmin,
+}: {
+  workspaceId: string
+  templateMode: string
+  isAdmin: boolean
+}) {
+  return (
+    <div
+      className="rounded-md px-6 py-10 text-center"
+      style={{
+        background: 'var(--panel)',
+        border: '1px dashed var(--line)',
+      }}
+    >
+      <div
+        className="ts-22"
+        style={{ color: 'var(--hi)', fontWeight: 500 }}
+      >
+        No tasks here yet
+      </div>
+      <p
+        className="ts-13 mt-2 mx-auto"
+        style={{ color: 'var(--mute)', maxWidth: 440 }}
+      >
+        Tasks are the publishable unit of work. Each one carries a
+        rubric, a reward config, and a queue of topics for annotators
+        to claim.
+      </p>
+      {isAdmin ? (
+        <div className="mt-6 flex items-center justify-center gap-3 flex-wrap">
+          <Link
+            href={`/workspaces/${workspaceId}/tasks/new`}
+            className="ts-13 mono"
+            style={{
+              background: 'var(--accent)',
+              color: 'white',
+              border: '1px solid var(--accent)',
+              borderRadius: 6,
+              padding: '8px 16px',
+              textDecoration: 'none',
+              fontWeight: 500,
+            }}
+          >
+            ▶ Create your first task
+          </Link>
+          {templateMode === 'agent-trace-eval' && (
+            <Link
+              href={`/workspaces/${workspaceId}/trajectories`}
+              className="ts-13 mono"
+              style={{
+                color: 'var(--accent)',
+                textDecoration: 'none',
+              }}
+            >
+              Or capture a trajectory first →
+            </Link>
+          )}
+        </div>
+      ) : (
+        <p
+          className="ts-12 mt-4"
+          style={{ color: 'var(--mute2)' }}
+        >
+          Workspace admins create tasks. Ping yours to publish one.
+        </p>
       )}
     </div>
   )

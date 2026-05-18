@@ -35,6 +35,14 @@ interface AnalyzeClientProps {
   rowsPreview: RowPreview[]
   rowsTotal: number
   aggregates: AnalyzeAggregates
+  /**
+   * True when the workspace has at least one trajectory in total
+   * (regardless of the current filter). Distinguishes "no data yet"
+   * from "filter matched nothing" so we can show the right CTA
+   * instead of a misleading "loosen your filter" hint.
+   * Phase-17 17a addition.
+   */
+  hasAnyTrajectories: boolean
 }
 
 export function AnalyzeClient({
@@ -44,7 +52,14 @@ export function AnalyzeClient({
   rowsPreview,
   rowsTotal,
   aggregates,
+  hasAnyTrajectories,
 }: AnalyzeClientProps) {
+  // Phase-17 17a: if the workspace has zero trajectories, the entire
+  // analyze surface is meaningless — short-circuit to a single
+  // onboarding card pointing at the capture / eval-run flows.
+  if (!hasAnyTrajectories) {
+    return <EmptyAnalyzeCard workspaceId={workspaceId} />
+  }
   return (
     <div className="space-y-8">
       <FilterBar
@@ -64,6 +79,61 @@ export function AnalyzeClient({
         rows={rowsPreview}
         rowsTotal={rowsTotal}
       />
+    </div>
+  )
+}
+
+function EmptyAnalyzeCard({ workspaceId }: { workspaceId: string }) {
+  return (
+    <div
+      className="rounded-md px-6 py-10 text-center"
+      style={{
+        background: 'var(--panel)',
+        border: '1px dashed var(--line)',
+      }}
+    >
+      <div
+        className="ts-22"
+        style={{ color: 'var(--hi)', fontWeight: 500 }}
+      >
+        No trajectories to analyze yet
+      </div>
+      <p
+        className="ts-13 mt-2 mx-auto"
+        style={{ color: 'var(--mute)', maxWidth: 480 }}
+      >
+        Analyze lets you slice every captured trajectory by filter, see
+        aggregate behavior patterns, and ask Claude questions over the
+        matching set. Capture some calls first — through the proxy, the
+        SDK, or by running an agent here.
+      </p>
+      <div className="mt-6 flex items-center justify-center gap-3 flex-wrap">
+        <a
+          href={`/workspaces/${workspaceId}/eval-runs/new`}
+          className="ts-13 mono"
+          style={{
+            background: 'var(--accent)',
+            color: 'white',
+            border: '1px solid var(--accent)',
+            borderRadius: 6,
+            padding: '8px 16px',
+            textDecoration: 'none',
+            fontWeight: 500,
+          }}
+        >
+          ▶ Run an agent (eval mode)
+        </a>
+        <a
+          href="/docs#proxy"
+          className="ts-13 mono"
+          style={{
+            color: 'var(--accent)',
+            textDecoration: 'none',
+          }}
+        >
+          Or point your SDK at the proxy →
+        </a>
+      </div>
     </div>
   )
 }

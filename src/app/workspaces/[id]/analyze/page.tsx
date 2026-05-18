@@ -3,6 +3,9 @@ import Link from 'next/link'
 import { notFound, redirect } from 'next/navigation'
 import { optionalUser, requireWorkspaceMember } from '@/lib/auth/guards'
 import { getWorkspaceById } from '@/lib/queries/workspaces'
+import { count, eq } from 'drizzle-orm'
+import { getDb } from '@/lib/db/client'
+import { trajectories } from '@/lib/db/schema'
 import {
   computeAggregates,
   listTrajectoriesByFilter,
@@ -71,12 +74,20 @@ export default async function AnalyzePage(
   }
 
   const filter = parseFilter(filterString)
-  const rows = await listTrajectoriesByFilter({
-    workspaceId,
-    filter,
-    limit: 500,
-  })
+  const db = getDb()
+  const [rows, totalRow] = await Promise.all([
+    listTrajectoriesByFilter({
+      workspaceId,
+      filter,
+      limit: 500,
+    }),
+    db
+      .select({ n: count() })
+      .from(trajectories)
+      .where(eq(trajectories.workspaceId, workspaceId)),
+  ])
   const aggregates = computeAggregates(rows)
+  const hasAnyTrajectories = Number(totalRow[0]?.n ?? 0) > 0
 
   return (
     <Shell workspaceName={workspace.name} workspaceId={workspaceId}>
@@ -87,6 +98,7 @@ export default async function AnalyzePage(
         rowsPreview={rows.slice(0, 12).map(rowPreview)}
         rowsTotal={rows.length}
         aggregates={aggregates}
+        hasAnyTrajectories={hasAnyTrajectories}
       />
     </Shell>
   )

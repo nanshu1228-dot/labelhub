@@ -1,56 +1,87 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useLang } from '@/lib/i18n'
 
 /**
- * The "3-line drop-in" card on the landing hero (Phase-15).
+ * The "3-line drop-in" card on the landing hero (Phase-15, key
+ * resolution added in Phase-17).
  *
  * Visual: a code block showing the OpenAI/Anthropic SDK base_url
  * swap that makes a customer's existing agent suddenly route through
  * the gateway — no code rewrite, zero SDK lock-in.
  *
- * Has a tabbed switcher (python / node / curl) and a copy button.
- * The actual URL is read from PROXY_BASE so it points at the live
- * deployment.
+ * Tabbed switcher (python / node / curl), copy button, and an on-
+ * mount fetch of /api/demo/info to pull the *real* public demo key.
+ * If the fetch fails or the key isn't minted, falls back to the
+ * `lh_demo_…` placeholder so the snippet still reads coherently.
  */
 
-const PROXY_BASE = 'https://labelhub-gamma.vercel.app/api/proxy'
+const FALLBACK_PROXY_BASE = 'https://labelhub-gamma.vercel.app/api/proxy'
+const FALLBACK_KEY = 'lh_demo_…'
 
 type Tab = 'python' | 'node' | 'curl'
 
-const SNIPPETS: Record<Tab, string> = {
-  python: `from openai import OpenAI
+function renderSnippets(opts: {
+  proxyBase: string
+  demoKey: string
+}): Record<Tab, string> {
+  const { proxyBase, demoKey } = opts
+  return {
+    python: `from openai import OpenAI
 
 client = OpenAI(
-    base_url="${PROXY_BASE}/openai/v1",
-    api_key="lh_demo_…",   # rate-limited public demo key
+    base_url="${proxyBase}/openai/v1",
+    api_key="${demoKey}",
 )
 # every call below is captured + scope-injected automatically
 client.chat.completions.create(model="gpt-4o-mini", messages=[…])`,
-  node: `import OpenAI from "openai"
+    node: `import OpenAI from "openai"
 
 const openai = new OpenAI({
-  baseURL: "${PROXY_BASE}/openai/v1",
-  apiKey: "lh_demo_…",   // rate-limited public demo key
+  baseURL: "${proxyBase}/openai/v1",
+  apiKey: "${demoKey}",
 })
 // every call below is captured + scope-injected automatically
 await openai.chat.completions.create({ model: "gpt-4o-mini", messages: [...] })`,
-  curl: `curl ${PROXY_BASE}/anthropic/v1/messages \\
-  -H "x-api-key: lh_demo_…" \\
+    curl: `curl ${proxyBase}/anthropic/v1/messages \\
+  -H "x-api-key: ${demoKey}" \\
   -H "anthropic-version: 2023-06-01" \\
   -H "content-type: application/json" \\
   -d '{"model":"claude-sonnet-4-5","max_tokens":256,
        "messages":[{"role":"user","content":"hi"}]}'`,
+  }
 }
 
 export function GatewaySnippet() {
   const { t } = useLang()
   const [tab, setTab] = useState<Tab>('python')
   const [copied, setCopied] = useState(false)
+  const [proxyBase, setProxyBase] = useState(FALLBACK_PROXY_BASE)
+  const [demoKey, setDemoKey] = useState(FALLBACK_KEY)
+
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/demo/info', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j: { proxyBase?: string; demoKey?: string | null }) => {
+        if (cancelled) return
+        if (typeof j.proxyBase === 'string') setProxyBase(j.proxyBase)
+        if (typeof j.demoKey === 'string' && j.demoKey.length > 0)
+          setDemoKey(j.demoKey)
+      })
+      .catch(() => {
+        // Network blip — placeholder still reads sanely.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const snippets = renderSnippets({ proxyBase, demoKey })
 
   function copy() {
     navigator.clipboard
-      .writeText(SNIPPETS[tab])
+      .writeText(snippets[tab])
       .then(() => {
         setCopied(true)
         setTimeout(() => setCopied(false), 1400)
@@ -120,7 +151,7 @@ export function GatewaySnippet() {
           fontFeatureSettings: '"liga" 0',
         }}
       >
-        <code>{SNIPPETS[tab]}</code>
+        <code>{snippets[tab]}</code>
       </pre>
     </div>
   )

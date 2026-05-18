@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { GeistSans } from 'geist/font/sans'
 import { GeistMono } from 'geist/font/mono'
 import { LangProvider } from '@/components/site/lang-provider'
+import { OnboardingTour } from '@/components/site/onboarding-tour'
 import './globals.css'
 
 // `geist` package ships fonts pre-bundled — no Google Fonts fetch at build time.
@@ -9,9 +10,9 @@ import './globals.css'
 // that the previous `next/font/google` setup did, so globals.css works unchanged.
 
 export const metadata: Metadata = {
-  title: 'LabelHub — Capture the teaching, not just the label',
+  title: 'LabelHub — The Annotation-Aware LLM Gateway',
   description:
-    'An annotation engine for the LLM era. Three modes — pair rubric, arena GSB, and agent-trace eval — over one model-grade scoring engine.',
+    'Drop in as your OpenAI/Anthropic base URL. Every agent call gets captured, scope-guarded, and forkable for counterfactual teaching — no SDK changes.',
 }
 
 export default function RootLayout({
@@ -27,6 +28,7 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col">
         <LangProvider>{children}</LangProvider>
+        <OnboardingTour />
       </body>
     </html>
   )
