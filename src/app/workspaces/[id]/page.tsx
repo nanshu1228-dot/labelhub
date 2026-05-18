@@ -18,6 +18,7 @@ import {
   optionalUser,
   requireWorkspaceMember,
 } from '@/lib/auth/guards'
+import { LiveActivityStrip } from '@/components/workspaces/live-activity-strip'
 
 /**
  * Workspace dashboard.
@@ -284,10 +285,15 @@ export default async function WorkspacePage(
       <h1 className="lh-h1 mb-2" style={{ color: 'oklch(0.95 0 0)' }}>
         {workspace.name}
       </h1>
-      <div className="lh-mono lh-body-sm" style={{ color: 'oklch(0.55 0 0)' }}>
+      <div className="lh-mono lh-body-sm mb-6" style={{ color: 'oklch(0.55 0 0)' }}>
         {workspace.templateMode} · created{' '}
         {new Date(workspace.createdAt).toLocaleString()}
       </div>
+
+      {/* Phase-19 live activity strip. Member-readable; everyone in
+          the workspace sees the same feed. Self-hides until the first
+          poll returns. */}
+      <LiveActivityStrip workspaceId={id} />
 
       {/*
         Mode-aware tile grid.

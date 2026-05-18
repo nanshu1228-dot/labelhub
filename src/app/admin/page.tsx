@@ -7,6 +7,8 @@ import {
   type AdminWorkspaceCard,
   type AdminPendingItem,
 } from '@/lib/queries/admin-dashboard'
+import { getAdminCostSummary } from '@/lib/queries/admin-costs'
+import { CostPanel } from '@/components/admin/cost-panel'
 
 export const metadata: Metadata = {
   title: 'Admin — LabelHub',
@@ -33,7 +35,29 @@ export default async function AdminDashboardPage() {
   const me = await optionalUser()
   if (!me) redirect('/signin?next=/admin')
 
-  const data = await getAdminDashboardData({ userId: me.id })
+  const [data, costs] = await Promise.all([
+    getAdminDashboardData({ userId: me.id }),
+    getAdminCostSummary({ viewerUserId: me.id }).catch(() => ({
+      today: {
+        scope: 'today' as const,
+        totalCostUsd: 0,
+        totalTokensIn: 0,
+        totalTokensOut: 0,
+        totalCalls: 0,
+        byWorkspace: [],
+        byFeature: [],
+      },
+      last7d: {
+        scope: 'last7d' as const,
+        totalCostUsd: 0,
+        totalTokensIn: 0,
+        totalTokensOut: 0,
+        totalCalls: 0,
+        byWorkspace: [],
+        byFeature: [],
+      },
+    })),
+  ])
   if (data.cards.length === 0) {
     // Not an admin of any workspace — surface 404. The link to /admin
     // is only rendered for admins so they shouldn't hit this normally.
@@ -104,6 +128,9 @@ export default async function AdminDashboardPage() {
             />
           </div>
         </section>
+
+        {/* Phase-19: platform-cost rollup across the admin's workspaces. */}
+        <CostPanel today={costs.today} last7d={costs.last7d} />
 
         <section className="mb-10">
           <div className="lbl mb-3">§ WORKSPACE CARDS</div>
