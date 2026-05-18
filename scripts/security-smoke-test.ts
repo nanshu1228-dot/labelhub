@@ -40,36 +40,99 @@ const DEMO_WORKSPACE_ID = '00000000-0000-0000-0000-000000000010'
 
 /**
  * Public-by-design demo bearer — used to verify CROSS-workspace boundaries.
- * Fetched at start-of-run from /api/demo/info so a rotated key (or a
- * fresh seed in a preview environment) doesn't break the smoke test.
- * Override with LABELHUB_KEY env var to test a specific key.
+ * Resolution order:
+ *   1. LABELHUB_KEY env var, IF a liveness ping returns non-401.
+ *   2. /api/demo/info (the public endpoint that exposes the current
+ *      rate-limited demo key — survives a rotation).
+ *
+ * The liveness ping is the critical defense. A CI secret that points
+ * at one of the keys we revoked during the Phase-17 audit would
+ * otherwise let the env-override silently break the positive control
+ * + all downstream cross-workspace probes.
  */
 let DEMO_BEARER = ''
 
-async function resolveDemoBearer(): Promise<string> {
-  const override = process.env.LABELHUB_KEY
-  if (override && override.length > 0) return override
-  // Fetch the live demo key from the public endpoint.
-  const { stdout } = await execFileAsync('curl', [
-    '-sS',
-    '-m',
-    '15',
-    `${BASE_URL}/api/demo/info`,
-  ])
-  let payload: { demoKey?: string | null } = {}
+// Liveness ping + demo-key fetch shell out to curl — Node's undici
+// has DNS issues on some Windows boxes for Vercel hostnames (same
+// reason the rest of the script uses curl, see header comment).
+//
+// `-o NUL` (Windows) / `-o /dev/null` (POSIX) is the only platform
+// branch we need.
+const NULL_DEVICE = process.platform === 'win32' ? 'NUL' : '/dev/null'
+
+async function pingBearer(bearer: string): Promise<number> {
   try {
-    payload = JSON.parse(stdout)
+    const { stdout } = await execFileAsync('curl', [
+      '-sS',
+      '-m',
+      '10',
+      '-o',
+      NULL_DEVICE,
+      '-w',
+      '%{http_code}',
+      '-H',
+      `Authorization: Bearer ${bearer}`,
+      `${BASE_URL}/api/annotations?limit=1`,
+    ])
+    return parseInt(stdout.trim(), 10) || 0
   } catch {
-    // fall through
+    return 0
   }
-  if (!payload.demoKey) {
+}
+
+async function fetchLiveDemoKey(): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync('curl', [
+      '-sS',
+      '-m',
+      '15',
+      `${BASE_URL}/api/demo/info`,
+    ])
+    const payload = JSON.parse(stdout) as { demoKey?: string | null }
+    return payload.demoKey ?? null
+  } catch {
+    return null
+  }
+}
+
+async function resolveDemoBearer(): Promise<{
+  bearer: string
+  source: string
+}> {
+  const override = process.env.LABELHUB_KEY
+  if (override && override.length > 0) {
+    const status = await pingBearer(override)
+    // Accept only 2xx — a revoked key returns 401, a key for a
+    // workspace whose schema has drifted may return 400/500, and a
+    // network failure returns 0. Any of those should fall through.
+    if (status >= 200 && status < 300) {
+      return { bearer: override, source: `LABELHUB_KEY env (ping ${status})` }
+    }
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[smoke] LABELHUB_KEY env returned ${status} on liveness ping — treating as dead, falling through to /api/demo/info`,
+    )
+  }
+  const live = await fetchLiveDemoKey()
+  if (live) {
+    // Self-verify the live key too — if /api/demo/info returned a
+    // value but the proxy auth chain rejects it, we still need to
+    // bail loud so CI flags the inconsistency.
+    const status = await pingBearer(live)
+    if (status >= 200 && status < 300) {
+      return { bearer: live, source: `/api/demo/info (ping ${status})` }
+    }
     // eslint-disable-next-line no-console
     console.error(
-      `[smoke] could not fetch demo key from ${BASE_URL}/api/demo/info — pass LABELHUB_KEY env var to override.`,
+      `[smoke] /api/demo/info returned a key but it failed the liveness ping (status ${status}). Server-side seed may be inconsistent with proxy auth.`,
     )
     process.exit(2)
   }
-  return payload.demoKey
+  // eslint-disable-next-line no-console
+  console.error(
+    `[smoke] could not resolve a working demo bearer (env LABELHUB_KEY dead or unset, ${BASE_URL}/api/demo/info also failed).`,
+  )
+  process.exit(2)
 }
 
 // The old hardcoded admin token that used to be a fallback. Should now
@@ -339,10 +402,16 @@ async function main() {
   )
   // Resolve the live demo bearer before running tests — was hardcoded
   // pre-maintenance pass, then revoked when the key was scrubbed from
-  // the repo. /api/demo/info exposes the current key publicly.
-  DEMO_BEARER = await resolveDemoBearer()
+  // the repo. /api/demo/info exposes the current key publicly. A
+  // liveness ping defends against a stale CI secret pointing at a
+  // revoked key.
+  const resolved = await resolveDemoBearer()
+  DEMO_BEARER = resolved.bearer
   console.log(
-    `  ${c.dim(`using demo bearer ${DEMO_BEARER.slice(0, 12)}…`)}\n`,
+    `  ${c.dim(`bearer source: ${resolved.source}`)}`,
+  )
+  console.log(
+    `  ${c.dim(`bearer prefix: ${DEMO_BEARER.slice(0, 14)}…`)}\n`,
   )
   let pass = 0
   let fail = 0
