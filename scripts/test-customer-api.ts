@@ -20,9 +20,30 @@ import { promisify } from 'node:util'
 const execFileAsync = promisify(execFile)
 
 const BASE_URL = process.env.BASE_URL ?? 'https://labelhub-gamma.vercel.app'
-const KEY =
-  process.env.LABELHUB_KEY ??
-  '$LABELHUB_DEMO_KEY'
+
+/** Resolve the public demo key. Override with LABELHUB_KEY env var
+ *  for a specific test target; else fetch from the live endpoint
+ *  so rotated keys / preview seeds don't break the script. */
+async function resolveKey(): Promise<string> {
+  if (process.env.LABELHUB_KEY) return process.env.LABELHUB_KEY
+  const { stdout } = await execFileAsync('curl', [
+    '-sS',
+    '-m',
+    '15',
+    `${BASE_URL}/api/demo/info`,
+  ])
+  try {
+    const j = JSON.parse(stdout) as { demoKey?: string | null }
+    if (j.demoKey) return j.demoKey
+  } catch {
+    // fall through
+  }
+  console.error(
+    `[test-customer-api] could not fetch demo key from ${BASE_URL}/api/demo/info — pass LABELHUB_KEY env var.`,
+  )
+  process.exit(2)
+}
+let KEY = ''
 
 const SECTION = (s: string) =>
   `\n\x1b[1;35m━━━ ${s} ━━━\x1b[0m`
@@ -67,6 +88,7 @@ async function call(
 }
 
 async function main() {
+  KEY = await resolveKey()
   console.log(`\n${BASE_URL}  ·  key prefix ${KEY.slice(0, 14)}…\n`)
 
   // ─── 1. GET /api/annotations ─────────────────────────────────────────

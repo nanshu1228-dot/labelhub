@@ -17,8 +17,23 @@
 import { config as loadEnv } from 'dotenv'
 loadEnv({ path: '.env.local' })
 
-const BEARER_DEFAULT = '$LABELHUB_DEMO_KEY'
 const WORKSPACE_ID = '00000000-0000-0000-0000-000000000010'
+
+/** Resolve the demo bearer at start-of-run. Caller can override via
+ *  argv[3]; else we fetch /api/demo/info on the target host. */
+async function resolveBearer(base: string): Promise<string> {
+  const res = await fetch(`${base}/api/demo/info`)
+  if (!res.ok) {
+    console.error(`[smoke] could not fetch demo key from ${base}/api/demo/info — pass bearer as argv[3].`)
+    process.exit(2)
+  }
+  const j = (await res.json()) as { demoKey?: string | null }
+  if (!j.demoKey) {
+    console.error(`[smoke] /api/demo/info returned no demoKey — pass bearer as argv[3].`)
+    process.exit(2)
+  }
+  return j.demoKey
+}
 
 async function probe(
   label: string,
@@ -49,13 +64,13 @@ async function probe(
 
 async function main() {
   const base = process.argv[2]?.replace(/\/$/, '')
-  const bearer = process.argv[3] ?? BEARER_DEFAULT
   if (!base) {
     console.error(
       'usage: tsx scripts/_prod-smoke.ts <https://your-app.vercel.app> [bearer]',
     )
     process.exit(1)
   }
+  const bearer = process.argv[3] ?? (await resolveBearer(base))
 
   console.log(`\n=== LabelHub prod smoke against ${base}\n`)
 

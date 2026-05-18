@@ -38,11 +38,39 @@ const BASE_URL = (process.env.BASE_URL ?? 'https://labelhub-gamma.vercel.app').r
 )
 const DEMO_WORKSPACE_ID = '00000000-0000-0000-0000-000000000010'
 
-// Public-by-design demo bearer (documented in DEMO_CHECKLIST.md) —
-// used here to verify CROSS-workspace boundaries, not as a secret.
-const DEMO_BEARER =
-  process.env.LABELHUB_KEY ??
-  '$LABELHUB_DEMO_KEY'
+/**
+ * Public-by-design demo bearer — used to verify CROSS-workspace boundaries.
+ * Fetched at start-of-run from /api/demo/info so a rotated key (or a
+ * fresh seed in a preview environment) doesn't break the smoke test.
+ * Override with LABELHUB_KEY env var to test a specific key.
+ */
+let DEMO_BEARER = ''
+
+async function resolveDemoBearer(): Promise<string> {
+  const override = process.env.LABELHUB_KEY
+  if (override && override.length > 0) return override
+  // Fetch the live demo key from the public endpoint.
+  const { stdout } = await execFileAsync('curl', [
+    '-sS',
+    '-m',
+    '15',
+    `${BASE_URL}/api/demo/info`,
+  ])
+  let payload: { demoKey?: string | null } = {}
+  try {
+    payload = JSON.parse(stdout)
+  } catch {
+    // fall through
+  }
+  if (!payload.demoKey) {
+    // eslint-disable-next-line no-console
+    console.error(
+      `[smoke] could not fetch demo key from ${BASE_URL}/api/demo/info — pass LABELHUB_KEY env var to override.`,
+    )
+    process.exit(2)
+  }
+  return payload.demoKey
+}
 
 // The old hardcoded admin token that used to be a fallback. Should now
 // be 100% rejected.
@@ -308,6 +336,13 @@ const tests: Test[] = [
 async function main() {
   console.log(
     `\n${c.bold('LabelHub security smoke test')}  ${c.dim(BASE_URL)}\n`,
+  )
+  // Resolve the live demo bearer before running tests — was hardcoded
+  // pre-maintenance pass, then revoked when the key was scrubbed from
+  // the repo. /api/demo/info exposes the current key publicly.
+  DEMO_BEARER = await resolveDemoBearer()
+  console.log(
+    `  ${c.dim(`using demo bearer ${DEMO_BEARER.slice(0, 12)}…`)}\n`,
   )
   let pass = 0
   let fail = 0
