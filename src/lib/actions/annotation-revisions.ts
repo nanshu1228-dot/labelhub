@@ -31,7 +31,7 @@ import {
 } from '@/lib/db/schema'
 import { requireWorkspaceAdmin } from '@/lib/auth/guards'
 import { uuidLike } from '@/lib/validators/uuid'
-import { NotFoundError, ValidationError } from '@/lib/errors'
+import { ConflictError, NotFoundError, ValidationError } from '@/lib/errors'
 import { writeRevision } from '@/lib/quality/annotation-revisions'
 import { emitNotification } from '@/lib/notifications/emit'
 
@@ -101,13 +101,28 @@ export async function restoreAnnotationRevision(
   //    restores to a pre-submit revision, the topic still shows
   //    'submitted' status; admin may want to send-back-for-revision
   //    after.
-  await db
+  //
+  //    Maintenance fix #7 — CAS on the version we just read; if the
+  //    annotation moved (e.g. the original submitter pressed save in
+  //    parallel) refuse rather than silently overwrite.
+  const restoreResult = await db
     .update(annotations)
     .set({
       payload: rev.payload as object,
       version: ann.version + 1,
     })
-    .where(eq(annotations.id, ann.id))
+    .where(
+      and(
+        eq(annotations.id, ann.id),
+        eq(annotations.version, ann.version),
+      ),
+    )
+    .returning({ id: annotations.id })
+  if (restoreResult.length === 0) {
+    throw new ConflictError(
+      'Annotation changed since you opened the history. Refresh and try again.',
+    )
+  }
 
   // 5. Append a 'restore' revision row so the trail is complete.
   const written = await writeRevision({

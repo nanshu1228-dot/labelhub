@@ -1,7 +1,7 @@
 'use server'
 import { z } from 'zod'
 import { after } from 'next/server'
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, isNull, sql } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { tasks, topics, annotations, events } from '@/lib/db/schema'
 import {
@@ -94,12 +94,32 @@ export async function saveDraftAnnotation(
   // topic claims it. After that, only the claimant may save further
   // drafts. This is the "first to start working" model — admins can
   // pre-assign for fairness flows, but the default is grab-as-you-go.
+  //
+  // Maintenance fix #7 — the WHERE used to be just `topic.id`, so two
+  // tabs hitting save concurrently could both "claim". Add the
+  // `assignedTo IS NULL` + version CAS guards and re-check the
+  // affected-row count: if zero, someone won the race and we fall
+  // through to the "claimed by another" branch.
   if (topic.assignedTo === null) {
-    await db
+    const claimResult = await db
       .update(topics)
-      .set({ assignedTo: user.id })
-      .where(eq(topics.id, topic.id))
-    topic.assignedTo = user.id
+      .set({ assignedTo: user.id, version: topic.version + 1 })
+      .where(
+        and(
+          eq(topics.id, topic.id),
+          eq(topics.version, topic.version),
+          isNull(topics.assignedTo),
+        ),
+      )
+      .returning({ id: topics.id, assignedTo: topics.assignedTo })
+    if (claimResult.length > 0) {
+      topic.assignedTo = user.id
+      topic.version = topic.version + 1
+    } else {
+      throw new ForbiddenError(
+        'This topic was just claimed by another annotator. Pick a different one.',
+      )
+    }
   } else if (topic.assignedTo !== user.id) {
     throw new ForbiddenError(
       'This topic is claimed by another annotator. Pick a different one.',
@@ -125,7 +145,11 @@ export async function saveDraftAnnotation(
     // Set startedAt on the first save only — once set, never overwrite.
     // Existing rows from before this column was added stay null until
     // their next save creates a fresh anchor.
-    const [updated] = await db
+    //
+    // Maintenance fix #7 — version CAS. Two tabs racing through this
+    // path used to silently clobber each other. Now the second writer
+    // gets a ConflictError so the client can refresh + replay.
+    const updated = await db
       .update(annotations)
       .set({
         payload: parsed.payload,
@@ -134,9 +158,19 @@ export async function saveDraftAnnotation(
         startedAt: existing.startedAt ?? new Date(),
         version: existing.version + 1,
       })
-      .where(eq(annotations.id, existing.id))
+      .where(
+        and(
+          eq(annotations.id, existing.id),
+          eq(annotations.version, existing.version),
+        ),
+      )
       .returning()
-    annotation = updated
+    if (updated.length === 0) {
+      throw new ConflictError(
+        'Annotation changed in another window. Refresh and try again.',
+      )
+    }
+    annotation = updated[0]
   } else {
     const [created] = await db
       .insert(annotations)

@@ -119,7 +119,18 @@ function setupDb(opts: {
     }),
     update: () => ({
       set: () => ({
-        where: () => Promise.resolve(),
+        where: () => {
+          // Both .returning() (claim CAS + draft-update CAS) and bare
+          // await (legacy callers) must work. Return a thenable that
+          // is ALSO a returning()-bearing object.
+          const result = [{ id: 'claimed-topic', assignedTo: USER.id }]
+          return {
+            then(onFulfilled: (v: unknown) => unknown) {
+              return Promise.resolve().then(onFulfilled)
+            },
+            returning: () => Promise.resolve(result),
+          }
+        },
       }),
     }),
   } as never)
