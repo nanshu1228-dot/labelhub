@@ -220,19 +220,36 @@ export function DatasetVersionsCard({
                     'system'}
                 </div>
               </div>
-              <a
-                href={`/api/export/dataset?versionId=${v.id}`}
-                className="ts-12 mono px-3 py-1.5 rounded shrink-0"
-                style={{
-                  background: 'var(--accent-soft)',
-                  color: 'var(--accent)',
-                  border: '1px solid var(--accent-line)',
-                  textDecoration: 'none',
-                }}
-                download={`labelhub-${v.label}.jsonl`}
-              >
-                ⬇ download .jsonl
-              </a>
+              <div className="flex items-center gap-2 shrink-0">
+                <a
+                  href={`/api/export/dataset?versionId=${v.id}&format=raw`}
+                  className="ts-12 mono px-3 py-1.5 rounded"
+                  style={{
+                    background: 'var(--panel2)',
+                    color: 'var(--text)',
+                    border: '1px solid var(--line)',
+                    textDecoration: 'none',
+                  }}
+                  download={`labelhub-${v.label}.jsonl`}
+                  title="Verbatim manifest — annotation + topic + task metadata"
+                >
+                  ⬇ raw
+                </a>
+                <a
+                  href={`/api/export/dataset?versionId=${v.id}&format=teaching`}
+                  className="ts-12 mono px-3 py-1.5 rounded"
+                  style={{
+                    background: 'var(--accent-soft)',
+                    color: 'var(--accent)',
+                    border: '1px solid var(--accent-line)',
+                    textDecoration: 'none',
+                  }}
+                  download={`labelhub-${v.label}-teaching.jsonl`}
+                  title="(prompt, ai_proposal, human_correction, delta) — SFT/DPO-ready"
+                >
+                  ⬇ teaching .jsonl
+                </a>
+              </div>
             </li>
           ))}
         </ul>

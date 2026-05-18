@@ -103,6 +103,12 @@ export async function freezeDatasetVersion(
   //    "Approved" = the host topic's status moved to 'approved' (the
   //    admin acceptance terminal state). Mirrors what the trust /
   //    payout pipeline considers an authoritative label.
+  //
+  //    Phase-18: also pulls the topic's prompt (`item_data`) and the
+  //    annotation's `claude_proposal` + `delta_summary` so the manifest
+  //    is self-sufficient for teaching-signal export. Without these
+  //    the SFT/DPO converter would have to look up live rows that may
+  //    have changed since freeze, breaking reproducibility.
   const rows = await db
     .select({
       annotationId: annotations.id,
@@ -110,6 +116,10 @@ export async function freezeDatasetVersion(
       taskId: topics.taskId,
       userId: annotations.userId,
       payload: annotations.payload,
+      claudeProposal: annotations.claudeProposal,
+      deltaSummary: annotations.deltaSummary,
+      reasoningText: annotations.reasoningText,
+      itemData: topics.itemData,
       submittedAt: annotations.submittedAt,
       templateMode: tasks.templateMode,
       topicStatus: topics.status,
@@ -148,6 +158,16 @@ export async function freezeDatasetVersion(
     taskId: r.taskId,
     userId: r.userId,
     payload: r.payload,
+    /** Phase-18: AI's pre-annotation proposal — present when the
+     *  AI draft-reviewer ran on this annotation. Null otherwise. */
+    claudeProposal: r.claudeProposal,
+    /** Phase-18: rater's free-text summary of what they changed from
+     *  the AI proposal. Null when not provided. */
+    deltaSummary: r.deltaSummary,
+    /** Phase-18: rater's chain-of-thought (when prompted). */
+    reasoningText: r.reasoningText,
+    /** Phase-18: the source topic — prompt + any reference material. */
+    itemData: r.itemData,
     submittedAt: r.submittedAt?.toISOString() ?? null,
     approvedAtSnapshot: now.toISOString(),
     templateMode: r.templateMode,
