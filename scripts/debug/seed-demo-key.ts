@@ -97,17 +97,20 @@ async function main() {
     `
 
     // 4. Stash plaintext into settings JSONB.
-    const nextSettings = {
-      ...(ws.settings ?? {}),
+    //    Use Postgres `||` jsonb merge so a concurrent edit to other
+    //    settings keys doesn't get clobbered (Phase-17 audit fix #F5).
+    const patch = {
       demoApiKey: plain,
       demoApiKeyRpm: DEMO_KEY_RPM,
       demoApiKeyMintedAt: new Date().toISOString(),
     }
     await sql`
       UPDATE workspaces
-      SET settings = ${sql.json(nextSettings)}
+      SET settings = coalesce(settings, '{}'::jsonb) || ${sql.json(patch)}::jsonb
       WHERE id = ${DEMO_WORKSPACE_ID}
     `
+    void ws // keep the existence-check earlier; ws.settings no longer
+    // read here since the merge happens server-side
 
     // eslint-disable-next-line no-console
     console.log('[seed-demo-key] ✓ minted', {

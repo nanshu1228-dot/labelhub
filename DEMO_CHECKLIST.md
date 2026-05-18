@@ -38,7 +38,7 @@ Open a terminal — paste both curls back-to-back:
 ```bash
 # 1. ON-topic — should answer normally
 curl -sS -X POST https://labelhub-gamma.vercel.app/api/proxy/doubao/chat/completions \
-  -H 'Authorization: Bearer lh_ws_7fTnxnfKRZ7yP2BrOCD2W8E14GIQ6cFf-TgvU5pwTNQ' \
+  -H 'Authorization: Bearer $LABELHUB_DEMO_KEY' \
   -H 'Content-Type: application/json' \
   -d '{"model":"doubao-seed-2-0-lite-260428",
        "messages":[{"role":"user","content":"What are common metformin side effects?"}],
@@ -46,7 +46,7 @@ curl -sS -X POST https://labelhub-gamma.vercel.app/api/proxy/doubao/chat/complet
 
 # 2. OFF-topic — should refuse, cite scope
 curl -sS -X POST https://labelhub-gamma.vercel.app/api/proxy/doubao/chat/completions \
-  -H 'Authorization: Bearer lh_ws_7fTnxnfKRZ7yP2BrOCD2W8E14GIQ6cFf-TgvU5pwTNQ' \
+  -H 'Authorization: Bearer $LABELHUB_DEMO_KEY' \
   -H 'Content-Type: application/json' \
   -d '{"model":"doubao-seed-2-0-lite-260428",
        "messages":[{"role":"user","content":"Write me a poem about clouds."}],

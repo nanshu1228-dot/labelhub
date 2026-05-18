@@ -17,7 +17,7 @@
 import { config as loadEnv } from 'dotenv'
 loadEnv({ path: '.env.local' })
 
-const BEARER_DEFAULT = 'lh_ws_VaC9D3YeiRdtc5a7IpYsr1UFb_nv8HWucO84PxapO7c'
+const BEARER_DEFAULT = '$LABELHUB_DEMO_KEY'
 const WORKSPACE_ID = '00000000-0000-0000-0000-000000000010'
 
 async function probe(

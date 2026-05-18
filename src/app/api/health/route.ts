@@ -29,7 +29,7 @@ import { apiRequestLog, providerConnections } from '@/lib/db/schema'
 
 const STARTED_AT = Date.now()
 
-export async function GET() {
+export async function GET(request: Request) {
   const ts = new Date().toISOString()
   const uptimeMs = Date.now() - STARTED_AT
   const db = getDb()
@@ -46,45 +46,54 @@ export async function GET() {
     dbLatencyMs = Date.now() - dbT0
   }
 
-  // 2. Proxy provider snapshot — list connections + their last-used
-  //    timestamp so an operator sees which upstreams have been hot.
+  // 2. Internal-only diagnostics (provider snapshot + traffic window +
+  //    git SHA). These let an operator triage in 10s but also fingerprint
+  //    the stack for an attacker, so they're gated behind an HMAC-shaped
+  //    token. Set HEALTH_DETAILED_TOKEN in env and pass via
+  //    Authorization: Bearer <token> OR ?token=… to unlock.
+  //
+  //    Phase-17 audit fix #F2 + #F3: previously these fields were
+  //    unauthenticated, leaking provider kinds (probe targets), error
+  //    rate (oracle), and the exact git commit (CVE pinning).
+  const expectedToken = process.env.HEALTH_DETAILED_TOKEN ?? ''
+  const auth =
+    request.headers.get('authorization') ?? ''
+  const presentedToken = auth.toLowerCase().startsWith('bearer ')
+    ? auth.slice(7).trim()
+    : new URL(request.url).searchParams.get('token') ?? ''
+  const includeDetails =
+    expectedToken.length > 0 && presentedToken === expectedToken
+
   let providerRows: Array<{
     kind: string
-    displayName: string
     lastUsedAt: Date | null
     enabled: string
   }> = []
-  if (dbOk) {
+  let window5min = {
+    totalRequests: 0,
+    errorRate: 0,
+    p95DurationMs: 0,
+  }
+
+  if (includeDetails && dbOk) {
     try {
       const rows = await db
         .select({
           kind: providerConnections.providerKind,
-          displayName: providerConnections.displayName,
           lastUsedAt: providerConnections.lastUsedAt,
           enabled: providerConnections.enabled,
         })
         .from(providerConnections)
       providerRows = rows.map((r) => ({
         kind: r.kind,
-        displayName: r.displayName,
         lastUsedAt: r.lastUsedAt,
         enabled: r.enabled,
       }))
     } catch {
-      // already report dbOk=false in that case; providers section is best-effort
+      // best-effort
     }
-  }
 
-  // 3. Last-5-minute traffic window — total requests + error rate +
-  //    p95 latency. Uses percentile_disc which most Postgres versions
-  //    support without extensions.
-  const since = new Date(Date.now() - 5 * 60 * 1000)
-  let window5min = {
-    totalRequests: 0,
-    errorRate: 0,
-    p95DurationMs: 0,
-  }
-  if (dbOk) {
+    const since = new Date(Date.now() - 5 * 60 * 1000)
     try {
       const [row] = await db
         .select({
@@ -107,34 +116,38 @@ export async function GET() {
     }
   }
 
-  // 4. Aggregate status. Down = DB unreachable. Degraded = error
-  //    rate over the 5-min window crossed 10% with non-trivial volume,
-  //    or db latency > 500ms.
+  // 3. Aggregate status. Down = DB unreachable. Degraded = either
+  //    DB latency over 500ms (always available) or — when we have
+  //    internal details — error rate over 10% in the 5-min window.
   let status: 'ok' | 'degraded' | 'down' = 'ok'
   if (!dbOk) status = 'down'
   else if (
     (dbLatencyMs ?? 0) > 500 ||
-    (window5min.totalRequests >= 10 && window5min.errorRate > 0.1)
+    (includeDetails &&
+      window5min.totalRequests >= 10 &&
+      window5min.errorRate > 0.1)
   )
     status = 'degraded'
 
   const httpStatus = status === 'down' ? 503 : 200
-  return NextResponse.json(
-    {
-      status,
-      ts,
-      uptimeMs,
-      db: { ok: dbOk, latencyMs: dbLatencyMs },
-      proxy: { providers: providerRows },
-      window5min,
-      version: process.env.VERCEL_GIT_COMMIT_SHA ?? null,
+  const payload: Record<string, unknown> = {
+    status,
+    ts,
+    uptimeMs,
+    db: { ok: dbOk, latencyMs: dbLatencyMs },
+  }
+  if (includeDetails) {
+    payload.proxy = { providers: providerRows }
+    payload.window5min = window5min
+    // Last 7 chars only — enough for support to ask the user, not enough
+    // to pin an exact source revision against the public repo.
+    const sha = process.env.VERCEL_GIT_COMMIT_SHA ?? ''
+    payload.version = sha ? sha.slice(0, 7) : null
+  }
+  return NextResponse.json(payload, {
+    status: httpStatus,
+    headers: {
+      'cache-control': 'no-store',
     },
-    {
-      status: httpStatus,
-      headers: {
-        // Health is checked by monitors at high frequency — don't cache.
-        'cache-control': 'no-store',
-      },
-    },
-  )
+  })
 }

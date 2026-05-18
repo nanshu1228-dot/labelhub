@@ -7,7 +7,7 @@ re-run the script after deploys to refresh.
 All requests authenticate with the public demo bearer:
 
 ```
-Authorization: Bearer lh_ws_7fTnxnfKRZ7yP2BrOCD2W8E14GIQ6cFf-TgvU5pwTNQ
+Authorization: Bearer $LABELHUB_DEMO_KEY
 ```
 
 ---

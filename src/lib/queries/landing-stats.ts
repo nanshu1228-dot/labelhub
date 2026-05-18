@@ -1,4 +1,5 @@
 import 'server-only'
+import { unstable_cache } from 'next/cache'
 import { count, eq, isNotNull, sql } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import {
@@ -11,14 +12,14 @@ import {
 /**
  * Live numbers for the landing page (Phase-15).
  *
- * All counts come from production DB — no fake data. We cache via
- * Next's server-component RSC cache (the landing is server-rendered
- * with `force-dynamic` off), so this runs once per build/revalidate
- * window, not on every visitor request.
+ * All counts come from production DB — no fake data. Wrapped in
+ * unstable_cache with 60s revalidation so a burst of landing GETs
+ * doesn't translate into a burst of count(*) full-table scans
+ * (Phase-17 audit fix #F4 — `count(*) FROM trajectory_steps` is
+ * O(rows) and the landing is the most-trafficked route).
  *
- * Failure-mode: if any query fails (DB down at build time), the page
- * still renders — the caller catches and substitutes "—". Better to
- * ship a working landing with dashes than blow up the route.
+ * Failure-mode: if any query fails the caller catches and substitutes
+ * "—". Better to ship a working landing with dashes than blow up.
  */
 
 export interface LandingStats {
@@ -28,7 +29,7 @@ export interface LandingStats {
   toolCallsCaptured: number
 }
 
-export async function getLandingStats(): Promise<LandingStats> {
+async function fetchLandingStats(): Promise<LandingStats> {
   const db = getDb()
   const [traj, teaching, ws, tools] = await Promise.all([
     db
@@ -57,6 +58,12 @@ export async function getLandingStats(): Promise<LandingStats> {
     toolCallsCaptured: tools,
   }
 }
+
+export const getLandingStats = unstable_cache(
+  fetchLandingStats,
+  ['landing-stats:v1'],
+  { revalidate: 60, tags: ['landing-stats'] },
+)
 
 /**
  * Compact formatter: 1234 → "1.2k", 12345 → "12k". Landing-only —

@@ -22,7 +22,7 @@ const execFileAsync = promisify(execFile)
 const BASE_URL = process.env.BASE_URL ?? 'https://labelhub-gamma.vercel.app'
 const KEY =
   process.env.LABELHUB_KEY ??
-  'lh_ws_7fTnxnfKRZ7yP2BrOCD2W8E14GIQ6cFf-TgvU5pwTNQ'
+  '$LABELHUB_DEMO_KEY'
 
 const SECTION = (s: string) =>
   `\n\x1b[1;35m━━━ ${s} ━━━\x1b[0m`

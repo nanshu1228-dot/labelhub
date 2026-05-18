@@ -42,7 +42,7 @@ const DEMO_WORKSPACE_ID = '00000000-0000-0000-0000-000000000010'
 // used here to verify CROSS-workspace boundaries, not as a secret.
 const DEMO_BEARER =
   process.env.LABELHUB_KEY ??
-  'lh_ws_7fTnxnfKRZ7yP2BrOCD2W8E14GIQ6cFf-TgvU5pwTNQ'
+  '$LABELHUB_DEMO_KEY'
 
 // The old hardcoded admin token that used to be a fallback. Should now
 // be 100% rejected.

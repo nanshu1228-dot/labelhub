@@ -58,12 +58,19 @@ rubric reference drawer.
 
 ### 2. Verify the topic-scope guardrail (one curl)
 
-The demo workspace has an API key already minted. The scope is locked
-to medical topics — try asking for a poem:
+First, grab the live rate-limited public demo key (rotated regularly):
+
+```bash
+export LABELHUB_DEMO_KEY=$(curl -s https://labelhub-gamma.vercel.app/api/demo/info | jq -r .demoKey)
+```
+
+The demo key is capped at 10 requests/min and scoped to the medical-
+fact-checking workspace only. Now try asking for a poem — the topic-
+scope guardrail will refuse:
 
 ```bash
 curl -sS -X POST https://labelhub-gamma.vercel.app/api/proxy/doubao/chat/completions \
-  -H 'Authorization: Bearer lh_ws_7fTnxnfKRZ7yP2BrOCD2W8E14GIQ6cFf-TgvU5pwTNQ' \
+  -H 'Authorization: Bearer $LABELHUB_DEMO_KEY' \
   -H 'Content-Type: application/json' \
   -d '{"model":"doubao-seed-2-0-lite-260428",
        "messages":[{"role":"user","content":"Write me a 4-stanza poem about clouds."}],
@@ -85,7 +92,7 @@ Now ask a medical question through the same key and see it answer normally:
 
 ```bash
 curl -sS -X POST https://labelhub-gamma.vercel.app/api/proxy/doubao/chat/completions \
-  -H 'Authorization: Bearer lh_ws_7fTnxnfKRZ7yP2BrOCD2W8E14GIQ6cFf-TgvU5pwTNQ' \
+  -H 'Authorization: Bearer $LABELHUB_DEMO_KEY' \
   -H 'Content-Type: application/json' \
   -d '{"model":"doubao-seed-2-0-lite-260428",
        "messages":[{"role":"user","content":"What are common side effects of metformin?"}],
