@@ -34,14 +34,27 @@ export const AUDIT_EVENT_GROUPS = {
     'annotation.rejected',
     'annotation.revised',
     'annotation.qc_passed',
+    'annotation.submitted',
+    'annotation.awaiting_acceptance',
+    'annotation.revising',
   ],
-  restore: ['annotation.restored', 'annotation.review_replied'],
+  restore: [
+    'annotation.restored',
+    'annotation.review_replied',
+    'review.reply',
+  ],
   trust: [
     'workspace.trust_status_changed',
     'workspace.seed_claimed',
+    'trust.restored',
   ],
   inbox: ['notification.bulk_mark_read'],
-  judge: ['llm_judge.run_completed', 'llm_judge.run_failed'],
+  judge: [
+    'llm_judge.run_completed',
+    'llm_judge.run_failed',
+    'llm_judge.created',
+    'llm_judge.revoked',
+  ],
   /** Dawid-Skene EM truth-inference runs (Phase-11) — admin-triggered,
    *  visible in audit so an admin's coworker can see "Alice ran DS at 4pm". */
   consensus: ['ds.run_completed'],
@@ -53,8 +66,54 @@ export const AUDIT_EVENT_GROUPS = {
     'invite_reward.blocked',
     'invite_reward.denied',
   ],
-  /** Dataset-version freeze + export (Phase-14). */
-  dataset: ['dataset.version_frozen', 'dataset.version_exported'],
+  /** Dataset-version freeze + export (Phase-14) + general /api/export. */
+  dataset: [
+    'dataset.version_frozen',
+    'dataset.version_exported',
+    'export.created',
+  ],
+  /** API-key lifecycle (Maintenance pass — security audit surface). */
+  apikey: ['api_key.created', 'api_key.revoked'],
+  /** Workspace structural changes + provider/tool plumbing. Admins
+   *  reviewing "who changed our config" land here. */
+  workspace: [
+    'workspace.created',
+    'workspace.renamed',
+    'provider_connection.created',
+    'provider_connection.disabled',
+    'provider_connection.deleted',
+    'tool_provider.declared',
+    'tool_provider.updated',
+    'tool_provider.deprecated',
+  ],
+  /** Task + topic + scope lifecycle — every publish / claim / scope
+   *  edit lands here. */
+  task: [
+    'task.created',
+    'task.published',
+    'task.archived',
+    'topic.created',
+    'topic.claimed',
+    'topic.released',
+    'topic_scope.auto_generated',
+    'topic_scope.edited',
+    'topic_scope.regenerated',
+  ],
+  /** Money path: payouts + wallet withdrawals. Separate from invite
+   *  rewards (which have their own group) so admins can filter to
+   *  just the "the platform paid someone" events. */
+  payout: [
+    'payout.paid',
+    'payout_period.closed',
+    'wallet.withdraw_requested',
+  ],
+  /** Gold standards + guideline-refiner patch lifecycle. */
+  gold: [
+    'gold.removed',
+    'guideline_patch.proposed',
+    'guideline_patch.accepted',
+    'guideline_patch.rejected',
+  ],
 } as const
 
 export type AuditGroup = keyof typeof AUDIT_EVENT_GROUPS

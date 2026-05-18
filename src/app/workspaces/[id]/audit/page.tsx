@@ -28,7 +28,8 @@ export const dynamic = 'force-dynamic'
  * Search params:
  *   ?q=alice       → fuzzy match on display_name + email
  *   ?user=<uuid>   → exact subject filter (used by drilldown links)
- *   ?group=verdict|restore|trust|inbox|judge|consensus|invite|dataset
+ *   ?group=verdict|restore|trust|inbox|judge|consensus|invite|dataset|
+ *           apikey|workspace|task|payout|gold
  *
  * Multiple groups can stack via repeated query params, but for v1 we
  * keep it single-select since one tab usually answers one question.
@@ -243,10 +244,15 @@ const GROUP_LABEL: Record<AuditGroup, string> = {
   restore: 'restores + replies',
   trust: 'trust status',
   inbox: 'inbox',
-  judge: 'llm-judge runs',
+  judge: 'llm-judge',
   consensus: 'consensus (DS)',
   invite: 'invite rewards',
-  dataset: 'dataset versions',
+  dataset: 'datasets + exports',
+  apikey: 'api keys',
+  workspace: 'workspace config',
+  task: 'tasks + topics',
+  payout: 'payouts',
+  gold: 'gold + guidelines',
 }
 
 function buildHref(
@@ -329,6 +335,11 @@ function AuditRowCard({
     consensus: 'oklch(0.55 0.18 320)',
     invite: 'oklch(0.62 0.16 30)',
     dataset: 'oklch(0.55 0.15 230)',
+    apikey: 'oklch(0.55 0.2 25)',
+    workspace: 'oklch(0.6 0.1 180)',
+    task: 'oklch(0.6 0.14 130)',
+    payout: 'oklch(0.65 0.18 50)',
+    gold: 'oklch(0.7 0.14 90)',
     other: 'var(--mute)',
   }
   const fg = groupColor[row.group]
@@ -437,6 +448,83 @@ function verbForEvent(
       return 'froze a dataset version'
     case 'dataset.version_exported':
       return 'exported a dataset version'
+    case 'export.created':
+      return 'exported trajectories'
+    // API keys
+    case 'api_key.created':
+      return 'minted an API key'
+    case 'api_key.revoked':
+      return 'revoked an API key'
+    // Workspace config
+    case 'workspace.created':
+      return 'created a workspace'
+    case 'workspace.renamed':
+      return 'renamed the workspace'
+    case 'provider_connection.created':
+      return 'wired up a provider connection'
+    case 'provider_connection.disabled':
+      return 'disabled a provider connection'
+    case 'provider_connection.deleted':
+      return 'deleted a provider connection'
+    case 'tool_provider.declared':
+      return 'declared a tool provider'
+    case 'tool_provider.updated':
+      return 'updated a tool provider'
+    case 'tool_provider.deprecated':
+      return 'deprecated a tool provider'
+    // Tasks + topics
+    case 'task.created':
+      return 'created a task'
+    case 'task.published':
+      return 'published a task'
+    case 'task.archived':
+      return 'archived a task'
+    case 'topic.created':
+      return 'created a topic'
+    case 'topic.claimed':
+      return 'claimed a topic'
+    case 'topic.released':
+      return 'released a topic claim on'
+    case 'topic_scope.auto_generated':
+      return 'auto-generated topic scope for'
+    case 'topic_scope.edited':
+      return 'edited topic scope for'
+    case 'topic_scope.regenerated':
+      return 'regenerated topic scope for'
+    // LLM-judge config
+    case 'llm_judge.created':
+      return 'created an LLM judge'
+    case 'llm_judge.revoked':
+      return 'revoked an LLM judge'
+    // Payout
+    case 'payout.paid':
+      return 'marked a payout paid for'
+    case 'payout_period.closed':
+      return 'closed a payout period'
+    case 'wallet.withdraw_requested':
+      return 'requested a withdrawal'
+    // Gold + guideline patches
+    case 'gold.removed':
+      return 'removed a gold standard'
+    case 'guideline_patch.proposed':
+      return 'proposed a guideline patch'
+    case 'guideline_patch.accepted':
+      return 'accepted a guideline patch'
+    case 'guideline_patch.rejected':
+      return 'rejected a guideline patch'
+    // Trust extras
+    case 'trust.restored':
+      return 'restored trust for'
+    // Annotation extra states (rare in audit since verdict events
+    // are more informative, but here for completeness)
+    case 'annotation.submitted':
+      return 'submitted an annotation'
+    case 'annotation.awaiting_acceptance':
+      return 'sent an annotation for acceptance'
+    case 'annotation.revising':
+      return 'started revising an annotation'
+    case 'review.reply':
+      return 'replied on a review thread'
     default:
       return type
   }
