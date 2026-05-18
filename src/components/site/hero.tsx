@@ -1,12 +1,48 @@
 'use client'
 import { useLang } from '@/lib/i18n'
+import { GatewaySnippet } from './gateway-snippet'
 
-export function Hero() {
+/**
+ * Landing hero (Phase-15 rewrite).
+ *
+ * Old thesis ("AI-native annotation platform") relegated; the headline
+ * is now "Annotation-Aware LLM Gateway". The proxy / topic-scope /
+ * counterfactual fork story is the actual differentiator, so it goes
+ * above the fold:
+ *   - h1 names the thesis verbatim
+ *   - the right column carries the 3-line drop-in code snippet that
+ *     proves the integration is real (not a slogan)
+ *   - the 4-col stats below show *live* counts pulled from the prod
+ *     DB at render time (passed in via props from the server page).
+ *
+ * Video placeholder lives below the stats — replaced in Phase-18 once
+ * a real 60–90s screencast is recorded.
+ */
+
+export interface HeroStats {
+  trajectoriesCaptured: number
+  teachingSignals: number
+  workspaceCount: number
+  toolCallsCaptured: number
+}
+
+function compactNum(n: number): string {
+  if (n < 1000) return String(n)
+  if (n < 10_000)
+    return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`
+  if (n < 1_000_000) return `${Math.round(n / 1000)}k`
+  return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
+}
+
+export function Hero({ stats }: { stats: HeroStats | null }) {
   const { t } = useLang()
   return (
     <section className="relative">
-      <div className="absolute inset-0 bg-dot opacity-[0.35] pointer-events-none" aria-hidden />
-      <div className="max-w-[1280px] mx-auto px-6 pt-24 pb-24 relative">
+      <div
+        className="absolute inset-0 bg-dot opacity-[0.35] pointer-events-none"
+        aria-hidden
+      />
+      <div className="max-w-[1280px] mx-auto px-6 pt-24 pb-20 relative">
         {/* eyebrow */}
         <div
           className="lh-mono lh-caption flex items-center gap-2 rise"
@@ -22,29 +58,40 @@ export function Hero() {
           <span>{t('eyebrow')}</span>
         </div>
 
-        {/* H1 + sub */}
-        <div className="grid grid-cols-12 gap-10 mt-10 items-end">
-          <div className="col-span-12 md:col-span-7 rise d1">
+        {/* H1 + subtitle + CTAs + code snippet */}
+        <div className="grid grid-cols-12 gap-10 mt-10 items-start">
+          <div className="col-span-12 md:col-span-6 rise d1">
             <h1
               className="lh-h1"
-              style={{ color: 'oklch(0.95 0 0)', textWrap: 'balance' } as React.CSSProperties}
+              style={
+                {
+                  color: 'oklch(0.95 0 0)',
+                  textWrap: 'balance',
+                } as React.CSSProperties
+              }
             >
               {t('hero_h1')}
             </h1>
-          </div>
-
-          <div className="col-span-12 md:col-span-5 md:pl-6 rise d2">
             <p
-              className="lh-body-lg max-w-[440px]"
+              className="lh-body-lg mt-6 max-w-[520px]"
               style={{ color: 'oklch(0.62 0 0)' }}
             >
               {t('hero_sub')}
             </p>
 
             <div className="mt-7 flex items-center gap-3 flex-wrap">
-              <a href="/workspaces/new" className="lh-btn lh-btn-solid">
+              <a
+                href="/workspaces/new"
+                className="lh-btn lh-btn-solid"
+              >
                 <span>{t('cta_start')}</span>
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 12 12"
+                  fill="none"
+                  aria-hidden="true"
+                >
                   <path
                     d="M3 6h6m0 0L6 3m3 3L6 9"
                     stroke="currentColor"
@@ -53,7 +100,7 @@ export function Hero() {
                   />
                 </svg>
               </a>
-              <a href="#live" className="lh-btn lh-btn-ghost">
+              <a href="#gateway" className="lh-btn lh-btn-ghost">
                 {t('cta_demo')}
               </a>
             </div>
@@ -61,12 +108,26 @@ export function Hero() {
             <a
               href="/workspaces/00000000-0000-0000-0000-000000000010"
               className="mt-4 inline-flex items-center gap-2 group"
-              style={{ color: 'oklch(0.6 0.18 280)', textDecoration: 'none' }}
+              style={{
+                color: 'oklch(0.6 0.18 280)',
+                textDecoration: 'none',
+              }}
             >
-              <span className="lh-body-sm" style={{ fontWeight: 500 }}>
+              <span
+                className="lh-body-sm"
+                style={{ fontWeight: 500 }}
+              >
                 {t('cta_tour_demo')}
               </span>
-              <svg width="10" height="10" viewBox="0 0 12 12" fill="none" aria-hidden="true" style={{ transition: 'transform 120ms' }} className="group-hover:translate-x-0.5">
+              <svg
+                width="10"
+                height="10"
+                viewBox="0 0 12 12"
+                fill="none"
+                aria-hidden="true"
+                style={{ transition: 'transform 120ms' }}
+                className="group-hover:translate-x-0.5"
+              >
                 <path
                   d="M3 6h6m0 0L6 3m3 3L6 9"
                   stroke="currentColor"
@@ -74,51 +135,117 @@ export function Hero() {
                   strokeLinecap="square"
                 />
               </svg>
-              <span className="lh-caption lh-mono" style={{ color: 'oklch(0.42 0 0)' }}>
+              <span
+                className="lh-caption lh-mono"
+                style={{ color: 'oklch(0.42 0 0)' }}
+              >
                 · {t('cta_tour_demo_hint')}
               </span>
             </a>
+          </div>
 
+          {/* code snippet column — the proof */}
+          <div className="col-span-12 md:col-span-6 rise d2">
             <div
-              className="mt-5 flex items-center gap-2 lh-caption lh-mono"
+              className="lh-mono lh-caption mb-2"
+              style={{ color: 'oklch(0.5 0 0)' }}
+            >
+              {t('snip_label')}
+            </div>
+            <GatewaySnippet />
+            <div
+              className="lh-caption mt-3"
               style={{ color: 'oklch(0.42 0 0)' }}
             >
-              <span>{t('kbd_open')}</span>
-              <span className="kbd">⌘</span>
-              <span className="kbd">K</span>
-              <span className="mx-1" style={{ color: 'oklch(0.32 0 0)' }}>/</span>
-              <span>{t('kbd_no_card')}</span>
+              {t('snip_caption')}
             </div>
           </div>
         </div>
 
-        {/* 4-col stats */}
-        <div className="mt-20 pt-6 hairline grid grid-cols-2 md:grid-cols-4 gap-6">
-          <Stat label={t('meta_runs')} value={t('meta_runs_v')} />
+        {/* live stats — real DB counts, no fake data */}
+        <div className="mt-16 pt-6 hairline grid grid-cols-2 md:grid-cols-4 gap-6">
           <Stat
-            label={t('meta_scale')}
+            label={t('meta_trajectories')}
             value={
               <span className="lh-mono">
-                1,000 × 4 &nbsp;
-                <span style={{ color: 'oklch(0.42 0 0)' }}>{t('meta_smooth')}</span>
+                {stats ? compactNum(stats.trajectoriesCaptured) : '—'}
               </span>
             }
           />
-          <Stat label={t('meta_pair')} value={t('meta_pair_v')} />
-          <Stat label={t('meta_payout')} value={<span className="lh-mono">USD · USDC · LBH</span>} />
+          <Stat
+            label={t('meta_tool_calls')}
+            value={
+              <span className="lh-mono">
+                {stats ? compactNum(stats.toolCallsCaptured) : '—'}
+              </span>
+            }
+          />
+          <Stat
+            label={t('meta_teaching')}
+            value={
+              <span className="lh-mono">
+                {stats ? compactNum(stats.teachingSignals) : '—'}
+              </span>
+            }
+          />
+          <Stat
+            label={t('meta_workspaces')}
+            value={
+              <span className="lh-mono">
+                {stats ? compactNum(stats.workspaceCount) : '—'}
+              </span>
+            }
+          />
+        </div>
+
+        {/* video placeholder — replaced in Phase-18 by real screencast */}
+        <div
+          className="mt-12 rounded-lg overflow-hidden aspect-video flex items-center justify-center text-center"
+          style={{
+            background:
+              'linear-gradient(135deg, oklch(0.14 0 0), oklch(0.18 0.02 280))',
+            border: '1px dashed oklch(0.32 0 0)',
+          }}
+        >
+          <div>
+            <div
+              className="lh-mono lh-caption mb-2"
+              style={{ color: 'oklch(0.5 0 0)' }}
+            >
+              {t('video_placeholder_eyebrow')}
+            </div>
+            <div
+              className="lh-body"
+              style={{ color: 'oklch(0.62 0 0)' }}
+            >
+              {t('video_placeholder_body')}
+            </div>
+          </div>
         </div>
       </div>
     </section>
   )
 }
 
-function Stat({ label, value }: { label: string; value: React.ReactNode }) {
+function Stat({
+  label,
+  value,
+}: {
+  label: string
+  value: React.ReactNode
+}) {
   return (
     <div>
-      <div className="lh-mono lh-caption" style={{ color: 'oklch(0.42 0 0)' }}>
+      <div
+        className="lh-mono lh-caption"
+        style={{ color: 'oklch(0.42 0 0)' }}
+      >
         {label}
       </div>
-      <div className="lh-body mt-1" style={{ color: 'oklch(0.78 0 0)' }}>
+      <div
+        className="lh-body mt-1"
+        style={{ color: 'oklch(0.78 0 0)' }}
+      >
         {value}
       </div>
     </div>

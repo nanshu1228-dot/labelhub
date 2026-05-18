@@ -1,37 +1,50 @@
 # LabelHub
 
-> **Capture the teaching, not just the label.**
-> An AI-native annotation platform for the LLM-agent era.
+> **The Annotation-Aware LLM Gateway.**
+> Drop in as your OpenAI / Anthropic `base_url`. Every agent call gets
+> captured as a typed trajectory, scope-guarded against key abuse, and
+> forkable from any step for counterfactual teaching — no SDK changes,
+> no second pipeline.
 
 **Live demo →** [`labelhub-gamma.vercel.app`](https://labelhub-gamma.vercel.app)
 
-[![Tests](https://img.shields.io/badge/tests-189%20passing-brightgreen)]() [![Build](https://img.shields.io/badge/build-passing-brightgreen)]() [![Next.js](https://img.shields.io/badge/next-16.2.6-black)]() [![License](https://img.shields.io/badge/license-MIT-blue)]()
+[![Tests](https://img.shields.io/badge/tests-421%20passing-brightgreen)]() [![Build](https://img.shields.io/badge/build-passing-brightgreen)]() [![Next.js](https://img.shields.io/badge/next-16.2.6-black)]() [![License](https://img.shields.io/badge/license-MIT-blue)]()
 
 ---
 
-## What it does in 30 seconds
+## Three things happen on every model call — zero code from you
 
-A publisher pastes an agent config. LabelHub proxies their LLM API key,
-**captures every trajectory** (thinking → tool calls → tool results → final
-response), generates a Claude pre-annotation, and lets a human grade each
-step with a 4-input rubric (likert / bool / enum / text). The delta between
-Claude's pre-annotation and the human's final mark *is* the teaching signal.
+1. **Auto-capture** — request flows through the proxy and lands as a typed
+   trajectory: prompt, tool calls, tool results, latency, tokens, cost.
+   OpenAI / Anthropic / Doubao / DeepSeek / Kimi / GLM, all six providers.
+2. **Scope-inject** — each task auto-generates a policy prefix (“medical
+   Q&A only”) that we inject into the system prompt before forwarding.
+   A leaked key cannot be repurposed for off-task work.
+3. **Teach-back** — every annotation captures the (AI proposal, human
+   correction, delta) triplet alongside the rubric marks. One click →
+   SFT / DPO-ready JSONL. Close the loop, do not just label.
 
-Three things this does that Surge / Scale / Label Studio don't:
+Scale / Surge / Label Studio only annotate. LangSmith only observes.
+LiteLLM only proxies. **LabelHub stitches all three around one signal:
+the teaching delta between AI proposals and human corrections.**
 
-1. **Trace-shaped annotation** — annotate 500-step agent traces, not just
-   prompt/response pairs. Standard / Focus / Compare layouts; virtualized;
-   atomic Jotai state per (step, rubric) so the rubric grid stays smooth
-   at 1000+ rows.
-2. **Auto topic-scope guardrail** — a Haiku-generated policy is auto-injected
-   into the system prompt of every proxied request. A leaked API key
-   can't be repurposed as a free general ChatGPT. Live demo below.
-3. **Self-evolving guidelines** — disputed marks feed an AI Guideline
-   Refiner that proposes patches; admins accept/reject; the version
-   counter on `guidelines` lets us plot *"agreement rate climbing as
-   guidelines mature."* This is the hero metric.
+## Three-line drop-in
 
-## See it work — 60 seconds
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="https://labelhub-gamma.vercel.app/api/proxy/openai/v1",
+    api_key="lh_demo_…",   # rate-limited public demo key
+)
+# every call below is captured + scope-injected automatically
+client.chat.completions.create(model="gpt-4o-mini", messages=[…])
+```
+
+That's it. Open your workspace → trajectories appear in real time.
+
+<details>
+<summary><b>Try it from the terminal — verify the scope guardrail in 30 seconds</b></summary>
 
 ### 1. Browse the public demo workspace (no login needed)
 
@@ -88,6 +101,8 @@ After running step 2 above, refresh the workspace's
 [trajectories list](https://labelhub-gamma.vercel.app/workspaces/00000000-0000-0000-0000-000000000010/trajectories) —
 your call appears with the full reasoning trace, both turns side by
 side.
+
+</details>
 
 ## Architecture
 
