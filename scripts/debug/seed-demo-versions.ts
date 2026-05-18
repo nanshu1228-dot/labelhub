@@ -39,7 +39,7 @@ async function main() {
     `
     const labels = new Set(existing.map((e) => e.label))
 
-    for (const label of ['v1']) {
+    for (const label of ['v1', 'v2']) {
       if (labels.has(label)) {
         // eslint-disable-next-line no-console
         console.log(`[seed-versions] ${label} already exists, skipping`)

@@ -316,6 +316,19 @@ await t.flush()  // POSTs the canonical trajectory to /api/ingest/trajectories`}
           schema. Useful for re-importing into your own training pipeline or
           BigQuery.
         </p>
+        <p className="docs-body">
+          <code>GET /api/export/dataset?versionId=…&amp;format=teaching</code>
+          {' '}— the teaching-signal export. Only items where an AI proposal
+          existed, reshaped to{' '}
+          <code>
+            &#123; prompt, ai_proposal, human_correction, delta_summary,
+            template_mode, source &#125;
+          </code>
+          . Drop straight into <code>trl/transformers</code> DPOTrainer or
+          SFTTrainer with a one-line key remap — no transform step. Use{' '}
+          <code>format=raw</code> (default) to get the full verbatim manifest
+          instead.
+        </p>
 
         <SectionAnchor id="annotations" label="07" title="Annotations" />
         <p className="docs-body">
