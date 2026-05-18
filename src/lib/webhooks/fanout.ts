@@ -13,9 +13,10 @@ import { workspaceWebhooks } from '@/lib/db/schema'
  *   X-LabelHub-Signature: hex(hmac_sha256(secret, body))
  *   X-LabelHub-Event:     <type>
  *
- * No retries. Failures bump `failure_count`; consecutive failures past
- * MAX_FAILURES auto-disable the hook so a flaky receiver doesn't waste
- * compute forever.
+ * Failures bump `failure_count` AND set `next_retry_at` to an
+ * exponentially-growing future timestamp (30s, 60s, 2m, 4m, …, capped
+ * at 24h). Subsequent fanout calls skip the hook while `now() <
+ * nextRetryAt`. Consecutive failures past MAX_FAILURES auto-disable.
  *
  * Designed to run inside Vercel's after() window so it doesn't extend
  * response latency on the action that triggered it.
@@ -23,6 +24,15 @@ import { workspaceWebhooks } from '@/lib/db/schema'
 
 const MAX_FAILURES = 10
 const DELIVERY_TIMEOUT_MS = 5000
+const BASE_BACKOFF_MS = 30_000
+const MAX_BACKOFF_MS = 24 * 60 * 60 * 1000
+
+/** Exponential back-off: 30s, 60s, 2m, 4m, 8m, 16m, 32m, 64m (~1h),
+ *  128m (~2h), 256m (~4h), capped at 24h. */
+function nextBackoffMs(failureCount: number): number {
+  const ms = BASE_BACKOFF_MS * Math.pow(2, Math.max(0, failureCount - 1))
+  return Math.min(ms, MAX_BACKOFF_MS)
+}
 
 export function generateWebhookSecret(): string {
   return randomBytes(32).toString('base64url')
@@ -71,11 +81,17 @@ export async function fanoutWebhook(
     payload: event.payload,
   })
 
+  const now = Date.now()
   for (const sub of subs) {
     const subscribedTypes = Array.isArray(sub.eventTypes)
       ? (sub.eventTypes as string[])
       : []
     if (subscribedTypes.length > 0 && !subscribedTypes.includes(event.type)) {
+      continue
+    }
+    // Back-off gate: skip if the receiver is still in its cool-down
+    // window from prior failures. Resets to null on the first success.
+    if (sub.nextRetryAt && sub.nextRetryAt.getTime() > now) {
       continue
     }
     // Fire each delivery without await — we explicitly don't want one slow
@@ -119,12 +135,18 @@ async function deliver(
     const db = getDb()
     const nextFailureCount = ok ? 0 : sub.failureCount + 1
     const nowDisabled = !ok && nextFailureCount >= MAX_FAILURES
+    // Back-off: on success clear the cool-down; on failure schedule
+    // the next allowed attempt exponentially out.
+    const nextRetryAt = ok
+      ? null
+      : new Date(Date.now() + nextBackoffMs(nextFailureCount))
     await db
       .update(workspaceWebhooks)
       .set({
         lastDeliveryAt: new Date(),
         lastDeliveryStatus: status || null,
         failureCount: nextFailureCount,
+        nextRetryAt,
         enabled: nowDisabled ? false : sub.enabled,
       })
       .where(eq(workspaceWebhooks.id, sub.id))

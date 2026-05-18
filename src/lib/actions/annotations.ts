@@ -37,11 +37,25 @@ import type { TemplateMode } from '@/lib/templates/types'
  * Concurrency: topic.version optimistic locking on state transitions.
  */
 
+/** Hard size budget for the JSON-serialized annotation payload. A
+ *  rubric grid with 1000 cells is ~30KB; 64KB is generous but rules
+ *  out the 50MB-payload denial-of-jsonb attack. Mirror on submit too. */
+const ANNOTATION_PAYLOAD_BYTE_BUDGET = 64_000
+const withinBudget = (v: unknown) =>
+  Buffer.byteLength(JSON.stringify(v ?? {}), 'utf8') <=
+  ANNOTATION_PAYLOAD_BYTE_BUDGET
+const BUDGET_MSG = `payload exceeds ${ANNOTATION_PAYLOAD_BYTE_BUDGET / 1000}KB byte budget`
+
 const saveDraftSchema = z.object({
   topicId: uuidLike,
   /** Validated against template.responseSchema only on submit, not draft */
-  payload: z.record(z.string(), z.unknown()),
-  claudeProposal: z.unknown().optional(),
+  payload: z
+    .record(z.string(), z.unknown())
+    .refine(withinBudget, { message: BUDGET_MSG }),
+  claudeProposal: z
+    .unknown()
+    .refine(withinBudget, { message: BUDGET_MSG })
+    .optional(),
   reasoningText: z.string().max(8000).optional(),
 })
 
@@ -231,8 +245,13 @@ function deriveDurationSec(
 
 const submitSchema = z.object({
   topicId: uuidLike,
-  payload: z.record(z.string(), z.unknown()),
-  claudeProposal: z.unknown().optional(),
+  payload: z
+    .record(z.string(), z.unknown())
+    .refine(withinBudget, { message: BUDGET_MSG }),
+  claudeProposal: z
+    .unknown()
+    .refine(withinBudget, { message: BUDGET_MSG })
+    .optional(),
   deltaSummary: z.string().max(2000).optional(),
   reasoningText: z.string().max(8000).optional(),
 })

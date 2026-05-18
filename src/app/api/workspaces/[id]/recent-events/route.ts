@@ -41,6 +41,10 @@ export async function GET(
 
   try {
     const db = getDb()
+    // Maintenance fix #6a: drop users.email from the SELECT — email
+    // local-parts often double as private identifiers (alice.lastname,
+    // ceo, etc.). For a member-readable activity strip the displayName
+    // (when set) or an 8-char id prefix is sufficient.
     const rows = await db
       .select({
         id: events.id,
@@ -48,7 +52,6 @@ export async function GET(
         type: events.type,
         actorId: events.actorId,
         actorDisplayName: users.displayName,
-        actorEmail: users.email,
       })
       .from(events)
       .leftJoin(users, eq(users.id, events.actorId))
@@ -64,11 +67,7 @@ export async function GET(
           type: r.type,
           actor:
             r.actorDisplayName ??
-            (r.actorEmail
-              ? r.actorEmail.split('@')[0]
-              : r.actorId
-                ? r.actorId.slice(0, 8)
-                : null),
+            (r.actorId ? r.actorId.slice(0, 8) : null),
         })),
       },
       {

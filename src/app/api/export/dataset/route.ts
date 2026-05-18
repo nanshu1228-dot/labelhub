@@ -5,6 +5,10 @@ import { AppError } from '@/lib/errors'
 import { extractRequestMeta, logApiRequest } from '@/lib/api/audit'
 import { getDb } from '@/lib/db/client'
 import { events } from '@/lib/db/schema'
+import {
+  reshapeTeaching,
+  type TeachingItem,
+} from '@/lib/quality/teaching-reshape'
 
 /**
  * GET /api/export/dataset?versionId=...&format=raw|teaching
@@ -151,90 +155,7 @@ export async function GET(request: NextRequest) {
   return response!
 }
 
-// ── Teaching-signal reshape ─────────────────────────────────────────
-
-/**
- * The minimal trainable record: prompt + ai_proposal + human_correction
- * + delta_summary + rubric_marks + metadata. Importers can feed this
- * straight into trl/transformers DPOTrainer or SFTTrainer with a one-
- * line key remap.
- */
-interface TeachingItem {
-  /** Stable id so a follow-up training run can dedupe. */
-  id: string
-  /** The user-facing prompt from the source topic. We extract a few
-   *  common shapes (prompt / question / input_text); whole itemData is
-   *  preserved under `source.itemData` for anything we missed. */
-  prompt: string | null
-  /** AI's pre-annotation suggestion. */
-  ai_proposal: unknown
-  /** Human's accepted annotation — the ground truth label. */
-  human_correction: unknown
-  /** Free-text delta the rater wrote. */
-  delta_summary: string | null
-  /** Rater's chain-of-thought when available. */
-  reasoning: string | null
-  /** Template mode tells the trainer which schema the corrections use
-   *  (pair-rubric boolean, arena-gsb 1-5, agent-trace step rubrics). */
-  template_mode: string
-  /** Provenance — never use as a training feature but invaluable for
-   *  audit / data-card generation. */
-  source: {
-    annotationId: string
-    topicId: string
-    taskId: string
-    raterUserId: string
-    submittedAt: string | null
-    itemData: unknown
-  }
-}
-
-interface RawManifestItem {
-  annotationId: string
-  topicId: string
-  taskId: string
-  userId: string
-  payload: unknown
-  claudeProposal?: unknown
-  deltaSummary?: string | null
-  reasoningText?: string | null
-  itemData?: unknown
-  submittedAt: string | null
-  templateMode: string
-}
-
-function reshapeTeaching(item: unknown): TeachingItem | null {
-  const r = item as RawManifestItem
-  // Items without a claudeProposal aren't a teaching signal — they're
-  // a label without an AI baseline to compare against. Skip silently.
-  if (r.claudeProposal === undefined || r.claudeProposal === null)
-    return null
-
-  let prompt: string | null = null
-  const itemData = r.itemData
-  if (itemData && typeof itemData === 'object') {
-    const d = itemData as Record<string, unknown>
-    if (typeof d.prompt === 'string') prompt = d.prompt
-    else if (typeof d.question === 'string') prompt = d.question
-    else if (typeof d.input_text === 'string') prompt = d.input_text
-    else if (typeof d.text === 'string') prompt = d.text
-  }
-
-  return {
-    id: r.annotationId,
-    prompt,
-    ai_proposal: r.claudeProposal,
-    human_correction: r.payload,
-    delta_summary: r.deltaSummary ?? null,
-    reasoning: r.reasoningText ?? null,
-    template_mode: r.templateMode,
-    source: {
-      annotationId: r.annotationId,
-      topicId: r.topicId,
-      taskId: r.taskId,
-      raterUserId: r.userId,
-      submittedAt: r.submittedAt,
-      itemData: r.itemData ?? null,
-    },
-  }
-}
+// Teaching-signal reshape lives in src/lib/quality/teaching-reshape.ts
+// so the maintenance-pass unit tests can exercise it without an HTTP
+// fixture. See `teaching-reshape.test.ts`.
+void ({} as TeachingItem)

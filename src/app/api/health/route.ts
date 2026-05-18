@@ -116,13 +116,16 @@ export async function GET(request: Request) {
     }
   }
 
-  // 3. Aggregate status. Down = DB unreachable. Degraded = either
-  //    DB latency over 500ms (always available) or — when we have
-  //    internal details — error rate over 10% in the 5-min window.
+  // 3. Aggregate status. Down = DB unreachable. Degraded thresholds:
+  //    - DB latency > 1500ms (Vercel cold start + Supabase TLS
+  //      handshake routinely lands at 700-1200ms; raising from 500
+  //      means StatusCake doesn't flap on every fresh region)
+  //    - OR (when internal details are available) error rate over
+  //      10% across the 5-min window with non-trivial volume
   let status: 'ok' | 'degraded' | 'down' = 'ok'
   if (!dbOk) status = 'down'
   else if (
-    (dbLatencyMs ?? 0) > 500 ||
+    (dbLatencyMs ?? 0) > 1500 ||
     (includeDetails &&
       window5min.totalRequests >= 10 &&
       window5min.errorRate > 0.1)

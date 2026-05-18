@@ -21,6 +21,12 @@ vi.mock('next/server', () => ({
     void fn
   }),
 }))
+// Maintenance pass: qcReviewAnnotation now calls revalidatePath after
+// the verdict commits. Stub it — the real implementation needs a
+// static-generation store that vitest doesn't provide.
+vi.mock('next/cache', () => ({
+  revalidatePath: vi.fn(),
+}))
 
 import { qcReviewAnnotation } from '../qc-review'
 import {

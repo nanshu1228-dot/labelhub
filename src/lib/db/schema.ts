@@ -298,6 +298,14 @@ export const annotations = pgTable(
   (table) => ({
     topicIdx: index('annotations_topic_idx').on(table.topicId),
     userIdx: index('annotations_user_idx').on(table.userId),
+    /** Hot path: /my/quality + /my/earnings + invite-reward
+     *  approval-count tally all filter (user_id, submitted_at NOT
+     *  NULL). Composite is small (covered by user_id prefix) but
+     *  lets the planner skip rows without a submission cheaply. */
+    userSubmittedIdx: index('ann_user_submitted_idx').on(
+      table.userId,
+      table.submittedAt,
+    ),
   }),
 )
 
@@ -318,6 +326,18 @@ export const events = pgTable(
     workspaceIdx: index('events_workspace_idx').on(table.workspaceId),
     typeIdx: index('events_type_idx').on(table.type),
     tsIdx: index('events_ts_idx').on(table.ts),
+    /** Maintenance pass — hot path: /audit, recent-events strip, and
+     *  admin dashboards all filter workspace_id then range/order on ts.
+     *  Composite avoids the planner falling back to bitmap-AND on the
+     *  two single-column indexes. */
+    wsTsIdx: index('events_ws_ts_idx').on(table.workspaceId, table.ts),
+    /** Narrows the audit filter-chip queries (workspace + group/type
+     *  + recent-window). */
+    wsTypeTsIdx: index('events_ws_type_ts_idx').on(
+      table.workspaceId,
+      table.type,
+      table.ts,
+    ),
   }),
 )
 
@@ -538,6 +558,11 @@ export const workspaceWebhooks = pgTable(
     lastDeliveryAt: timestamp('last_delivery_at'),
     lastDeliveryStatus: integer('last_delivery_status'),
     failureCount: integer('failure_count').default(0).notNull(),
+    /** Maintenance pass — exponential back-off. When set, fanout skips
+     *  this hook until now() > nextRetryAt. Resets to NULL on the
+     *  first successful delivery so a recovered receiver flows again
+     *  without admin intervention. */
+    nextRetryAt: timestamp('next_retry_at'),
     revokedAt: timestamp('revoked_at'),
   },
   (table) => ({
