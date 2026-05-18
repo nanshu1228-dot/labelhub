@@ -1,5 +1,6 @@
 'use server'
 import { z } from 'zod'
+import { revalidatePath } from 'next/cache'
 import { eq } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { tasks, events } from '@/lib/db/schema'
@@ -185,6 +186,8 @@ export async function createTask(input: CreateTaskInput) {
     })()
   }
 
+  revalidatePath(`/workspaces/${parsed.workspaceId}/tasks`)
+  revalidatePath(`/workspaces/${parsed.workspaceId}`)
   return task
 }
 
@@ -221,6 +224,9 @@ export async function publishTask(input: z.infer<typeof taskIdSchema>) {
     payload: { taskId: task.id },
   })
 
+  revalidatePath(`/workspaces/${task.workspaceId}/tasks`)
+  revalidatePath(`/workspaces/${task.workspaceId}/tasks/${task.id}`)
+  revalidatePath(`/workspaces/${task.workspaceId}`)
   return { ok: true as const }
 }
 
@@ -253,5 +259,8 @@ export async function archiveTask(input: z.infer<typeof taskIdSchema>) {
     payload: { taskId: task.id, previousStatus: task.status },
   })
 
+  revalidatePath(`/workspaces/${task.workspaceId}/tasks`)
+  revalidatePath(`/workspaces/${task.workspaceId}/tasks/${task.id}`)
+  revalidatePath(`/workspaces/${task.workspaceId}`)
   return { ok: true as const }
 }

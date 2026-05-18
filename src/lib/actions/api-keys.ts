@@ -1,5 +1,6 @@
 'use server'
 import { z } from 'zod'
+import { revalidatePath } from 'next/cache'
 import { eq } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { events, workspaceApiKeys } from '@/lib/db/schema'
@@ -54,6 +55,7 @@ export async function createApiKey(input: CreateApiKeyInput) {
     payload: { apiKeyId: row.id, name: row.name, prefix: row.prefix },
   })
 
+  revalidatePath(`/workspaces/${parsed.workspaceId}/api`)
   return {
     id: row.id,
     name: row.name,
@@ -91,6 +93,7 @@ export async function revokeApiKey(input: z.infer<typeof revokeSchema>) {
     payload: { apiKeyId: key.id, name: key.name },
   })
 
+  revalidatePath(`/workspaces/${key.workspaceId}/api`)
   return { ok: true as const }
 }
 

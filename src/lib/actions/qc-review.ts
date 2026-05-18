@@ -33,6 +33,7 @@
 
 import { z } from 'zod'
 import { after } from 'next/server'
+import { revalidatePath } from 'next/cache'
 import { and, eq } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import {
@@ -222,5 +223,12 @@ export async function qcReviewAnnotation(
     }),
   )
 
+  // Maintenance fix #6: surfaces that read topic/annotation status
+  // need to repaint after a QC verdict commits.
+  revalidatePath(
+    `/workspaces/${task.workspaceId}/topics/${topic.id}/annotate`,
+  )
+  revalidatePath(`/workspaces/${task.workspaceId}/tasks/${task.id}`)
+  revalidatePath(`/workspaces/${task.workspaceId}/audit`)
   return { ok: true, next }
 }

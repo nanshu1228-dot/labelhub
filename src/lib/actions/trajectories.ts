@@ -1,5 +1,6 @@
 'use server'
 import { z } from 'zod'
+import { revalidatePath } from 'next/cache'
 import { and, eq, isNull, isNotNull } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { events, trajectories } from '@/lib/db/schema'
@@ -57,6 +58,10 @@ export async function softDeleteTrajectory(input: z.infer<typeof idSchema>) {
     },
   })
 
+  revalidatePath(`/workspaces/${traj.workspaceId}/trajectories`)
+  revalidatePath(
+    `/workspaces/${traj.workspaceId}/trajectories/${traj.id}`,
+  )
   return { ok: true as const }
 }
 
@@ -94,5 +99,9 @@ export async function restoreTrajectory(input: z.infer<typeof idSchema>) {
     payload: { trajectoryId: traj.id },
   })
 
+  revalidatePath(`/workspaces/${traj.workspaceId}/trajectories`)
+  revalidatePath(
+    `/workspaces/${traj.workspaceId}/trajectories/${traj.id}`,
+  )
   return { ok: true as const }
 }

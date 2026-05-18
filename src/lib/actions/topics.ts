@@ -1,5 +1,6 @@
 'use server'
 import { z } from 'zod'
+import { revalidatePath } from 'next/cache'
 import { and, eq, isNull } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { tasks, topics, events } from '@/lib/db/schema'
@@ -125,6 +126,7 @@ export async function createTopic(input: z.infer<typeof createTopicSchema>) {
     }
   }
 
+  revalidatePath(`/workspaces/${task.workspaceId}/tasks/${task.id}`)
   return topic
 }
 
@@ -339,6 +341,9 @@ export async function createTopicsBatch(
     }
   }
 
+  if (inserted.length > 0) {
+    revalidatePath(`/workspaces/${task.workspaceId}/tasks/${task.id}`)
+  }
   return { created: inserted.length, failed }
 }
 
@@ -392,6 +397,11 @@ export async function claimTopic(input: z.infer<typeof topicIdSchema>) {
     payload: { topicId: topic.id, taskId: task.id },
   })
 
+  // Maintenance fix #6: /my/queue + /my/tasks + the task detail page
+  // all read topic.assignedTo. Repaint so the claim is visible.
+  revalidatePath('/my/queue')
+  revalidatePath(`/my/tasks/${task.id}`)
+  revalidatePath(`/workspaces/${task.workspaceId}/tasks/${task.id}`)
   return updated[0]
 }
 
@@ -456,5 +466,9 @@ export async function releaseTopic(input: z.infer<typeof topicIdSchema>) {
     payload: { topicId: topic.id, byAdmin: isAdmin },
   })
 
+  // Maintenance fix #6.
+  revalidatePath('/my/queue')
+  revalidatePath(`/my/tasks/${task.id}`)
+  revalidatePath(`/workspaces/${task.workspaceId}/tasks/${task.id}`)
   return { ok: true as const }
 }
