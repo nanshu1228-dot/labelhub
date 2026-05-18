@@ -15,7 +15,20 @@ import { workspaceApiKeys } from '@/lib/db/schema'
  */
 
 const API_KEY_PREFIX = 'lh_ws_'
+/**
+ * Public demo-key prefix (Phase-17 17c). Same lookup path as
+ * `lh_ws_*` (SHA-256 in workspace_api_keys.keyHash), but visibly
+ * marked so an admin reviewing keys sees at a glance which row is
+ * the rate-limited public demo. Treated identically by the auth
+ * gate — see `acceptsPrefix()` below.
+ */
+const DEMO_KEY_PREFIX = 'lh_demo_'
+const ACCEPTED_PREFIXES = [API_KEY_PREFIX, DEMO_KEY_PREFIX]
 const PREFIX_DISPLAY_LEN = 14 // 'lh_ws_' + 8 chars
+
+function acceptsPrefix(token: string): boolean {
+  return ACCEPTED_PREFIXES.some((p) => token.startsWith(p))
+}
 
 export interface ApiKeyAuth {
   workspaceId: string
@@ -65,7 +78,7 @@ export async function authenticateApiKey(
   let token = ''
   if (auth.toLowerCase().startsWith('bearer ')) {
     token = auth.slice(7).trim()
-  } else if (auth.startsWith(API_KEY_PREFIX)) {
+  } else if (acceptsPrefix(auth)) {
     token = auth
   } else {
     token =
@@ -73,7 +86,7 @@ export async function authenticateApiKey(
       (request.headers.get('x-labelhub-api-key') ?? '').trim()
   }
 
-  if (!token || !token.startsWith(API_KEY_PREFIX)) {
+  if (!token || !acceptsPrefix(token)) {
     return { error: 'Missing or malformed API key.', code: 'NO_KEY' }
   }
 
