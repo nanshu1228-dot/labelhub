@@ -6,6 +6,12 @@ import { LiveLearning } from '@/components/site/live-learning'
 import { SiteFooter } from '@/components/site/site-footer'
 import { getLandingStats } from '@/lib/queries/landing-stats'
 
+// Force per-request rendering so the live stats are accurate. Without
+// this Next will happily serve a build-time render with stats=null
+// (Phase-15 reflection fix: prod was showing "—" everywhere because
+// the build had no DATABASE_URL at prerender time).
+export const dynamic = 'force-dynamic'
+
 /**
  * Landing — Phase-15 thesis rewrite.
  *
