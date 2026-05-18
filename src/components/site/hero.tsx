@@ -1,5 +1,6 @@
 'use client'
 import { useLang } from '@/lib/i18n'
+import { DEMO_WORKSPACE_PATH } from '@/lib/seeds'
 import { GatewaySnippet } from './gateway-snippet'
 
 /**
@@ -106,7 +107,7 @@ export function Hero({ stats }: { stats: HeroStats | null }) {
             </div>
 
             <a
-              href="/workspaces/00000000-0000-0000-0000-000000000010"
+              href={DEMO_WORKSPACE_PATH}
               className="mt-4 inline-flex items-center gap-2 group"
               style={{
                 color: 'oklch(0.6 0.18 280)',

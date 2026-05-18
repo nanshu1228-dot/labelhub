@@ -56,8 +56,10 @@ export async function summarizeTrajectoryAndCache(
     .where(eq(trajectories.id, parsed.trajectoryId))
     .limit(1)
   if (!traj) throw new NotFoundError('Trajectory')
+  let memberUserId: string
   try {
-    await requireWorkspaceMember(traj.workspaceId)
+    const m = await requireWorkspaceMember(traj.workspaceId)
+    memberUserId = m.user.id
   } catch {
     throw new ForbiddenError('Not a member of this workspace.')
   }
@@ -113,8 +115,10 @@ export async function summarizeTrajectoryAndCache(
       })
       .where(eq(trajectories.id, parsed.trajectoryId))
 
+    // Maintenance fix #8 — bill the triggering member, not the
+    // hardcoded sentinel admin. Mirrors trajectory-hints.ts.
     await logAICall({
-      userId: '00000000-0000-0000-0000-000000000001',
+      userId: memberUserId,
       feature: 'trajectory-summarizer',
       model: result.usage.model,
       inputTokens: result.usage.inputTokens,

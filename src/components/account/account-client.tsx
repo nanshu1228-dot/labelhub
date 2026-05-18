@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { updateProfile } from '@/lib/actions/membership'
 import { claimSeededWorkspaces } from '@/lib/actions/admin-claim'
+import { DEMO_WORKSPACE_ID } from '@/lib/seeds'
 
 /**
  * Account page client.
@@ -655,10 +656,9 @@ function WorkspacesSection({
  *      for non-members. Mutations gate on role at the server.
  *   2. "Start your own" — the original CTA, slightly smaller / secondary.
  *
- * Demo workspace id is hardcoded — it's the one seed-rich-demo populates.
- * If the seed changes, update the constant in both places.
+ * Demo workspace id imported from the shared seed constant — see
+ * src/lib/seeds.ts.
  */
-const DEMO_WORKSPACE_ID = '00000000-0000-0000-0000-000000000010'
 
 function EmptyWorkspacesState() {
   return (

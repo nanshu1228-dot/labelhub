@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
+import { DEMO_WORKSPACE_ID } from '@/lib/seeds'
 
 /**
  * Lightweight onboarding tour overlay (Phase-17 17b).
@@ -19,7 +20,7 @@ import { usePathname, useRouter } from 'next/navigation'
  * visitor isn't bothered when they wander elsewhere.
  */
 
-const DEMO_WS = '00000000-0000-0000-0000-000000000010'
+const DEMO_WS = DEMO_WORKSPACE_ID
 const STORAGE_KEY = 'lh.tour.state'
 
 interface Stop {

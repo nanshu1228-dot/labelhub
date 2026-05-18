@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { eq } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { workspaces } from '@/lib/db/schema'
+import { DEMO_WORKSPACE_ID } from '@/lib/seeds'
 
 /**
  * GET /api/demo/info → public, no auth.
@@ -25,8 +26,6 @@ import { workspaces } from '@/lib/db/schema'
  * Errors gracefully: if the demo key hasn't been minted yet, returns
  * `demoKey: null` so the snippet falls back to its placeholder.
  */
-
-const DEMO_WORKSPACE_ID = '00000000-0000-0000-0000-000000000010'
 
 export async function GET(request: Request) {
   const origin = new URL(request.url).origin

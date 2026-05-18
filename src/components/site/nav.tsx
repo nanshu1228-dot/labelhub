@@ -1,4 +1,5 @@
 import { optionalUser } from '@/lib/auth/guards'
+import { DEMO_WORKSPACE_PATH } from '@/lib/seeds'
 import { LangSwitch } from './lang-switch'
 import { NavAuthControls } from './nav-auth-controls'
 
@@ -45,7 +46,7 @@ export async function SiteNav() {
           </a>
           <nav className="hidden md:flex items-center gap-6">
             <a href="#templates" className="nav-link">Templates</a>
-            <a href="/workspaces/00000000-0000-0000-0000-000000000010" className="nav-link">
+            <a href={DEMO_WORKSPACE_PATH} className="nav-link">
               Demo workspace
             </a>
             <a href="/docs" className="nav-link">

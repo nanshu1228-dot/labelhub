@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { signIn, signUp } from '@/lib/actions/auth'
 import { GoogleSignInButton } from './google-button'
+import { DEMO_WORKSPACE_PATH } from '@/lib/seeds'
 
 /**
  * Shared sign-in / sign-up form.
@@ -193,7 +194,7 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
 
         <p className="auth-skip">
           Just want to look around?{' '}
-          <a href="/workspaces/00000000-0000-0000-0000-000000000010">
+          <a href={DEMO_WORKSPACE_PATH}>
             Tour the public demo →
           </a>
         </p>
