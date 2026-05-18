@@ -14,6 +14,8 @@ import {
   type AnalyzeRow,
 } from '@/lib/queries/analyze'
 import { AnalyzeClient } from '@/components/analyze/analyze-client'
+import { ToolProvidersPanel } from '@/components/analyze/tool-providers-panel'
+import { getWorkspaceToolCallStats } from '@/lib/queries/tool-call-audit'
 
 export const metadata: Metadata = {
   title: 'Analyze — LabelHub',
@@ -75,7 +77,7 @@ export default async function AnalyzePage(
 
   const filter = parseFilter(filterString)
   const db = getDb()
-  const [rows, totalRow] = await Promise.all([
+  const [rows, totalRow, toolStats] = await Promise.all([
     listTrajectoriesByFilter({
       workspaceId,
       filter,
@@ -85,21 +87,28 @@ export default async function AnalyzePage(
       .select({ n: count() })
       .from(trajectories)
       .where(eq(trajectories.workspaceId, workspaceId)),
+    getWorkspaceToolCallStats(workspaceId).catch(() => []),
   ])
   const aggregates = computeAggregates(rows)
   const hasAnyTrajectories = Number(totalRow[0]?.n ?? 0) > 0
 
   return (
     <Shell workspaceName={workspace.name} workspaceId={workspaceId}>
-      <AnalyzeClient
-        workspaceId={workspaceId}
-        initialFilterString={filterString}
-        canonicalFilter={stringifyFilter(filter)}
-        rowsPreview={rows.slice(0, 12).map(rowPreview)}
-        rowsTotal={rows.length}
-        aggregates={aggregates}
-        hasAnyTrajectories={hasAnyTrajectories}
-      />
+      <div className="space-y-10">
+        <AnalyzeClient
+          workspaceId={workspaceId}
+          initialFilterString={filterString}
+          canonicalFilter={stringifyFilter(filter)}
+          rowsPreview={rows.slice(0, 12).map(rowPreview)}
+          rowsTotal={rows.length}
+          aggregates={aggregates}
+          hasAnyTrajectories={hasAnyTrajectories}
+        />
+        {/* Phase-20: tool-provider audit lens. Only shown when the
+            workspace has any captured trajectories — the analyze
+            empty card already handles the truly-empty case. */}
+        {hasAnyTrajectories && <ToolProvidersPanel rows={toolStats} />}
+      </div>
     </Shell>
   )
 }
