@@ -62,8 +62,12 @@ export async function GET(
       status = 500
       errorCode = 'INTERNAL'
       const msg = e instanceof Error ? e.message : 'Unknown error'
+      // 3rd security audit: never echo DB/internal error text to clients.
+      // Log server-side, surface a generic string in the response.
+      console.error('[api] internal error:', msg, e instanceof Error ? e.stack : undefined)
+      const safeMsg = 'Internal error'
       response = NextResponse.json(
-        { error: { message: msg, code: 'INTERNAL' } },
+        { error: { message: safeMsg, code: 'INTERNAL' } },
         { status: 500 },
       )
     }

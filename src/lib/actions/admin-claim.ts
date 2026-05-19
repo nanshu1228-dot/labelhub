@@ -37,14 +37,15 @@ const SEED_ADMIN_PREFIX = '00000000-0000-0000-0000-%'
  * that are still claimable so the CTA can show them by name (not just
  * "N workspaces"). Empty array → no CTA renders.
  *
- * Doesn't require auth — it inspects which workspaces are still
- * seed-orphaned, which is public-ish info (the demo is meant to be
- * findable). We cap at 8 names to keep the CTA tidy on workspaces
- * with a long seed list.
+ * **Auth-gated** (3rd security audit): anonymous Server-Action POSTers
+ * could previously enumerate seed-workspace names. Now requires a
+ * signed-in user; the /account page is auth-only anyway so this is
+ * net-zero for legitimate callers but blocks scraping.
  */
 export async function listUnclaimedSeededWorkspaces(): Promise<
   Array<{ id: string; name: string }>
 > {
+  await requireUser()
   const db = getDb()
   return db
     .select({ id: workspaces.id, name: workspaces.name })
@@ -58,6 +59,7 @@ export async function listUnclaimedSeededWorkspaces(): Promise<
  * a number can stay as-is.
  */
 export async function countUnclaimedSeededWorkspaces(): Promise<number> {
+  // Auth check happens transitively via listUnclaimedSeededWorkspaces().
   const rows = await listUnclaimedSeededWorkspaces()
   return rows.length
 }

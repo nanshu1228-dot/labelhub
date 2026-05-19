@@ -306,8 +306,12 @@ export async function POST(
       status = 500
       errorCode = 'INTERNAL'
       const msg = e instanceof Error ? e.message : 'Unknown error'
+      // 3rd security audit: never echo DB/internal error text to clients.
+      // Log server-side, surface a generic string in the response.
+      console.error('[api] internal error:', msg, e instanceof Error ? e.stack : undefined)
+      const safeMsg = 'Internal error'
       response = NextResponse.json(
-        { error: { message: msg, code: 'INTERNAL', type: 'labelhub_proxy' } },
+        { error: { message: safeMsg, code: 'INTERNAL', type: 'labelhub_proxy' } },
         { status: 500 },
       )
     }

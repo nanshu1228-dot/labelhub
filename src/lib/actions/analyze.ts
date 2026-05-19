@@ -15,7 +15,7 @@
 
 import { z } from 'zod'
 import { requireWorkspaceAdmin } from '@/lib/auth/guards'
-import { logAICall } from '@/lib/ai/quota'
+import { assertWithinDailyAIQuota, logAICall } from '@/lib/ai/quota'
 import {
   computeAggregates,
   listTrajectoriesByFilter,
@@ -66,6 +66,19 @@ export async function askWorkspaceAnalyst(
     }
   }
 
+  // 3rd security audit (#2): gate Sonnet calls behind the per-user
+  // daily AI quota — a looped "Ask" button on /analyze otherwise
+  // burns unlimited tokens at premium tier. Throws on quota breach;
+  // we map to a friendly { ok: false } response below in the catch.
+  try {
+    await assertWithinDailyAIQuota(user.id)
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : 'Daily AI quota exceeded.',
+    }
+  }
+
   // Pick up to 5 samples: prefer rows WITH a cached summary, sample
   // across outcome buckets so the LLM sees a representative slice.
   const sampleRows = pickSampleRows(rows, 5)
@@ -93,10 +106,13 @@ export async function askWorkspaceAnalyst(
       sampleCount: sampleRows.length,
     }
   } catch (e) {
-    return {
-      ok: false,
-      error: e instanceof Error ? e.message : 'analyst call failed',
-    }
+    // eslint-disable-next-line no-console
+    console.error(
+      '[analyze] analyst call failed:',
+      e instanceof Error ? e.message : e,
+      e instanceof Error ? e.stack : undefined,
+    )
+    return { ok: false, error: 'analyst call failed' }
   }
 }
 

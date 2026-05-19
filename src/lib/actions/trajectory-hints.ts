@@ -188,10 +188,13 @@ export async function reviewTrajectoryAndCache(
     inputTokens = result.usage.inputTokens
     outputTokens = result.usage.outputTokens
   } catch (e) {
-    return {
-      ok: false,
-      error: e instanceof Error ? e.message : 'review failed',
-    }
+    // eslint-disable-next-line no-console
+    console.error(
+      '[trajectory-hints] review failed:',
+      e instanceof Error ? e.message : e,
+      e instanceof Error ? e.stack : undefined,
+    )
+    return { ok: false, error: 'review failed' }
   }
 
   const hints = reviewToCachedHints(review, stepRows)

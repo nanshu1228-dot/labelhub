@@ -128,10 +128,15 @@ export async function summarizeTrajectoryAndCache(
 
     return { ok: true, summary: result.summary, cached: false }
   } catch (e) {
-    return {
-      ok: false,
-      error: e instanceof Error ? e.message : 'summarization failed',
-    }
+    // 3rd security audit: don't leak DB / provider error text. Log
+    // server-side, return a generic message to the caller.
+    // eslint-disable-next-line no-console
+    console.error(
+      '[trajectory-summary] failed:',
+      e instanceof Error ? e.message : e,
+      e instanceof Error ? e.stack : undefined,
+    )
+    return { ok: false, error: 'summarization failed' }
   }
 }
 
