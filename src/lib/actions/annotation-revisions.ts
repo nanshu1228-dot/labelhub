@@ -180,6 +180,12 @@ export async function restoreAnnotationRevision(
     revalidatePath(
       `/workspaces/${rev.workspaceId}/topics/${ann.topicId}/history`,
     )
+    // 3rd audit: also repaint annotator-facing surfaces — restoring
+    // an admin-rejected annotation flips its state and the submitter
+    // should see it on their inbox / submissions list immediately.
+    revalidatePath('/my/inbox')
+    revalidatePath('/my/submissions')
+    revalidatePath('/my/quality')
   } catch {
     /* */
   }

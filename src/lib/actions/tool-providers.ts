@@ -1,5 +1,6 @@
 'use server'
 import { z } from 'zod'
+import { revalidatePath } from 'next/cache'
 import { and, eq } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { events, toolProviders } from '@/lib/db/schema'
@@ -19,7 +20,20 @@ import { TOOL_PROVIDER_KINDS } from '@/lib/trajectories/schema'
  * Authorization: workspace admin only.
  */
 
-const manifestShape = z.record(z.string(), z.unknown())
+// 32KB cap on manifest JSON — tool manifests are by nature small
+// descriptors; anything bigger is a misshapen import. Phase-15
+// maintenance: matches the annotation-payload budget pattern.
+const MANIFEST_BYTE_BUDGET = 32_000
+const manifestShape = z
+  .record(z.string(), z.unknown())
+  .refine(
+    (v) =>
+      Buffer.byteLength(JSON.stringify(v ?? {}), 'utf8') <=
+      MANIFEST_BYTE_BUDGET,
+    {
+      message: `manifest exceeds ${MANIFEST_BYTE_BUDGET / 1000}KB byte budget`,
+    },
+  )
 
 const declareSchema = z.object({
   workspaceId: z.string().uuid(),
@@ -69,6 +83,8 @@ export async function declareToolProvider(
     },
   })
 
+  revalidatePath(`/workspaces/${parsed.workspaceId}/connections`)
+  revalidatePath(`/workspaces/${parsed.workspaceId}/analyze`)
   return row
 }
 
@@ -118,6 +134,8 @@ export async function updateToolProvider(
     },
   })
 
+  revalidatePath(`/workspaces/${existing.workspaceId}/connections`)
+  revalidatePath(`/workspaces/${existing.workspaceId}/analyze`)
   return row
 }
 
@@ -160,5 +178,7 @@ export async function deprecateToolProvider(input: z.infer<typeof idSchema>) {
     },
   })
 
+  revalidatePath(`/workspaces/${existing.workspaceId}/connections`)
+  revalidatePath(`/workspaces/${existing.workspaceId}/analyze`)
   return { ok: true as const }
 }

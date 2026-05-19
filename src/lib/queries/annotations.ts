@@ -1,5 +1,5 @@
 import 'server-only'
-import { and, desc, eq, inArray, isNotNull } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import {
   annotations,
@@ -110,7 +110,10 @@ export async function listMyAllSubmissions(opts: {
         ? and(...conds, eq(tasks.workspaceId, opts.workspaceId))
         : and(...conds),
     )
-    .orderBy(desc(annotations.submittedAt))
+    // Postgres DESC defaults to NULLS FIRST, which jumped unsubmitted
+    // drafts (submittedAt=null) above real submissions on /my/submissions.
+    // Force NULLS LAST so the freshest submitted row sits at top.
+    .orderBy(sql`${annotations.submittedAt} DESC NULLS LAST`)
     .limit(limit)
 
   return rows.map((r) => {

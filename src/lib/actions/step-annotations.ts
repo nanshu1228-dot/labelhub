@@ -1,5 +1,6 @@
 'use server'
 import { z } from 'zod'
+import { revalidatePath } from 'next/cache'
 import { eq } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import {
@@ -118,6 +119,13 @@ export async function addStepAnnotation(input: AddStepAnnotationInput) {
     },
   })
 
+  // The annotator page reads step marks live + /disputes surfaces
+  // disagreement counts from them — repaint both.
+  const tid = annotation.topicId
+  revalidatePath(
+    `/workspaces/${task.workspaceId}/topics/${tid}/annotate`,
+  )
+  revalidatePath(`/workspaces/${task.workspaceId}/disputes`)
   return row
 }
 
@@ -177,6 +185,10 @@ export async function removeStepAnnotation(
         annotationId: annotation.id,
       },
     })
+    revalidatePath(
+      `/workspaces/${task.workspaceId}/topics/${annotation.topicId}/annotate`,
+    )
+    revalidatePath(`/workspaces/${task.workspaceId}/disputes`)
   }
 
   return { ok: true as const }

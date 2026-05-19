@@ -28,10 +28,25 @@ import { logAICall } from '@/lib/ai/quota'
  *   - releaseTopic: current claimer OR workspace admin
  */
 
+// Per-item byte budget for topic itemData — 64KB covers a typical
+// (prompt, responseA, responseB) row generously; anything larger is a
+// malformed import. Matches the annotation-payload budget.
+const TOPIC_ITEM_BYTE_BUDGET = 64_000
+const itemDataShape = z
+  .record(z.string(), z.unknown())
+  .refine(
+    (v) =>
+      Buffer.byteLength(JSON.stringify(v ?? {}), 'utf8') <=
+      TOPIC_ITEM_BYTE_BUDGET,
+    {
+      message: `itemData exceeds ${TOPIC_ITEM_BYTE_BUDGET / 1000}KB byte budget`,
+    },
+  )
+
 const createTopicSchema = z.object({
   taskId: uuidLike,
   /** Validated against template.itemSchema (template-specific) — accept arbitrary object here */
-  itemData: z.record(z.string(), z.unknown()),
+  itemData: itemDataShape,
   /**
    * When true, after the topic row lands we synchronously call the AI
    * difficulty estimator (a fast-tier Claude call) and persist the
@@ -48,10 +63,7 @@ const createTopicSchema = z.object({
 const createTopicsBatchSchema = z.object({
   taskId: uuidLike,
   /** Up to 100 items per call. Each is validated against template.itemSchema. */
-  items: z
-    .array(z.record(z.string(), z.unknown()))
-    .min(1)
-    .max(100),
+  items: z.array(itemDataShape).min(1).max(100),
   /** Same semantics as createTopicSchema.autoEstimateDifficulty, but
    *  applied to EVERY row in the batch. For large batches admins may
    *  want to skip and run estimation later via a separate action. */

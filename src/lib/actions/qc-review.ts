@@ -223,12 +223,20 @@ export async function qcReviewAnnotation(
     }),
   )
 
-  // Maintenance fix #6: surfaces that read topic/annotation status
-  // need to repaint after a QC verdict commits.
+  // Maintenance fix #6 + 3rd-audit follow-up: the verdict mutates
+  // both workspace-side admin surfaces AND the annotator's own
+  // /my/* views. Repaint both — without this an annotator clicks
+  // 'inbox' right after their work was rejected and sees stale
+  // 'submitted' status until they navigate away and back.
   revalidatePath(
     `/workspaces/${task.workspaceId}/topics/${topic.id}/annotate`,
   )
   revalidatePath(`/workspaces/${task.workspaceId}/tasks/${task.id}`)
   revalidatePath(`/workspaces/${task.workspaceId}/audit`)
+  revalidatePath('/my/inbox')
+  revalidatePath('/my/submissions')
+  revalidatePath('/my/quality')
+  revalidatePath('/my/tasks')
+  revalidatePath(`/my/tasks/${task.id}`)
   return { ok: true, next }
 }

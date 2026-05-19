@@ -241,7 +241,10 @@ async function upsertWorkspaceFallback(
     .limit(1)
 
   if (existing) {
-    const [updated] = await db
+    // Maintenance fix — CAS on version. Two admins clicking
+    // "Regenerate scope" simultaneously used to both succeed; the
+    // slower writer overwrote the faster's manual edit silently.
+    const updated = await db
       .update(taskTopicScopes)
       .set({
         inScope: scope.inScope,
@@ -252,9 +255,21 @@ async function upsertWorkspaceFallback(
         generatedAt: now,
         manuallyEditedAt: opts.manualEdit ? now : existing.manuallyEditedAt,
       })
-      .where(eq(taskTopicScopes.id, existing.id))
+      .where(
+        and(
+          eq(taskTopicScopes.id, existing.id),
+          eq(taskTopicScopes.version, existing.version),
+        ),
+      )
       .returning()
-    return updated
+    if (updated.length === 0) {
+      throw new AppError(
+        'CONFLICT',
+        'Topic scope was modified concurrently — refresh and try again.',
+        409,
+      )
+    }
+    return updated[0]
   }
 
   const [created] = await db

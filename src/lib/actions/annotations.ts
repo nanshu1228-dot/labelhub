@@ -1,6 +1,7 @@
 'use server'
 import { z } from 'zod'
 import { after } from 'next/server'
+import { revalidatePath } from 'next/cache'
 import { and, desc, eq, isNull, sql } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { tasks, topics, annotations, events } from '@/lib/db/schema'
@@ -603,6 +604,20 @@ export async function reviewAnnotation(input: z.infer<typeof reviewSchema>) {
     )
   }
 
+  // 3rd-audit follow-up: the admin verdict mutates state the
+  // submitter sees on /my/inbox + /my/submissions + /my/quality +
+  // /my/tasks. Repaint so they don't see stale 'submitted' status
+  // immediately after their work was approved/rejected.
+  revalidatePath(
+    `/workspaces/${task.workspaceId}/topics/${topic.id}/annotate`,
+  )
+  revalidatePath(`/workspaces/${task.workspaceId}/tasks/${task.id}`)
+  revalidatePath(`/workspaces/${task.workspaceId}/audit`)
+  revalidatePath('/my/inbox')
+  revalidatePath('/my/submissions')
+  revalidatePath('/my/quality')
+  revalidatePath('/my/tasks')
+  revalidatePath(`/my/tasks/${task.id}`)
   return { ok: true as const }
 }
 
