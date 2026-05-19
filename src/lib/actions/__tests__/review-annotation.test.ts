@@ -14,6 +14,12 @@ vi.mock('next/server', () => ({
     void fn
   }),
 }))
+// 3rd-audit follow-up: reviewAnnotation now calls revalidatePath for
+// admin + /my/* paths after the verdict commits. Stub it — the real
+// implementation needs a static-generation store vitest doesn't have.
+vi.mock('next/cache', () => ({
+  revalidatePath: vi.fn(),
+}))
 
 import { reviewAnnotation, respondToReview } from '../annotations'
 import {
