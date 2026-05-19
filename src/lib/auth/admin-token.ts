@@ -30,8 +30,31 @@ export function checkAdminToken(
       { status: 503 },
     )
   }
-  const url = new URL(request.url)
-  const supplied = url.searchParams.get('token') ?? ''
+  // 3rd security audit #6 — prefer header over querystring. ?token=
+  // landed in Vercel access logs, pg_stat_statements, browser history,
+  // and outbound Referer headers. Bearer header is captured by none
+  // of those. Keep ?token= as a soft-deprecated fallback (logs a
+  // warning) so any in-flight ops scripts don't break.
+  const auth = request.headers.get('authorization') ?? ''
+  let supplied = ''
+  if (auth.toLowerCase().startsWith('bearer ')) {
+    supplied = auth.slice(7).trim()
+  } else {
+    const xToken = request.headers.get('x-admin-token')
+    if (xToken) supplied = xToken.trim()
+  }
+  if (!supplied) {
+    const url = new URL(request.url)
+    const qsToken = url.searchParams.get('token')
+    if (qsToken) {
+      supplied = qsToken
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[admin] token supplied via ?token= querystring — deprecated, ' +
+          'leaks into logs. Migrate to `Authorization: Bearer <token>`.',
+      )
+    }
+  }
   if (!timingSafeEqual(supplied, configured)) {
     return NextResponse.json(
       { error: { code: 'FORBIDDEN', message: 'forbidden' } },

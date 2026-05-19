@@ -184,13 +184,29 @@ export default async function DisputesPage(
                 hint={`${patches.filter((p) => p.status === 'pending').length} pending · ${patches.length} total`}
               />
               {patches.length === 0 ? (
-                <p
-                  className="ts-13 italic"
-                  style={{ color: 'var(--mute)' }}
+                <div
+                  className="rounded-md px-4 py-5 ts-13"
+                  style={{
+                    background: 'var(--panel)',
+                    border: '1px dashed var(--line)',
+                    color: 'var(--mute)',
+                  }}
                 >
-                  No patches yet — click &quot;Refine with Claude&quot; above
-                  to generate one from the disputes.
-                </p>
+                  <p>
+                    No guideline patches yet. Disputes between raters
+                    are the raw material — when at least two raters
+                    disagree on the same step, the &quot;Refine with
+                    Claude&quot; button above can turn that disagreement
+                    into a proposed clarification.
+                  </p>
+                  <p
+                    className="ts-12 mono mt-2"
+                    style={{ color: 'var(--mute2)' }}
+                  >
+                    Tip: open <code>/workspaces/{workspaceId}/quality</code>{' '}
+                    to see whether any raters have submitted yet.
+                  </p>
+                </div>
               ) : (
                 <ul className="flex flex-col gap-3">
                   {patches.map((p) => (
