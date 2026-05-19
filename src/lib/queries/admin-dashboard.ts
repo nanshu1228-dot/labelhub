@@ -7,6 +7,7 @@ import {
   gte,
   inArray,
   isNotNull,
+  sql,
 } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import {
@@ -101,82 +102,103 @@ export async function getAdminDashboardData(opts: {
   const workspaceIds = adminWorkspaces.map((r) => r.workspaceId)
   const sevenDaysAgo = new Date(Date.now() - SEVEN_DAYS_MS)
 
-  // 2. Parallel counts per workspace.
-  const cardData = await Promise.all(
-    adminWorkspaces.map(async (ws) => {
-      const [
-        [pendingRow],
-        [approvedRow],
-        [rejectedRow],
-        [revisingRow],
-        [lastEvtRow],
-      ] = await Promise.all([
-        // Submitted + reviewing + awaiting_acceptance = "needs admin/QC eyes"
-        db
-          .select({ n: count() })
-          .from(annotations)
-          .innerJoin(topics, eq(topics.id, annotations.topicId))
-          .innerJoin(tasks, eq(tasks.id, topics.taskId))
-          .where(
-            and(
-              eq(tasks.workspaceId, ws.workspaceId),
-              isNotNull(annotations.submittedAt),
-              inArray(topics.status, [
-                'submitted',
-                'reviewing',
-                'awaiting_acceptance',
-              ]),
-            ),
+  // 2. Bulk-batched counts (3rd bug hunt #8). Previous loop issued
+  //    5N queries — an admin in 20 workspaces ran 100 round-trips
+  //    on every /admin render. Now: 4 queries total, GROUP BY
+  //    workspace_id, then assemble in JS.
+  const [pendingRows, eventRows, revisingRows, lastEventRows] =
+    await Promise.all([
+      db
+        .select({
+          workspaceId: tasks.workspaceId,
+          n: count(),
+        })
+        .from(annotations)
+        .innerJoin(topics, eq(topics.id, annotations.topicId))
+        .innerJoin(tasks, eq(tasks.id, topics.taskId))
+        .where(
+          and(
+            inArray(tasks.workspaceId, workspaceIds),
+            isNotNull(annotations.submittedAt),
+            inArray(topics.status, [
+              'submitted',
+              'reviewing',
+              'awaiting_acceptance',
+            ]),
           ),
-        db
-          .select({ n: count() })
-          .from(events)
-          .where(
-            and(
-              eq(events.workspaceId, ws.workspaceId),
-              eq(events.type, 'annotation.approved'),
-              gte(events.ts, sevenDaysAgo),
-            ),
+        )
+        .groupBy(tasks.workspaceId),
+      db
+        .select({
+          workspaceId: events.workspaceId,
+          type: events.type,
+          n: count(),
+        })
+        .from(events)
+        .where(
+          and(
+            inArray(events.workspaceId, workspaceIds),
+            inArray(events.type, [
+              'annotation.approved',
+              'annotation.rejected',
+            ]),
+            gte(events.ts, sevenDaysAgo),
           ),
-        db
-          .select({ n: count() })
-          .from(events)
-          .where(
-            and(
-              eq(events.workspaceId, ws.workspaceId),
-              eq(events.type, 'annotation.rejected'),
-              gte(events.ts, sevenDaysAgo),
-            ),
+        )
+        .groupBy(events.workspaceId, events.type),
+      db
+        .select({
+          workspaceId: tasks.workspaceId,
+          n: count(),
+        })
+        .from(topics)
+        .innerJoin(tasks, eq(tasks.id, topics.taskId))
+        .where(
+          and(
+            inArray(tasks.workspaceId, workspaceIds),
+            eq(topics.status, 'revising'),
           ),
-        db
-          .select({ n: count() })
-          .from(topics)
-          .innerJoin(tasks, eq(tasks.id, topics.taskId))
-          .where(
-            and(
-              eq(tasks.workspaceId, ws.workspaceId),
-              eq(topics.status, 'revising'),
-            ),
-          ),
-        db
-          .select({ ts: events.ts })
-          .from(events)
-          .where(eq(events.workspaceId, ws.workspaceId))
-          .orderBy(desc(events.ts))
-          .limit(1),
-      ])
-      return {
-        workspaceId: ws.workspaceId,
-        name: ws.workspaceName,
-        templateMode: ws.workspaceTemplateMode,
-        pendingReview: pendingRow?.n ?? 0,
-        approvedLast7d: approvedRow?.n ?? 0,
-        rejectedLast7d: rejectedRow?.n ?? 0,
-        awaitingRevision: revisingRow?.n ?? 0,
-        lastActivityAt: lastEvtRow?.ts ?? null,
-      }
-    }),
+        )
+        .groupBy(tasks.workspaceId),
+      db
+        .select({
+          workspaceId: events.workspaceId,
+          ts: sql<Date | null>`max(${events.ts})`,
+        })
+        .from(events)
+        .where(inArray(events.workspaceId, workspaceIds))
+        .groupBy(events.workspaceId),
+    ])
+
+  const pendingByWs = new Map<string, number>(
+    pendingRows.map((r) => [r.workspaceId, Number(r.n ?? 0)]),
   )
+  const approvedByWs = new Map<string, number>()
+  const rejectedByWs = new Map<string, number>()
+  for (const r of eventRows) {
+    const n = Number(r.n ?? 0)
+    if (r.type === 'annotation.approved')
+      approvedByWs.set(r.workspaceId, n)
+    else if (r.type === 'annotation.rejected')
+      rejectedByWs.set(r.workspaceId, n)
+  }
+  const revisingByWs = new Map<string, number>(
+    revisingRows.map((r) => [r.workspaceId, Number(r.n ?? 0)]),
+  )
+  const lastEvtByWs = new Map<string, Date | null>(
+    lastEventRows.map((r) => [r.workspaceId, r.ts]),
+  )
+
+  const cardData = adminWorkspaces.map((ws) => ({
+    workspaceId: ws.workspaceId,
+    name: ws.workspaceName,
+    templateMode: ws.workspaceTemplateMode,
+    pendingReview: pendingByWs.get(ws.workspaceId) ?? 0,
+    approvedLast7d: approvedByWs.get(ws.workspaceId) ?? 0,
+    rejectedLast7d: rejectedByWs.get(ws.workspaceId) ?? 0,
+    awaitingRevision: revisingByWs.get(ws.workspaceId) ?? 0,
+    lastActivityAt: lastEvtByWs.get(ws.workspaceId) ?? null,
+  }))
 
   // 3. Cross-workspace pending queue — submitted/reviewing/awaiting,
   // sorted oldest first so the most-delayed work surfaces top.

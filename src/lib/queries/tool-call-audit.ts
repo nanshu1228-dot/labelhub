@@ -1,5 +1,5 @@
 import 'server-only'
-import { and, asc, eq, isNotNull, sql } from 'drizzle-orm'
+import { and, asc, eq, gte, isNotNull, sql } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import {
   toolProviders,
@@ -42,12 +42,22 @@ export interface ToolProviderStats {
   lastSeenAt: Date | null
 }
 
+/** Default time window for tool-call audit — 30 days. Beyond that
+ *  the aggregate is mostly noise (provider versions changed, agents
+ *  evolved). 3rd bug hunt #10: without this, after a few weeks of
+ *  demo traffic /analyze scans 100k+ trajectory_steps every render. */
+const DEFAULT_WINDOW_DAYS = 30
+
 export async function getWorkspaceToolCallStats(
   workspaceId: string,
+  windowDays: number = DEFAULT_WINDOW_DAYS,
 ): Promise<ToolProviderStats[]> {
   const db = getDb()
+  const since = new Date(
+    Date.now() - windowDays * 24 * 60 * 60 * 1000,
+  )
 
-  // Pull every tool_call step in the workspace + its provider. We
+  // Pull tool_call steps in the recent window + their provider. We
   // attach the matching tool_result by self-join on (trajectoryId,
   // toolCallId). Failure = result has content.error truthy, or no
   // matching result was ever recorded (timeout / abandoned call).
@@ -79,13 +89,15 @@ export async function getWorkspaceToolCallStats(
         eq(trajectories.workspaceId, workspaceId),
         eq(trajectorySteps.kind, 'tool_call'),
         isNotNull(trajectorySteps.toolProviderId),
+        gte(trajectorySteps.ts, since),
       ),
     )
     .orderBy(asc(trajectorySteps.ts))
 
   if (callRows.length === 0) return []
 
-  // Find matching result rows in one shot.
+  // Find matching result rows in one shot — same time window so we
+  // don't pull years of result steps to match a 30d call list.
   const resultRows = await db
     .select({
       trajectoryId: trajectorySteps.trajectoryId,
@@ -101,6 +113,7 @@ export async function getWorkspaceToolCallStats(
     .where(
       and(
         eq(trajectories.workspaceId, workspaceId),
+        gte(trajectorySteps.ts, since),
         sql`${trajectorySteps.kind} IN ('tool_result', 'error')`,
         isNotNull(trajectorySteps.toolCallId),
       ),

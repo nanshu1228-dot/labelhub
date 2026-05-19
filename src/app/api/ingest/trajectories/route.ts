@@ -30,6 +30,17 @@ export async function POST(request: NextRequest) {
     // Read body as text first so we can record its size; then parse.
     const bodyText = await request.text()
     payloadBytes = bodyText.length
+    // 3rd security audit #8 — explicit payload cap. Beyond 2MB an
+    // ingest is either an honest mis-sized upload (legitimate caller
+    // should chunk) or a JSON-bomb attack. Reject early with 413
+    // before JSON.parse spins through it.
+    if (payloadBytes > 2_000_000) {
+      throw new AppError(
+        'PAYLOAD_TOO_LARGE',
+        'Body exceeds 2MB ingest cap. Chunk the upload.',
+        413,
+      )
+    }
 
     let body: unknown
     try {

@@ -3,6 +3,11 @@ import { eq } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { workspaces } from '@/lib/db/schema'
 import { DEMO_WORKSPACE_ID } from '@/lib/seeds'
+import {
+  callerIp,
+  maybeSweep,
+  rateLimitPublic,
+} from '@/lib/ratelimit/public-endpoint'
 
 /**
  * GET /api/demo/info → public, no auth.
@@ -27,7 +32,28 @@ import { DEMO_WORKSPACE_ID } from '@/lib/seeds'
  * `demoKey: null` so the snippet falls back to its placeholder.
  */
 
+// 30 req/min/IP — the snippet on the landing fetches once per page
+// load; the cache-control max-age=60 cap means a single visitor
+// hits at most ~1/min. 30 is generous for refresh-spammers and tight
+// against a key-rotation scraper.
+const DEMO_INFO_RPM = 30
+
 export async function GET(request: Request) {
+  const ip = callerIp(request)
+  const gate = rateLimitPublic(ip, DEMO_INFO_RPM)
+  maybeSweep()
+  if (!gate.ok) {
+    return NextResponse.json(
+      { error: 'rate_limited' },
+      {
+        status: 429,
+        headers: {
+          'cache-control': 'no-store',
+          'retry-after': String(gate.retryAfter),
+        },
+      },
+    )
+  }
   const origin = new URL(request.url).origin
 
   let demoKey: string | null = null

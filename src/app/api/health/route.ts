@@ -2,6 +2,11 @@ import { NextResponse } from 'next/server'
 import { gte, sql } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { apiRequestLog, providerConnections } from '@/lib/db/schema'
+import {
+  callerIp,
+  maybeSweep,
+  rateLimitPublic,
+} from '@/lib/ratelimit/public-endpoint'
 
 /**
  * GET /api/health → public, no auth, JSON.
@@ -29,7 +34,27 @@ import { apiRequestLog, providerConnections } from '@/lib/db/schema'
 
 const STARTED_AT = Date.now()
 
+// 60 req/min/IP — uptime monitors poll every 30s, so 60 covers two
+// monitors + ad-hoc curls comfortably. An anonymous attacker spamming
+// this gets 429s instead of cooking the DB pool.
+const HEALTH_RPM = 60
+
 export async function GET(request: Request) {
+  const ip = callerIp(request)
+  const gate = rateLimitPublic(ip, HEALTH_RPM)
+  maybeSweep()
+  if (!gate.ok) {
+    return NextResponse.json(
+      { status: 'rate_limited' },
+      {
+        status: 429,
+        headers: {
+          'cache-control': 'no-store',
+          'retry-after': String(gate.retryAfter),
+        },
+      },
+    )
+  }
   const ts = new Date().toISOString()
   const uptimeMs = Date.now() - STARTED_AT
   const db = getDb()

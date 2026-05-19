@@ -58,6 +58,14 @@ export async function POST(request: NextRequest) {
   try {
     const bodyText = await request.text()
     payloadBytes = bodyText.length
+    // 3rd security audit #8 — eval-run configs should never exceed 500KB.
+    if (payloadBytes > 500_000) {
+      throw new AppError(
+        'PAYLOAD_TOO_LARGE',
+        'Body exceeds 500KB eval-run cap.',
+        413,
+      )
+    }
 
     let body: unknown
     try {

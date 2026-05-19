@@ -37,6 +37,16 @@ export function LiveActivityStrip({
   useEffect(() => {
     let cancelled = false
     async function poll() {
+      // Skip polling when the tab is hidden — a forgotten dashboard
+      // tab used to hit /recent-events every 5s indefinitely (3rd
+      // bug hunt #11). On visibility return, the visibilitychange
+      // listener below kicks one fresh poll.
+      if (
+        typeof document !== 'undefined' &&
+        document.visibilityState !== 'visible'
+      ) {
+        return
+      }
       try {
         const r = await fetch(
           `/api/workspaces/${workspaceId}/recent-events?limit=${LIMIT}`,
@@ -56,9 +66,23 @@ export function LiveActivityStrip({
     }
     poll()
     const iv = setInterval(poll, POLL_MS)
+    function onVisChange() {
+      if (
+        typeof document !== 'undefined' &&
+        document.visibilityState === 'visible'
+      ) {
+        poll()
+      }
+    }
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVisChange)
+    }
     return () => {
       cancelled = true
       clearInterval(iv)
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVisChange)
+      }
     }
   }, [workspaceId])
 
