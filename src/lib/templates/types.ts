@@ -34,6 +34,17 @@ export const TEMPLATE_MODES = [
   /** FLAGSHIP: evaluate full agent trajectories — tool calls, reasoning,
    *  path choice. Per-step + per-trajectory rubric. */
   'agent-trace-eval',
+  /**
+   * Finals D1 — PM-defined visual form schema. The Designer (P1) drops
+   * widgets onto a canvas; the Renderer hydrates submitted task topic
+   * data into the schema-driven form for the Labeler to fill. The
+   * shape of itemData and responseSchema both come from the saved
+   * `custom_form_schemas` row referenced by templateConfig.formSchemaId.
+   *
+   * Unlike the three baked-in modes, validation here is delegated to
+   * the saved schema rather than a per-mode Zod object.
+   */
+  'custom-designer',
 ] as const
 
 export type TemplateMode = (typeof TEMPLATE_MODES)[number]
