@@ -9,17 +9,21 @@ import { fileUploadFieldMaterial } from './file-upload-field'
 import { jsonEditorFieldMaterial } from './json-editor-field'
 import { llmTriggerFieldMaterial } from './llm-trigger-field'
 import { showItemFieldMaterial } from './show-item-field'
+import { groupFieldMaterial } from './group-field'
+import { tabLayoutFieldMaterial } from './tab-layout-field'
 
 /**
- * Material registry — Finals P1 D3.
+ * Material registry — Finals P1 D5.
  *
- * Single source of truth for the 9 widget materials. The palette
+ * Single source of truth for the 11 widget materials. The palette
  * (D3), canvas previews (D3), property panel (D4), and Renderer (D6)
- * all consume one of `MATERIALS[kind]`. Adding a 10th material =
+ * all consume one of `MATERIALS[kind]`. Adding a 12th material =
  * write a new file under `./` and register one line here.
  *
- * Container kinds ('group', 'tab-layout') are NOT in this registry —
- * they're layout primitives the Designer treats specially in D5.
+ * Container kinds ('group', 'tab-layout') joined the registry in D5
+ * with their own designerPreview + propertyPanel. The Designer's
+ * canvas-shell renders their nested children through a nested
+ * SortableContext (see designer-shell.tsx).
  */
 export const MATERIALS = {
   text: textFieldMaterial,
@@ -31,11 +35,13 @@ export const MATERIALS = {
   'json-editor': jsonEditorFieldMaterial,
   'llm-trigger': llmTriggerFieldMaterial,
   'show-item': showItemFieldMaterial,
+  group: groupFieldMaterial,
+  'tab-layout': tabLayoutFieldMaterial,
 } as const
 
 export type RegisteredKind = keyof typeof MATERIALS
 
-/** Ordered list for palette rendering (groups + tab-layout excluded). */
+/** Ordered list for palette rendering. Containers sit at the bottom. */
 export const PALETTE_ORDER: RegisteredKind[] = [
   'text',
   'textarea',
@@ -46,13 +52,16 @@ export const PALETTE_ORDER: RegisteredKind[] = [
   'json-editor',
   'llm-trigger',
   'show-item',
+  'group',
+  'tab-layout',
 ]
 
-/**
- * Lookup helper — returns `undefined` for container kinds (group,
- * tab-layout) so callers can pattern-match the layout case
- * separately.
- */
+/** Lookup helper for non-registry callers (Renderer / serializer). */
 export function getMaterial(kind: FieldKind): Material | undefined {
   return (MATERIALS as Record<string, Material>)[kind]
+}
+
+/** True iff this kind nests children that the Designer must walk. */
+export function isContainerKind(kind: FieldKind): boolean {
+  return kind === 'group' || kind === 'tab-layout'
 }

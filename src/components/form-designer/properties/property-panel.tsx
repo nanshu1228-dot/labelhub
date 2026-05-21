@@ -1,18 +1,19 @@
 'use client'
 
 /**
- * Property panel router — Finals P1 D4.
+ * Property panel router — Finals P1 D4/D5.
  *
  * Right-pane editor. Picks the selected field's material from the
  * registry and renders:
  *
  *   1. CommonFieldHeader  — label / helperText / id / delete
  *   2. material.propertyPanel — per-kind config editors
- *   3. ValidationListEditor — shared `field.validation` rules
+ *   3. LinkageEditor       — visibleWhen / requiredWhen (D5)
+ *   4. ValidationListEditor — shared `field.validation` rules
  *
- * Containers (group / tab-layout) ship in D5 — until then the router
- * renders a "container — D5" placeholder for those kinds, matching the
- * canvas preview's existing fallback.
+ * Containers (group / tab-layout) joined the registry in D5; their
+ * panels add the children-list management UI (group title toggle,
+ * tab CRUD).
  */
 
 import type { FieldNode } from '@/lib/form-designer/schema'
@@ -21,13 +22,17 @@ import {
   CommonFieldHeader,
   ValidationListEditor,
 } from './common-rows'
+import { LinkageEditor } from './linkage-editor'
 
 export function PropertyPanel({
   field,
+  siblings,
   onChange,
   onDelete,
 }: {
   field: FieldNode
+  /** Other fields at the same canvas level — drive the linkage dropdown. */
+  siblings: FieldNode[]
   onChange: (next: FieldNode) => void
   onDelete: () => void
 }) {
@@ -41,26 +46,26 @@ export function PropertyPanel({
         onChange={onChange}
         onDelete={onDelete}
       />
-      {mat ? (
-        Panel ? (
-          <div className="flex flex-col gap-3">
-            <div
-              className="lh-mono lh-caption"
-              style={{ color: 'var(--mute)' }}
-            >
-              {mat.name.toUpperCase()} CONFIG
-            </div>
-            <Panel field={field} onChange={onChange} />
+      {mat && Panel ? (
+        <div className="flex flex-col gap-3">
+          <div
+            className="lh-mono lh-caption"
+            style={{ color: 'var(--mute)' }}
+          >
+            {mat.name.toUpperCase()} CONFIG
           </div>
-        ) : null
+          <Panel field={field} onChange={onChange} />
+        </div>
       ) : (
-        <p
-          className="ts-12"
-          style={{ color: 'var(--mute2)' }}
-        >
-          Container properties land in D5.
+        <p className="ts-12" style={{ color: 'var(--mute2)' }}>
+          This material has no extra config.
         </p>
       )}
+      <LinkageEditor
+        field={field}
+        siblings={siblings}
+        onChange={onChange}
+      />
       <ValidationListEditor field={field} onChange={onChange} />
     </div>
   )

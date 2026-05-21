@@ -20,6 +20,7 @@ import {
   type FieldNode,
   type FormSchema,
 } from '@/lib/form-designer/schema'
+import { arrayMove } from '@dnd-kit/sortable'
 
 const STORAGE_KEY = 'lh.designer.draft.v1'
 
@@ -59,17 +60,211 @@ export function newFieldId(): string {
  * Build a FieldNode from a palette drop. Material's defaultConfig is
  * cloned (deep) so two drops of the same material don't share config
  * references and confuse the canvas state.
+ *
+ * Container kinds (group, tab-layout) get an empty `children` array so
+ * the canvas's nested SortableContext renders them immediately. The
+ * Designer drops a single starter tab into tab-layout for usability.
  */
 export function makeFieldFromKind(
   kind: FieldKind,
   defaultConfig: Record<string, unknown>,
   defaultLabel: string,
 ): FieldNode {
-  return {
+  const node: FieldNode = {
     id: newFieldId(),
     kind,
     label: defaultLabel,
     config: structuredClone(defaultConfig),
     validation: [],
   }
+  if (kind === 'group') {
+    node.children = []
+  } else if (kind === 'tab-layout') {
+    const starterTabId = newFieldId()
+    node.children = [
+      {
+        id: starterTabId,
+        kind: 'group',
+        label: 'Tab 1',
+        config: { showTitle: false, columns: 1 },
+        validation: [],
+        children: [],
+      },
+    ]
+  }
+  return node
+}
+
+/**
+ * Walk the schema tree and return the parent array that owns the
+ * given id, plus the node's index within it. Returns undefined if the
+ * id is not present anywhere.
+ *
+ * For root-level fields the "parent" is the schema.fields array; for
+ * container children it's `container.children`. The Designer's
+ * handleDragEnd uses this to confirm both active + over are siblings.
+ */
+export interface LocateResult {
+  parentId: string | null // null = root
+  index: number
+}
+
+export function locateField(
+  fields: FieldNode[],
+  id: string,
+  parentId: string | null = null,
+): LocateResult | undefined {
+  for (let i = 0; i < fields.length; i++) {
+    const f = fields[i]
+    if (f.id === id) return { parentId, index: i }
+    if (f.children) {
+      const hit = locateField(f.children, id, f.id)
+      if (hit) return hit
+    }
+  }
+  return undefined
+}
+
+/**
+ * Immutable update: replace the children array (or top-level fields)
+ * of the parent identified by `parentId`. Returns a fresh FormSchema
+ * with the new array in place.
+ */
+export function setChildrenAt(
+  schema: FormSchema,
+  parentId: string | null,
+  nextChildren: FieldNode[],
+): FormSchema {
+  if (parentId === null) {
+    return { ...schema, fields: nextChildren }
+  }
+  return {
+    ...schema,
+    fields: schema.fields.map((f) =>
+      replaceContainerChildren(f, parentId, nextChildren),
+    ),
+  }
+}
+
+function replaceContainerChildren(
+  node: FieldNode,
+  parentId: string,
+  nextChildren: FieldNode[],
+): FieldNode {
+  if (node.id === parentId) {
+    return { ...node, children: nextChildren }
+  }
+  if (!node.children) return node
+  return {
+    ...node,
+    children: node.children.map((c) =>
+      replaceContainerChildren(c, parentId, nextChildren),
+    ),
+  }
+}
+
+/**
+ * Walk to the node with the given id and return the array of fields
+ * at its level (its siblings, including itself). Used by the property
+ * panel to drive the linkage dropdown — linkage targets must come
+ * from the same canvas level.
+ */
+export function siblingsOf(
+  schema: FormSchema,
+  id: string,
+): FieldNode[] {
+  const loc = locateField(schema.fields, id)
+  if (!loc) return []
+  if (loc.parentId === null) return schema.fields
+  const parent = findNode(schema.fields, loc.parentId)
+  return parent?.children ?? []
+}
+
+function findNode(fields: FieldNode[], id: string): FieldNode | undefined {
+  for (const f of fields) {
+    if (f.id === id) return f
+    if (f.children) {
+      const hit = findNode(f.children, id)
+      if (hit) return hit
+    }
+  }
+  return undefined
+}
+
+/** Immutable patch: replace a node anywhere in the tree by id. */
+export function patchField(
+  schema: FormSchema,
+  next: FieldNode,
+): FormSchema {
+  return {
+    ...schema,
+    fields: schema.fields.map((f) => replaceNode(f, next)),
+  }
+}
+
+function replaceNode(node: FieldNode, next: FieldNode): FieldNode {
+  if (node.id === next.id) return next
+  if (!node.children) return node
+  return {
+    ...node,
+    children: node.children.map((c) => replaceNode(c, next)),
+  }
+}
+
+/** Immutable delete: drop a node anywhere in the tree by id. */
+export function deleteField(schema: FormSchema, id: string): FormSchema {
+  return {
+    ...schema,
+    fields: schema.fields
+      .filter((f) => f.id !== id)
+      .map((f) => deleteFromSubtree(f, id)),
+  }
+}
+
+function deleteFromSubtree(node: FieldNode, id: string): FieldNode {
+  if (!node.children) return node
+  return {
+    ...node,
+    children: node.children
+      .filter((c) => c.id !== id)
+      .map((c) => deleteFromSubtree(c, id)),
+  }
+}
+
+/**
+ * Reorder siblings inside whatever parent currently owns `activeId`.
+ * Returns the schema unchanged if active + over don't share a parent
+ * (cross-container moves are out of scope for D5 — the Designer
+ * handles those in D6 with a richer drag-state model).
+ */
+export function reorderSiblings(
+  schema: FormSchema,
+  activeId: string,
+  overId: string,
+): FormSchema {
+  if (activeId === overId) return schema
+  const a = locateField(schema.fields, activeId)
+  const b = locateField(schema.fields, overId)
+  if (!a || !b) return schema
+  if (a.parentId !== b.parentId) return schema
+  const parentChildren =
+    a.parentId === null
+      ? schema.fields
+      : (findNode(schema.fields, a.parentId)?.children ?? [])
+  const next = arrayMove(parentChildren, a.index, b.index)
+  return setChildrenAt(schema, a.parentId, next)
+}
+
+/** Append a child to a specific container's children array. */
+export function appendChildTo(
+  schema: FormSchema,
+  parentId: string | null,
+  child: FieldNode,
+): FormSchema {
+  if (parentId === null) {
+    return { ...schema, fields: [...schema.fields, child] }
+  }
+  const parent = findNode(schema.fields, parentId)
+  if (!parent) return schema
+  return setChildrenAt(schema, parentId, [...(parent.children ?? []), child])
 }
