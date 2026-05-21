@@ -71,6 +71,21 @@ export const workflowStageSchema = z.enum([
   'drafting',
   'revising',
   'submitted',
+  /**
+   * Finals P2 D9 — AI Review Agent verdict is in flight. Slots between
+   * `submitted` and `reviewing`. The after-hook scheduler
+   * (src/lib/actions/ai-review-submission.ts) advances topics here
+   * when an `ai_submission_verdicts` row is `pending`, and forward to
+   * one of:
+   *   pass         → 'reviewing'
+   *   send_back    → 'drafting' (with reason in annotation_revisions)
+   *   human_review → 'reviewing' with priority flag in
+   *                  templateConfig.aiAgent priorityFlag
+   * The DB enum was extended in the D1 migration; this Zod side
+   * catches up here so the state-machine work in D11/D12 can match
+   * on it.
+   */
+  'ai_review',
   'reviewing',
   'awaiting_acceptance',
   'approved',

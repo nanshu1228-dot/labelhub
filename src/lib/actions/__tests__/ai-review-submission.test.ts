@@ -3,6 +3,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 vi.mock('@/lib/db/client', () => ({
   getDb: vi.fn(),
 }))
+vi.mock('@/lib/ai/quota', () => ({
+  assertWithinDailyAIQuota: vi.fn().mockResolvedValue(undefined),
+  logAICall: vi.fn().mockResolvedValue(undefined),
+}))
+vi.mock('@/lib/ai/review-agent', () => ({
+  runReviewAgentWithRetry: vi.fn(),
+}))
+vi.mock('@/lib/quality/annotation-revisions', () => ({
+  writeRevision: vi.fn().mockResolvedValue({ revisionId: 'rev-1' }),
+}))
 
 import {
   deleteVerdictForRerun,
@@ -11,6 +21,8 @@ import {
 } from '../ai-review-submission'
 import { idempotencyKey } from '../ai-review-keys'
 import { getDb } from '@/lib/db/client'
+import { runReviewAgentWithRetry } from '@/lib/ai/review-agent'
+import { writeRevision } from '@/lib/quality/annotation-revisions'
 
 /**
  * AI Review Agent scheduler tests — Finals P2 D7.
@@ -38,26 +50,29 @@ interface ScriptedDb {
   selectQueue: unknown[][]
   /** Last insert() call args, captured for assertions. */
   lastInsert?: { table: unknown; values: unknown }
+  /** All insert() calls in order — useful for asserting event types. */
+  inserts: Array<{ table: unknown; values: unknown }>
+  /** All update() calls in order. */
+  updates: Array<{ table: unknown; values: unknown }>
   /** Whether insert() should mimic an idempotency-conflict. */
   insertIsConflict: boolean
+  /** Insert returns this row id when not in conflict. */
+  insertReturningId: string
 }
 
 function makeDb(script: Partial<ScriptedDb> = {}): ScriptedDb {
   return {
     selectQueue: [],
+    inserts: [],
+    updates: [],
     insertIsConflict: false,
+    insertReturningId: 'verdict-row-1',
     ...script,
   }
 }
 
 function mountDb(s: ScriptedDb) {
   let idx = 0
-  // Drizzle query chains for our two callers:
-  //   db.select(...).from(...).innerJoin(...).innerJoin(...).where(...).limit(1)
-  //   db.select(...).from(...).where(...).orderBy(...)
-  // The mock returns the same proxy from each builder step so every
-  // chain shape is honored; the terminal Promise resolves with the
-  // next queued row array.
   const terminal = () => Promise.resolve(s.selectQueue[idx++] ?? [])
   const builder: unknown = {
     from: () => builder,
@@ -66,7 +81,6 @@ function mountDb(s: ScriptedDb) {
     where: () => builder,
     orderBy: () => builder,
     limit: terminal,
-    // Some Drizzle helpers await the builder directly without limit().
     then: (resolve: (rows: unknown[]) => void, reject?: (e: unknown) => void) =>
       terminal().then(resolve, reject),
   }
@@ -75,10 +89,27 @@ function mountDb(s: ScriptedDb) {
     insert: (table: unknown) => ({
       values: (values: unknown) => {
         s.lastInsert = { table, values }
+        s.inserts.push({ table, values })
         return {
-          onConflictDoNothing: () =>
-            s.insertIsConflict ? Promise.resolve([]) : Promise.resolve([{}]),
+          onConflictDoNothing: () => {
+            const noConflict = !s.insertIsConflict
+            const settled = Promise.resolve(
+              noConflict ? [{ id: s.insertReturningId }] : [],
+            )
+            return Object.assign(settled, {
+              returning: () =>
+                noConflict
+                  ? Promise.resolve([{ id: s.insertReturningId }])
+                  : Promise.resolve([]),
+            })
+          },
         }
+      },
+    }),
+    update: (table: unknown) => ({
+      set: (values: unknown) => {
+        s.updates.push({ table, values })
+        return { where: () => Promise.resolve([]) }
       },
     }),
     delete: () => ({
@@ -153,15 +184,18 @@ describe('scheduleAIReviewIfMissing', () => {
     })
     mountDb(s)
     await scheduleAIReviewIfMissing({ annotationId: ANNOTATION_ID })
-    expect(s.lastInsert).toBeDefined()
-    expect((s.lastInsert?.values as { annotationId: string }).annotationId).toBe(
-      ANNOTATION_ID,
-    )
-    expect((s.lastInsert?.values as { status: string }).status).toBe('pending')
+    // The first insert is the pending verdict row; later inserts are
+    // the ai_review.* event rows (D9 routing).
+    const pendingInsert = s.inserts[0]
+    expect(pendingInsert).toBeDefined()
     expect(
-      (s.lastInsert?.values as { idempotencyKey: string }).idempotencyKey,
+      (pendingInsert.values as { annotationId: string }).annotationId,
+    ).toBe(ANNOTATION_ID)
+    expect((pendingInsert.values as { status: string }).status).toBe('pending')
+    expect(
+      (pendingInsert.values as { idempotencyKey: string }).idempotencyKey,
     ).toMatch(/^[0-9a-f]{64}$/)
-    expect((s.lastInsert?.values as { attempts: number }).attempts).toBe(0)
+    expect((pendingInsert.values as { attempts: number }).attempts).toBe(0)
   })
 
   it('does nothing when the task has aiAgent.enabled=false', async () => {
@@ -215,15 +249,15 @@ describe('scheduleAIReviewIfMissing', () => {
     })
     mountDb(s)
     await scheduleAIReviewIfMissing({ annotationId: ANNOTATION_ID })
-    expect(s.lastInsert).toBeDefined()
-    // The judgeId from the config flows into the idempotency hash.
+    const pendingInsert = s.inserts[0]
+    expect(pendingInsert).toBeDefined()
     const expected = idempotencyKey({
       annotationId: ANNOTATION_ID,
       judgeId: 'j-1',
       schemaVersion: 1,
     })
     expect(
-      (s.lastInsert?.values as { idempotencyKey: string }).idempotencyKey,
+      (pendingInsert.values as { idempotencyKey: string }).idempotencyKey,
     ).toBe(expected)
   })
 
@@ -299,5 +333,144 @@ describe('getLatestVerdict / deleteVerdictForRerun', () => {
     const s = makeDb({})
     mountDb(s)
     await expect(deleteVerdictForRerun(ANNOTATION_ID)).resolves.toBeUndefined()
+  })
+})
+
+/**
+ * D9 — Verdict routing. The scheduler advances topic state + emits
+ * events based on the agent verdict. These tests mock the LLM call
+ * and assert the resulting writes.
+ */
+describe('verdict routing', () => {
+  const TOPIC_ID = 'aaaa1111-1111-4111-8111-aaaaaaaaaaaa'
+  const WORKSPACE_ID = 'bbbb2222-2222-4222-8222-bbbbbbbbbbbb'
+  const SUBMITTER_ID = 'cccc3333-3333-4333-8333-cccccccccccc'
+
+  function customDesignerRow() {
+    return {
+      annotationId: ANNOTATION_ID,
+      annotationUserId: SUBMITTER_ID,
+      annotationPayload: { answer: 'submitted text' },
+      topicId: TOPIC_ID,
+      taskId: TASK_ID,
+      workspaceId: WORKSPACE_ID,
+      templateMode: 'custom-designer',
+      templateConfig: null,
+      topicItemData: { prompt: 'How many?' },
+    }
+  }
+
+  it("on pass: topic → 'reviewing'; events include started + completed(pass)", async () => {
+    const s = makeDb({ selectQueue: [[customDesignerRow()]] })
+    mountDb(s)
+    vi.mocked(runReviewAgentWithRetry).mockResolvedValueOnce({
+      payload: {
+        verdict: 'pass',
+        score: 88,
+        dimensions: { completeness: 90 },
+        reasoning: 'ok',
+      },
+      usage: { model: 'claude-haiku-4-5-20251001', inputTokens: 10, outputTokens: 5 },
+    })
+    await scheduleAIReviewIfMissing({ annotationId: ANNOTATION_ID })
+
+    // topic transitioned twice: submitted→ai_review then ai_review→reviewing.
+    // Filter by `version` bump (only topic rows get version bumps; verdict
+    // rows don't).
+    const topicUpdates = s.updates.filter(
+      (u) => (u.values as { version?: unknown }).version !== undefined,
+    )
+    expect(
+      topicUpdates.map((u) => (u.values as { status?: string }).status),
+    ).toEqual(['ai_review', 'reviewing'])
+
+    const eventTypes = s.inserts
+      .filter((i) => (i.values as { type?: string }).type?.startsWith('ai_review.'))
+      .map((i) => (i.values as { type: string }).type)
+    expect(eventTypes).toEqual(['ai_review.started', 'ai_review.completed'])
+  })
+
+  it("on send_back: topic → 'drafting'; writeRevision called; sent_back event emitted", async () => {
+    const s = makeDb({ selectQueue: [[customDesignerRow()]] })
+    mountDb(s)
+    vi.mocked(runReviewAgentWithRetry).mockResolvedValueOnce({
+      payload: {
+        verdict: 'send_back',
+        score: 25,
+        dimensions: { completeness: 30 },
+        reasoning: 'incomplete',
+      },
+      usage: { model: 'claude-haiku-4-5-20251001', inputTokens: 10, outputTokens: 5 },
+    })
+    await scheduleAIReviewIfMissing({ annotationId: ANNOTATION_ID })
+
+    expect(vi.mocked(writeRevision)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        annotationId: ANNOTATION_ID,
+        kind: 'ai_send_back',
+        actorId: SUBMITTER_ID,
+      }),
+    )
+    const topicStatuses = s.updates
+      .filter(
+        (u) => (u.values as { version?: unknown }).version !== undefined,
+      )
+      .map((u) => (u.values as { status?: string }).status)
+      .filter(Boolean)
+    expect(topicStatuses).toEqual(['ai_review', 'drafting'])
+    const eventTypes = s.inserts
+      .filter((i) => (i.values as { type?: string }).type?.startsWith('ai_review.'))
+      .map((i) => (i.values as { type: string }).type)
+    expect(eventTypes).toEqual(['ai_review.started', 'ai_review.sent_back'])
+  })
+
+  it("on human_review: topic → 'reviewing'; verdict row gets a __priority flag", async () => {
+    const s = makeDb({ selectQueue: [[customDesignerRow()]] })
+    mountDb(s)
+    vi.mocked(runReviewAgentWithRetry).mockResolvedValueOnce({
+      payload: {
+        verdict: 'human_review',
+        score: 55,
+        dimensions: { completeness: 55 },
+        reasoning: 'borderline',
+      },
+      usage: { model: 'claude-haiku-4-5-20251001', inputTokens: 10, outputTokens: 5 },
+    })
+    await scheduleAIReviewIfMissing({ annotationId: ANNOTATION_ID })
+
+    const verdictUpdate = s.updates.find(
+      (u) => (u.values as { scores?: Record<string, unknown> }).scores
+        ?.__priority === true,
+    )
+    expect(verdictUpdate).toBeDefined()
+    const topicStatuses = s.updates
+      .filter(
+        (u) => (u.values as { version?: unknown }).version !== undefined,
+      )
+      .map((u) => (u.values as { status?: string }).status)
+      .filter(Boolean)
+    expect(topicStatuses).toEqual(['ai_review', 'reviewing'])
+  })
+
+  it('on agent failure: emits ai_review.failed and rolls topic back to submitted', async () => {
+    const s = makeDb({ selectQueue: [[customDesignerRow()]] })
+    mountDb(s)
+    vi.mocked(runReviewAgentWithRetry).mockRejectedValueOnce(
+      new Error('LLM exploded'),
+    )
+    await scheduleAIReviewIfMissing({ annotationId: ANNOTATION_ID })
+
+    const eventTypes = s.inserts
+      .filter((i) => (i.values as { type?: string }).type?.startsWith('ai_review.'))
+      .map((i) => (i.values as { type: string }).type)
+    expect(eventTypes).toContain('ai_review.failed')
+    // ai_review → submitted rollback. Find the LAST topic-table update
+    // (topic rows have `version` bumps; verdict rows don't).
+    const lastTopicStatus = [...s.updates]
+      .reverse()
+      .find((u) => (u.values as { version?: unknown }).version !== undefined)
+    expect(
+      (lastTopicStatus?.values as { status?: string }).status,
+    ).toBe('submitted')
   })
 })

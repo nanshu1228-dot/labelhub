@@ -100,6 +100,10 @@ const EXPECTED_GUARDS: Record<string, RegExp> = {
   'inbox.ts': /requireWorkspaceMember\(/,
   'trajectory-summary.ts': /requireWorkspaceMember\(/,
   'trajectory-hints.ts': /requireWorkspaceMember\(/,
+  // Finals P2 D9 — per-task AI Review Agent config. Owner-only (writes
+  // tune the rubric the agent uses against every annotation in the
+  // task). Read path also guarded so the prompt doesn't leak.
+  'ai-agent-config.ts': /requireWorkspaceAdmin\(/,
 }
 
 /**
@@ -125,6 +129,10 @@ const ALLOWED_NO_GUARD: Set<string> = new Set([
   // 'use server' file can stay async-only (Next.js requirement).
   // No DB / no auth touched here.
   'ai-review-keys.ts',
+  // Pure schema + defaults split out of ai-agent-config.ts for the
+  // same 'use server' async-only constraint. The server action file
+  // (ai-agent-config.ts) holds the guard call.
+  'ai-agent-config-schema.ts',
 ])
 
 describe('Server-action guard presence', () => {

@@ -30,11 +30,12 @@
 
 import { z } from 'zod'
 import { idempotencyKey } from './ai-review-keys'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import {
   aiSubmissionVerdicts,
   annotations,
+  events,
   tasks,
   topics,
 } from '@/lib/db/schema'
@@ -44,6 +45,7 @@ import {
   type ReviewDimension,
 } from '@/lib/ai/review-agent'
 import { assertWithinDailyAIQuota, logAICall } from '@/lib/ai/quota'
+import { writeRevision } from '@/lib/quality/annotation-revisions'
 
 const inputSchema = z.object({
   annotationId: uuidLike,
@@ -156,6 +158,32 @@ export async function scheduleAIReviewIfMissing(input: {
 
     const verdictRowId = inserted[0].id
 
+    // Move the topic into the new 'ai_review' stage so the Labeler /
+    // Reviewer UIs can show the "in flight" indicator. We do the
+    // update conditionally on the current state being 'submitted' so
+    // a concurrent reviewer click doesn't race us. workflowStage on
+    // topics.status was extended in the D1 migration + D9 Drizzle
+    // pgEnum bump.
+    await db
+      .update(topics)
+      .set({
+        status: 'ai_review',
+        version: sql`${topics.version} + 1`,
+      })
+      .where(and(eq(topics.id, row.topicId), eq(topics.status, 'submitted')))
+
+    await db.insert(events).values({
+      type: 'ai_review.started',
+      workspaceId: row.workspaceId,
+      actorId: null,
+      payload: {
+        annotationId: parsed.annotationId,
+        verdictId: verdictRowId,
+        topicId: row.topicId,
+        taskId: row.taskId,
+      },
+    })
+
     // Default prompt + dimensions for owners who haven't customized.
     // Keeps the default-on behavior for custom-designer tasks useful
     // out of the box.
@@ -234,7 +262,119 @@ export async function scheduleAIReviewIfMissing(input: {
       } catch {
         // Cost-log failure shouldn't roll back the verdict.
       }
+
+      // Verdict routing — advance the topic to its next state. The
+      // optimistic guard on status='ai_review' protects against a
+      // concurrent admin acting on the topic; if a human moved it
+      // first the AI verdict still lands but the routing is a no-op.
+      if (payload.verdict === 'pass') {
+        await db
+          .update(topics)
+          .set({
+            status: 'reviewing',
+            version: sql`${topics.version} + 1`,
+          })
+          .where(
+            and(eq(topics.id, row.topicId), eq(topics.status, 'ai_review')),
+          )
+        await db.insert(events).values({
+          type: 'ai_review.completed',
+          workspaceId: row.workspaceId,
+          actorId: null,
+          payload: {
+            annotationId: parsed.annotationId,
+            verdictId: verdictRowId,
+            verdict: 'pass',
+            score: payload.score,
+          },
+        })
+      } else if (payload.verdict === 'send_back') {
+        // Snapshot the pre-send-back annotation payload so the
+        // history timeline can render the round-trip; reuse the
+        // submitter as actorId since AI has no user row.
+        await writeRevision({
+          annotationId: parsed.annotationId,
+          actorId: row.annotationUserId,
+          workspaceId: row.workspaceId,
+          payload: row.annotationPayload ?? {},
+          kind: 'ai_send_back',
+        })
+        await db
+          .update(topics)
+          .set({
+            status: 'drafting',
+            version: sql`${topics.version} + 1`,
+          })
+          .where(
+            and(eq(topics.id, row.topicId), eq(topics.status, 'ai_review')),
+          )
+        await db.insert(events).values({
+          type: 'ai_review.sent_back',
+          workspaceId: row.workspaceId,
+          actorId: null,
+          payload: {
+            annotationId: parsed.annotationId,
+            verdictId: verdictRowId,
+            score: payload.score,
+            reason: payload.reasoning,
+          },
+        })
+      } else {
+        // human_review — set status to 'reviewing' but flag priority
+        // via a side-channel on the verdict row's scores blob so the
+        // Reviewer queue (D11) can sort priority items first.
+        await db
+          .update(aiSubmissionVerdicts)
+          .set({
+            scores: {
+              ...(payload.dimensions ?? {}),
+              __priority: true,
+            },
+          })
+          .where(eq(aiSubmissionVerdicts.id, verdictRowId))
+        await db
+          .update(topics)
+          .set({
+            status: 'reviewing',
+            version: sql`${topics.version} + 1`,
+          })
+          .where(
+            and(eq(topics.id, row.topicId), eq(topics.status, 'ai_review')),
+          )
+        await db.insert(events).values({
+          type: 'ai_review.completed',
+          workspaceId: row.workspaceId,
+          actorId: null,
+          payload: {
+            annotationId: parsed.annotationId,
+            verdictId: verdictRowId,
+            verdict: 'human_review',
+            score: payload.score,
+          },
+        })
+      }
     } catch (e) {
+      await db.insert(events).values({
+        type: 'ai_review.failed',
+        workspaceId: row.workspaceId,
+        actorId: null,
+        payload: {
+          annotationId: parsed.annotationId,
+          verdictId: verdictRowId,
+          error: e instanceof Error ? e.message : 'unknown',
+        },
+      })
+      // Roll the topic back to 'submitted' so a human reviewer can
+      // pick up the work even though the AI couldn't grade it.
+      await db
+        .update(topics)
+        .set({
+          status: 'submitted',
+          version: sql`${topics.version} + 1`,
+        })
+        .where(
+          and(eq(topics.id, row.topicId), eq(topics.status, 'ai_review')),
+        )
       await db
         .update(aiSubmissionVerdicts)
         .set({
