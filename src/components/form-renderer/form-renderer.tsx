@@ -115,8 +115,34 @@ export function FormRenderer({
     [onChange, value],
   )
 
+  // D16 — discoverability banner. When any visible field is an
+  // llm-trigger, show a one-line hint at the top of the form so
+  // fresh Labelers know AI assist is available. Free-form fields
+  // configured with llm-trigger as a sibling get the helpful nudge
+  // without us having to badge every single input.
+  const hasAiAssist = visibleFields.some(
+    (f) =>
+      f.kind === 'llm-trigger' ||
+      (f.children &&
+        f.children.some((c) => c.kind === 'llm-trigger')),
+  )
+
   return (
     <div className="flex flex-col gap-4">
+      {hasAiAssist && !readOnly ? (
+        <div
+          className="rounded p-2 ts-12 mono inline-flex items-center gap-2"
+          style={{
+            background: 'oklch(0.55 0.18 320 / 0.08)',
+            border: '1px solid oklch(0.55 0.18 320 / 0.4)',
+            color: 'oklch(0.55 0.18 320)',
+            alignSelf: 'flex-start',
+          }}
+        >
+          <span aria-hidden>🪄</span>
+          <span>AI assist available — click any 🪄 button to ask Claude.</span>
+        </div>
+      ) : null}
       {visibleFields.map((f) => (
         <RenderedField
           key={f.id}

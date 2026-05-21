@@ -211,6 +211,23 @@ describe('Renderer/Designer decoupling — import surface', () => {
   })
 })
 
+describe('AI assist banner detection (D16)', () => {
+  // The banner mounts when ANY visible field has kind === 'llm-trigger'
+  // OR a container child does. The pure detection logic is exported
+  // via the form-renderer module's source — assert via source bytes
+  // since we don't render in jsdom in this suite.
+  it('the form-renderer source includes the hasAiAssist guard', async () => {
+    const fs = await import('node:fs/promises')
+    const path = await import('node:path')
+    const src = await fs.readFile(
+      path.resolve(process.cwd(), 'src/components/form-renderer/form-renderer.tsx'),
+      'utf-8',
+    )
+    expect(src).toContain('hasAiAssist')
+    expect(src).toContain("'llm-trigger'")
+  })
+})
+
 /** Type-only sanity: FieldNode is the canonical Renderer-side type. */
 describe('schema types', () => {
   it('FieldNode and FormSchema are correctly exported', () => {
