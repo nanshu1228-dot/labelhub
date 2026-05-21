@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useAtom } from 'jotai'
 import {
   DndContext,
   type DragEndEvent,
@@ -16,28 +16,40 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import type { FieldNode } from '@/lib/form-designer/schema'
-import { EMPTY_FORM } from '@/lib/form-designer/schema'
+import {
+  formSchemaAtom,
+  makeFieldFromKind,
+  selectedFieldIdAtom,
+} from './canvas-state'
+import {
+  MATERIALS,
+  PALETTE_ORDER,
+  getMaterial,
+} from './materials/registry'
 
 /**
- * Finals P1 D2 — three-pane Designer shell.
+ * Finals P1 D3 — Designer shell wired to the 9-material registry +
+ * Jotai canvas state + localStorage persistence.
  *
  *   ┌─────────┬──────────────────┬──────────┐
  *   │ palette │      canvas      │ properties│
- *   │  (D3)   │  (sortable list) │   (D4)   │
+ *   │  D3 ✓   │   D3 sortable    │   D4 stub│
  *   └─────────┴──────────────────┴──────────┘
  *
- * This file is the **D2 SMOKE TEST** for the React 19 + Next 16 +
- * @dnd-kit pipeline. The canvas accepts drops from a tiny built-in
- * palette and the sortable list rearranges them. No persistence, no
- * material registry yet — those land in D3-D6.
+ * D3 deliverables met:
+ *   - 9 drag-from-palette buttons → drop onto canvas as the matching
+ *     material's defaultConfig
+ *   - Canvas state lives in formSchemaAtom (Jotai), persisted via
+ *     atomWithStorage so refresh restores the draft (the D3 gate)
+ *   - Each canvas item renders its material's designerPreview
  *
- * If dnd-kit interactions hang or hydration breaks in production
- * Turbopack, that's the D2 risk and we fall back to react-dnd before
- * proceeding to D3.
+ * D4 fills in the per-material property panel; D5 adds linkage /
+ * validation / group / tab-layout; D6 wires the runtime Renderer +
+ * server persistence into custom_form_schemas.
  */
 export function DesignerShell() {
-  const [fields, setFields] = useState<FieldNode[]>(EMPTY_FORM.fields)
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [schema, setSchema] = useAtom(formSchemaAtom)
+  const [selectedId, setSelectedId] = useAtom(selectedFieldIdAtom)
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -49,105 +61,150 @@ export function DesignerShell() {
   function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event
     if (!over || active.id === over.id) return
-    setFields((current) => {
-      const oldIdx = current.findIndex((f) => f.id === active.id)
-      const newIdx = current.findIndex((f) => f.id === over.id)
+    setSchema((current) => {
+      const oldIdx = current.fields.findIndex((f) => f.id === active.id)
+      const newIdx = current.fields.findIndex((f) => f.id === over.id)
       if (oldIdx < 0 || newIdx < 0) return current
-      return arrayMove(current, oldIdx, newIdx)
+      return { ...current, fields: arrayMove(current.fields, oldIdx, newIdx) }
     })
   }
 
-  function addStubField(kind: 'text' | 'textarea') {
-    const id = `field_${Date.now().toString(36)}_${Math.floor(Math.random() * 1000)}`
-    setFields((c) => [
-      ...c,
-      {
-        id,
-        kind,
-        label: kind === 'text' ? 'Text field' : 'Textarea',
-        config: {},
-        validation: [],
-      },
-    ])
-    setSelectedId(id)
+  function addMaterial(kind: keyof typeof MATERIALS) {
+    const mat = MATERIALS[kind]
+    const field = makeFieldFromKind(kind, mat.defaultConfig, mat.name)
+    setSchema((c) => ({ ...c, fields: [...c.fields, field] }))
+    setSelectedId(field.id)
   }
+
+  function patchSelectedField(next: FieldNode) {
+    setSchema((c) => ({
+      ...c,
+      fields: c.fields.map((f) => (f.id === next.id ? next : f)),
+    }))
+  }
+
+  function deleteSelectedField() {
+    if (!selectedId) return
+    setSchema((c) => ({
+      ...c,
+      fields: c.fields.filter((f) => f.id !== selectedId),
+    }))
+    setSelectedId(null)
+  }
+
+  function resetCanvas() {
+    if (typeof window !== 'undefined') {
+      const ok = window.confirm(
+        'Clear the entire canvas? This wipes the local draft.',
+      )
+      if (!ok) return
+    }
+    setSchema({ version: 1, fields: [] })
+    setSelectedId(null)
+  }
+
+  const selectedField =
+    selectedId === null ? null : schema.fields.find((f) => f.id === selectedId) ?? null
 
   return (
     <div
       className="grid h-screen"
       style={{
-        gridTemplateColumns: '220px 1fr 280px',
+        gridTemplateColumns: '240px 1fr 300px',
         background: 'var(--bg)',
         color: 'var(--text)',
       }}
     >
-      {/* PALETTE — D3 expands this into the 9-widget library */}
+      {/* PALETTE */}
       <aside
         className="border-r overflow-y-auto p-4"
         style={{ borderColor: 'var(--line)', background: 'var(--panel)' }}
       >
         <div className="lbl mb-3" style={{ color: 'var(--mute)' }}>
-          § PALETTE (D2 stub)
+          § PALETTE
         </div>
-        <button
-          type="button"
-          onClick={() => addStubField('text')}
-          className="block w-full text-left ts-13 mono mb-2 px-3 py-2 rounded"
-          style={{
-            background: 'var(--panel2)',
-            border: '1px solid var(--line)',
-            color: 'var(--text)',
-          }}
-        >
-          + Text field
-        </button>
-        <button
-          type="button"
-          onClick={() => addStubField('textarea')}
-          className="block w-full text-left ts-13 mono mb-2 px-3 py-2 rounded"
-          style={{
-            background: 'var(--panel2)',
-            border: '1px solid var(--line)',
-            color: 'var(--text)',
-          }}
-        >
-          + Textarea
-        </button>
+        <div className="flex flex-col gap-1.5">
+          {PALETTE_ORDER.map((kind) => {
+            const mat = MATERIALS[kind]
+            return (
+              <button
+                key={kind}
+                type="button"
+                onClick={() => addMaterial(kind)}
+                className="text-left ts-13 mono px-3 py-2 rounded inline-flex items-center gap-2"
+                style={{
+                  background: 'var(--panel2)',
+                  border: '1px solid var(--line)',
+                  color: 'var(--text)',
+                  cursor: 'pointer',
+                }}
+              >
+                <span
+                  className="inline-block w-6 text-center"
+                  style={{ color: 'oklch(0.6 0.18 280)' }}
+                >
+                  {mat.icon}
+                </span>
+                <span>{mat.name}</span>
+              </button>
+            )
+          })}
+        </div>
         <p
           className="ts-11 mono mt-6"
           style={{ color: 'var(--mute2)' }}
         >
-          D3 adds the 9-material drag-from-palette → drop-on-canvas
-          flow. Today is the dnd-kit + React 19 smoke.
+          Click to add. D5 adds group + tab containers; drag-from-
+          palette → drop-on-canvas lands in D6 with the Renderer.
         </p>
       </aside>
 
-      {/* CANVAS — sortable list, dnd-kit smoke surface */}
+      {/* CANVAS */}
       <main className="overflow-y-auto p-6">
-        <div className="mb-4">
-          <div className="lbl" style={{ color: 'var(--mute)' }}>
-            § CANVAS
+        <div className="mb-4 flex items-baseline justify-between">
+          <div>
+            <div className="lbl" style={{ color: 'var(--mute)' }}>
+              § CANVAS
+            </div>
+            <h1
+              className="ts-22 mt-1"
+              style={{ color: 'var(--hi)', fontWeight: 500 }}
+            >
+              Untitled form
+            </h1>
+            <p
+              className="ts-12 mt-1"
+              style={{ color: 'var(--mute2)' }}
+            >
+              {schema.fields.length === 0
+                ? 'Click a material in the palette to start.'
+                : `${schema.fields.length} field${schema.fields.length === 1 ? '' : 's'} · drag to reorder`}
+            </p>
           </div>
-          <h1
-            className="ts-22 mt-1"
-            style={{ color: 'var(--hi)', fontWeight: 500 }}
-          >
-            Untitled form
-          </h1>
-          <p className="ts-12 mt-1" style={{ color: 'var(--mute2)' }}>
-            {fields.length === 0
-              ? 'Drag widgets from the palette to start.'
-              : `${fields.length} field${fields.length === 1 ? '' : 's'} · drag to reorder`}
-          </p>
+          {schema.fields.length > 0 && (
+            <button
+              type="button"
+              onClick={resetCanvas}
+              className="ts-12 mono px-3 py-1.5 rounded"
+              style={{
+                background: 'transparent',
+                color: 'var(--danger)',
+                border: '1px solid oklch(0.55 0.2 25 / 0.4)',
+                cursor: 'pointer',
+              }}
+            >
+              Reset canvas
+            </button>
+          )}
         </div>
 
         <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
           <SortableContext
-            items={fields.map((f) => f.id)}
+            items={schema.fields.map((f) => f.id)}
             strategy={verticalListSortingStrategy}
           >
-            <ul className="flex flex-col gap-2">
-              {fields.map((f) => (
+            <ul className="flex flex-col gap-3">
+              {schema.fields.map((f) => (
                 <SortableField
                   key={f.id}
                   field={f}
@@ -159,7 +216,7 @@ export function DesignerShell() {
           </SortableContext>
         </DndContext>
 
-        {fields.length === 0 && (
+        {schema.fields.length === 0 && (
           <div
             className="rounded-md p-12 text-center ts-13 mt-4"
             style={{
@@ -168,36 +225,29 @@ export function DesignerShell() {
               color: 'var(--mute2)',
             }}
           >
-            Empty canvas. Click a palette button on the left to add a
-            placeholder field, then drag to reorder.
+            Empty canvas. Add fields from the palette to build a form.
           </div>
         )}
       </main>
 
-      {/* PROPERTIES — D4 expands this into the per-material editor */}
+      {/* PROPERTIES (D4 stub) */}
       <aside
         className="border-l overflow-y-auto p-4"
         style={{ borderColor: 'var(--line)', background: 'var(--panel)' }}
       >
         <div className="lbl mb-3" style={{ color: 'var(--mute)' }}>
-          § PROPERTIES (D4 stub)
+          § PROPERTIES
         </div>
-        {selectedId ? (
-          <SelectedFieldProps
-            field={fields.find((f) => f.id === selectedId) ?? null}
-            onChange={(next) =>
-              setFields((c) =>
-                c.map((f) => (f.id === selectedId ? next : f)),
-              )
-            }
-            onDelete={() => {
-              setFields((c) => c.filter((f) => f.id !== selectedId))
-              setSelectedId(null)
-            }}
+        {selectedField ? (
+          <PropertiesStub
+            field={selectedField}
+            onChange={patchSelectedField}
+            onDelete={deleteSelectedField}
           />
         ) : (
           <p className="ts-12" style={{ color: 'var(--mute2)' }}>
-            Select a field on the canvas to edit its label.
+            Select a field on the canvas to edit. D4 replaces this
+            stub with per-material property editors.
           </p>
         )}
       </aside>
@@ -226,49 +276,73 @@ function SortableField({
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
-    cursor: 'grab',
   }
+  const mat = getMaterial(field.kind)
   return (
     <li
       ref={setNodeRef}
       style={style}
-      {...attributes}
-      {...listeners}
       onClick={onClick}
-      className="rounded-md p-3 ts-13"
+      className="ts-13"
     >
       <div
         style={{
           background: selected ? 'var(--accent-soft)' : 'var(--panel)',
           border: `1px solid ${selected ? 'var(--accent-line)' : 'var(--line)'}`,
           borderRadius: 6,
-          padding: '10px 14px',
+          padding: '12px 14px',
+          cursor: 'pointer',
         }}
       >
-        <div className="flex items-baseline justify-between">
-          <span style={{ color: 'var(--text)' }}>{field.label}</span>
+        <div
+          className="flex items-center gap-3 mb-2"
+          {...attributes}
+          {...listeners}
+          style={{ cursor: 'grab' }}
+        >
           <span
             className="ts-11 mono"
+            style={{ color: 'var(--mute2)' }}
+          >
+            ⋮⋮
+          </span>
+          <span
+            className="ts-13"
+            style={{ color: 'var(--text)', fontWeight: 500 }}
+          >
+            {field.label}
+          </span>
+          <span
+            className="ts-11 mono ml-auto"
             style={{ color: 'var(--mute2)' }}
           >
             {field.kind}
           </span>
         </div>
+        {mat ? (
+          <mat.designerPreview field={field} />
+        ) : (
+          <span
+            className="ts-12"
+            style={{ color: 'var(--mute2)' }}
+          >
+            (container — D5)
+          </span>
+        )}
       </div>
     </li>
   )
 }
 
-function SelectedFieldProps({
+function PropertiesStub({
   field,
   onChange,
   onDelete,
 }: {
-  field: FieldNode | null
+  field: FieldNode
   onChange: (next: FieldNode) => void
   onDelete: () => void
 }) {
-  if (!field) return null
   return (
     <div className="flex flex-col gap-3">
       <label className="ts-12">
@@ -280,6 +354,30 @@ function SelectedFieldProps({
           value={field.label}
           onChange={(e) => onChange({ ...field, label: e.target.value })}
           className="w-full ts-13 mono"
+          style={{
+            background: 'var(--bg)',
+            border: '1px solid var(--line)',
+            borderRadius: 4,
+            padding: '6px 10px',
+            color: 'var(--text)',
+          }}
+        />
+      </label>
+      <label className="ts-12">
+        <div className="lbl mb-1" style={{ color: 'var(--mute)' }}>
+          HELPER TEXT
+        </div>
+        <input
+          type="text"
+          value={field.helperText ?? ''}
+          onChange={(e) =>
+            onChange({
+              ...field,
+              helperText: e.target.value || undefined,
+            })
+          }
+          placeholder="Optional one-line hint"
+          className="w-full ts-13"
           style={{
             background: 'var(--bg)',
             border: '1px solid var(--line)',
