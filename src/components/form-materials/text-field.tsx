@@ -4,7 +4,7 @@ import {
   NumberRow,
   SelectRow,
   TextRow,
-} from '@/components/form-designer/properties/primitives'
+} from './primitives'
 import type { Material } from './types'
 
 /**
@@ -42,6 +42,29 @@ export const textFieldMaterial: Material = {
           padding: '6px 10px',
           color: 'var(--text)',
           cursor: 'grab',
+        }}
+      />
+    )
+  },
+  runtimeRenderer: ({ field, value, onChange, readOnly }) => {
+    const cfg = field.config as TextConfig
+    const v = typeof value === 'string' ? value : ''
+    return (
+      <input
+        type="text"
+        value={v}
+        onChange={(e) => onChange(e.target.value)}
+        readOnly={readOnly}
+        placeholder={cfg.placeholder}
+        maxLength={cfg.maxLength ?? undefined}
+        autoComplete={cfg.autocomplete}
+        className="w-full ts-13"
+        style={{
+          background: 'var(--bg)',
+          border: '1px solid var(--line)',
+          borderRadius: 4,
+          padding: '6px 10px',
+          color: 'var(--text)',
         }}
       />
     )

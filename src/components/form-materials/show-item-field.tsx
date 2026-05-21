@@ -3,7 +3,7 @@
 import {
   SelectRow,
   TextRow,
-} from '@/components/form-designer/properties/primitives'
+} from './primitives'
 import type { Material } from './types'
 
 /**
@@ -50,6 +50,72 @@ export const showItemFieldMaterial: Material = {
           [Renderer hydrates topic.itemData.{cfg.sourcePath ?? 'prompt'}{' '}
           here at runtime · {cfg.renderAs ?? 'markdown'}]
         </div>
+      </div>
+    )
+  },
+  runtimeRenderer: ({ field, value }) => {
+    // The Renderer passes the resolved topic value (looked up via
+    // cfg.sourcePath) as `value`. ShowItem never participates in
+    // submission — onChange is intentionally unused.
+    const cfg = field.config as ShowItemConfig
+    const renderAs = cfg.renderAs ?? 'markdown'
+    if (value == null) {
+      return (
+        <div
+          className="ts-12"
+          style={{ color: 'var(--mute2)' }}
+        >
+          (no content at <code>{cfg.sourcePath ?? 'prompt'}</code>)
+        </div>
+      )
+    }
+    if (renderAs === 'code' || renderAs === 'json') {
+      const text =
+        typeof value === 'string'
+          ? value
+          : (() => {
+              try {
+                return JSON.stringify(value, null, 2)
+              } catch {
+                return String(value)
+              }
+            })()
+      return (
+        <pre
+          className="ts-12 mono rounded"
+          style={{
+            background: 'var(--bg)',
+            border: '1px solid var(--line)',
+            color: 'var(--text)',
+            padding: '8px 12px',
+            margin: 0,
+            overflow: 'auto',
+            whiteSpace: 'pre-wrap',
+          }}
+        >
+          {text}
+        </pre>
+      )
+    }
+    if (renderAs === 'image' && typeof value === 'string') {
+      return (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={value}
+          alt={field.label}
+          style={{ maxWidth: '100%', borderRadius: 4 }}
+        />
+      )
+    }
+    // plain or markdown — D6 ships plain text; full markdown render
+    // joins the Renderer in P5 (Labeler workbench polish reuses the
+    // existing markdown component).
+    return (
+      <div
+        className="ts-13"
+        style={{ color: 'var(--text)', whiteSpace: 'pre-wrap' }}
+      >
+        {String(value)}
       </div>
     )
   },

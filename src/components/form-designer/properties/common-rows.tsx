@@ -14,7 +14,7 @@
  */
 
 import type { FieldNode, ValidationRule } from '@/lib/form-designer/schema'
-import { FieldRow, NumberRow, TextRow } from './primitives'
+import { FieldRow, NumberRow, TextRow } from '@/components/form-materials/primitives'
 
 export function CommonFieldHeader({
   field,

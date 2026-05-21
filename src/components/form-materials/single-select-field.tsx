@@ -4,7 +4,7 @@ import {
   OptionListEditor,
   SelectRow,
   type OptionItem,
-} from '@/components/form-designer/properties/primitives'
+} from './primitives'
 import type { Material } from './types'
 
 /**
@@ -53,6 +53,44 @@ export const singleSelectFieldMaterial: Material = {
                 type="radio"
                 name={`preview_${field.id}`}
                 disabled
+                style={{ accentColor: 'oklch(0.6 0.18 280)' }}
+              />
+              {opt.label}
+            </label>
+          ))
+        )}
+      </div>
+    )
+  },
+  runtimeRenderer: ({ field, value, onChange, readOnly }) => {
+    const cfg = field.config as SingleSelectConfig
+    const options = cfg.options ?? []
+    const selected = typeof value === 'string' ? value : ''
+    return (
+      <div
+        className={`flex ${cfg.layout === 'horizontal' ? 'flex-row gap-4 flex-wrap' : 'flex-col gap-1.5'}`}
+      >
+        {options.length === 0 ? (
+          <span
+            className="ts-12"
+            style={{ color: 'var(--mute2)' }}
+          >
+            No options configured
+          </span>
+        ) : (
+          options.map((opt) => (
+            <label
+              key={opt.value}
+              className="ts-13 inline-flex items-center gap-2"
+              style={{ color: 'var(--text)', cursor: readOnly ? 'default' : 'pointer' }}
+            >
+              <input
+                type="radio"
+                name={`runtime_${field.id}`}
+                value={opt.value}
+                checked={selected === opt.value}
+                onChange={() => onChange(opt.value)}
+                disabled={readOnly}
                 style={{ accentColor: 'oklch(0.6 0.18 280)' }}
               />
               {opt.label}

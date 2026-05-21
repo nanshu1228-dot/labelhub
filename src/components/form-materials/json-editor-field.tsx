@@ -3,7 +3,7 @@
 import {
   TextRow,
   ToggleRow,
-} from '@/components/form-designer/properties/primitives'
+} from './primitives'
 import type { Material } from './types'
 
 /**
@@ -42,6 +42,56 @@ export const jsonEditorFieldMaterial: Material = {
       {'{\n  "key": "value",\n  ...\n}'}
     </pre>
   ),
+  runtimeRenderer: ({ field, value, onChange, readOnly }) => {
+    const cfg = field.config as JsonEditorConfig
+    const text =
+      value === undefined || value === null
+        ? ''
+        : typeof value === 'string'
+          ? value
+          : (() => {
+              try {
+                return JSON.stringify(value, null, 2)
+              } catch {
+                return ''
+              }
+            })()
+    return (
+      <textarea
+        defaultValue={text}
+        onBlur={(e) => {
+          if (readOnly) return
+          const raw = e.target.value
+          const trimmed = raw.trim()
+          if (!trimmed) {
+            onChange(null)
+            return
+          }
+          try {
+            const parsed = JSON.parse(trimmed)
+            if (cfg.formatOnBlur && typeof parsed !== 'string') {
+              e.target.value = JSON.stringify(parsed, null, 2)
+            }
+            onChange(parsed)
+          } catch {
+            // Keep the string so the Labeler can correct on next blur.
+            onChange(raw)
+          }
+        }}
+        readOnly={readOnly}
+        rows={8}
+        spellCheck={false}
+        className="w-full ts-12 mono resize-y"
+        style={{
+          background: 'var(--bg)',
+          border: '1px solid var(--line)',
+          borderRadius: 4,
+          padding: '8px 10px',
+          color: 'var(--text)',
+        }}
+      />
+    )
+  },
   propertyPanel: ({ field, onChange }) => {
     const cfg = field.config as JsonEditorConfig
     function patch(next: Partial<JsonEditorConfig>) {

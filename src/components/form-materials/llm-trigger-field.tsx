@@ -3,7 +3,7 @@
 import {
   SelectRow,
   TextRow,
-} from '@/components/form-designer/properties/primitives'
+} from './primitives'
 import type { Material } from './types'
 
 /**
@@ -61,6 +61,39 @@ export const llmTriggerFieldMaterial: Material = {
           fills →{' '}
           <code>{cfg.targetFieldId || '(inline only)'}</code>
         </div>
+      </div>
+    )
+  },
+  runtimeRenderer: ({ field, readOnly }) => {
+    // D6 ships a non-functional placeholder. D10 wires the actual
+    // POST → /api/llm-assist + per-user rate limit. The Renderer
+    // intentionally has no Claude client import; the button hits a
+    // route handler.
+    const cfg = field.config as LlmTriggerConfig
+    return (
+      <div className="ts-13 flex flex-col gap-1.5">
+        <button
+          type="button"
+          disabled
+          aria-disabled={true}
+          className="ts-13 mono inline-flex items-center gap-2 px-3 py-1.5 rounded self-start"
+          style={{
+            background: 'oklch(0.55 0.18 320 / 0.1)',
+            color: 'oklch(0.55 0.18 320)',
+            border: '1px solid oklch(0.55 0.18 320 / 0.4)',
+            cursor: 'not-allowed',
+            opacity: readOnly ? 0.5 : 1,
+          }}
+        >
+          🪄 {cfg.buttonLabel ?? 'Ask Claude'}
+        </button>
+        <span
+          className="ts-11 mono"
+          style={{ color: 'var(--mute2)' }}
+        >
+          AI assist wires in D10 · fills →{' '}
+          <code>{cfg.targetFieldId || '(inline only)'}</code>
+        </span>
       </div>
     )
   },

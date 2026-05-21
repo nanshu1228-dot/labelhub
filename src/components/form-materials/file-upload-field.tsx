@@ -3,7 +3,7 @@
 import {
   NumberRow,
   TagListRow,
-} from '@/components/form-designer/properties/primitives'
+} from './primitives'
 import type { Material } from './types'
 
 /**
@@ -49,6 +49,47 @@ export const fileUploadFieldMaterial: Material = {
           {cfg.maxSizeMb ?? 5}MB
           {(cfg.maxFiles ?? 1) > 1 ? ` · up to ${cfg.maxFiles} files` : ''}
         </div>
+      </div>
+    )
+  },
+  runtimeRenderer: ({ field, value, readOnly }) => {
+    // D6 ships a read-only placeholder + uploaded-list display. Real
+    // upload-to-Supabase wiring is part of D10 (Labeler AI assist
+    // adds the rest of the file/topic handling).
+    const files: string[] = Array.isArray(value) ? (value as string[]) : []
+    const cfg = field.config as FileUploadConfig
+    return (
+      <div className="flex flex-col gap-2">
+        <div
+          className="rounded p-3 text-center ts-12"
+          style={{
+            background: 'var(--bg)',
+            border: '1px dashed var(--line)',
+            color: 'var(--mute)',
+          }}
+        >
+          {readOnly
+            ? 'Read-only — files shown below.'
+            : 'File upload activates in the Labeler runtime once Storage credentials are wired (D10).'}
+          <div
+            className="ts-11 mono mt-1"
+            style={{ color: 'var(--mute2)' }}
+          >
+            accept: {(cfg.accept ?? []).join(', ') || 'any'} · max
+            {' '}
+            {cfg.maxSizeMb ?? 5}MB
+            {(cfg.maxFiles ?? 1) > 1 ? ` · up to ${cfg.maxFiles} files` : ''}
+          </div>
+        </div>
+        {files.length > 0 ? (
+          <ul className="ts-12 mono flex flex-col gap-1">
+            {files.map((f) => (
+              <li key={f} style={{ color: 'var(--mute)' }}>
+                · {f}
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </div>
     )
   },

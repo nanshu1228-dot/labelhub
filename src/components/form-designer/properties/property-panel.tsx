@@ -17,7 +17,7 @@
  */
 
 import type { FieldNode } from '@/lib/form-designer/schema'
-import { getMaterial } from '@/components/form-designer/materials/registry'
+import { getMaterial } from '@/components/form-materials/registry'
 import {
   CommonFieldHeader,
   ValidationListEditor,

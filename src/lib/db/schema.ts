@@ -1731,3 +1731,120 @@ export const stepAnnotationsRelations = relations(stepAnnotations, ({ one }) => 
 export const toolProvidersRelations = relations(toolProviders, ({ many }) => ({
   steps: many(trajectorySteps),
 }))
+
+/**
+ * Finals P1 — Designer-saved form schemas.
+ *
+ * Spec 4.2: the Designer outputs a JSON-Schema-shaped FormSchema; we
+ * persist one row per saved schema and reference it from
+ * `templateConfig.formSchemaId` on a task's template config. Tables
+ * live behind workspace_id for the standard isolation guard.
+ *
+ * `schema` is the canonical FormSchema (`src/lib/form-designer/schema`)
+ * stored as jsonb; the Renderer hydrates it via the
+ * `src/lib/form-designer/serialize.ts` round-trip if the consumer
+ * wants the draft-07 projection.
+ */
+export const customFormSchemas = pgTable(
+  'custom_form_schemas',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id),
+    label: text('label').notNull(),
+    schema: jsonb('schema').notNull(),
+    version: integer('version').notNull().default(1),
+    createdBy: uuid('created_by').references(() => users.id),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    archivedAt: timestamp('archived_at'),
+  },
+  (t) => ({
+    wsIdx: index('custom_form_schemas_ws_idx').on(t.workspaceId, t.archivedAt),
+  }),
+)
+
+export const customFormSchemasRelations = relations(
+  customFormSchemas,
+  ({ one }) => ({
+    workspace: one(workspaces, {
+      fields: [customFormSchemas.workspaceId],
+      references: [workspaces.id],
+    }),
+    createdByUser: one(users, {
+      fields: [customFormSchemas.createdBy],
+      references: [users.id],
+    }),
+  }),
+)
+
+/**
+ * Finals P2 — Per-submission AI Review Agent verdicts.
+ *
+ * Spec 4.4: each annotation submit fires an after-hook that calls the
+ * owner-configured AI Agent, which returns a structured verdict
+ * (pass / send_back / human_review) with scoring dimensions. One row
+ * per verdict; `idempotency_key` prevents duplicate runs from
+ * re-submits.
+ */
+export const aiSubmissionVerdicts = pgTable(
+  'ai_submission_verdicts',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    annotationId: uuid('annotation_id')
+      .notNull()
+      .references(() => annotations.id),
+    judgeId: uuid('judge_id').references(() => llmJudges.id),
+    status: text('status').notNull().default('pending'),
+    verdict: text('verdict'),
+    scores: jsonb('scores'),
+    reasoning: text('reasoning'),
+    attempts: integer('attempts').notNull().default(0),
+    errorText: text('error_text'),
+    idempotencyKey: text('idempotency_key').notNull(),
+    startedAt: timestamp('started_at').notNull().defaultNow(),
+    finishedAt: timestamp('finished_at'),
+  },
+  (t) => ({
+    idempotencyUniq: uniqueIndex('ai_verdicts_idempotency_uniq').on(
+      t.idempotencyKey,
+    ),
+    annotationIdx: index('ai_verdicts_annotation_idx').on(
+      t.annotationId,
+      t.startedAt,
+    ),
+    statusIdx: index('ai_verdicts_status_idx').on(t.status, t.startedAt),
+  }),
+)
+
+/**
+ * Finals P4 — Async export job queue.
+ *
+ * Spec 4.6: multi-format dataset export. Small jobs stream inline;
+ * larger ones enqueue a row here so a worker (or a Vercel cron) can
+ * process and upload to Supabase Storage. `storage_path` is the
+ * resulting bucket key the API hands back to the user.
+ */
+export const exportJobs = pgTable(
+  'export_jobs',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    workspaceId: uuid('workspace_id')
+      .notNull()
+      .references(() => workspaces.id),
+    createdBy: uuid('created_by').references(() => users.id),
+    format: text('format').notNull(),
+    config: jsonb('config').notNull().default(sql`'{}'::jsonb`),
+    status: text('status').notNull().default('pending'),
+    rowCount: integer('row_count'),
+    byteSize: integer('byte_size'),
+    storagePath: text('storage_path'),
+    errorText: text('error_text'),
+    createdAt: timestamp('created_at').notNull().defaultNow(),
+    finishedAt: timestamp('finished_at'),
+  },
+  (t) => ({
+    wsIdx: index('export_jobs_ws_idx').on(t.workspaceId, t.createdAt),
+    statusIdx: index('export_jobs_status_idx').on(t.status, t.createdAt),
+  }),
+)

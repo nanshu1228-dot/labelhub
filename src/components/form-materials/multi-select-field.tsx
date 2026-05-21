@@ -4,7 +4,7 @@ import {
   NumberRow,
   OptionListEditor,
   type OptionItem,
-} from '@/components/form-designer/properties/primitives'
+} from './primitives'
 import type { Material } from './types'
 
 /**
@@ -59,6 +59,54 @@ export const multiSelectFieldMaterial: Material = {
               ☐ {opt.label}
             </span>
           ))
+        )}
+      </div>
+    )
+  },
+  runtimeRenderer: ({ field, value, onChange, readOnly }) => {
+    const cfg = field.config as MultiSelectConfig
+    const options = cfg.options ?? []
+    const selected: string[] = Array.isArray(value) ? (value as string[]) : []
+    function toggle(v: string) {
+      if (readOnly) return
+      if (selected.includes(v)) {
+        onChange(selected.filter((x) => x !== v))
+      } else {
+        const max = cfg.maxSelected ?? Number.POSITIVE_INFINITY
+        if (selected.length >= max) return
+        onChange([...selected, v])
+      }
+    }
+    return (
+      <div className="flex flex-wrap gap-2">
+        {options.length === 0 ? (
+          <span
+            className="ts-12"
+            style={{ color: 'var(--mute2)' }}
+          >
+            No options configured
+          </span>
+        ) : (
+          options.map((opt) => {
+            const on = selected.includes(opt.value)
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => toggle(opt.value)}
+                disabled={readOnly}
+                className="ts-12 mono px-2 py-1 rounded"
+                style={{
+                  background: on ? 'var(--accent-soft)' : 'var(--panel2)',
+                  border: `1px solid ${on ? 'var(--accent-line)' : 'var(--line)'}`,
+                  color: 'var(--text)',
+                  cursor: readOnly ? 'default' : 'pointer',
+                }}
+              >
+                {on ? '☑' : '☐'} {opt.label}
+              </button>
+            )
+          })
         )}
       </div>
     )

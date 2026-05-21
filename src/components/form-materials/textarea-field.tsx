@@ -3,7 +3,7 @@
 import {
   NumberRow,
   TextRow,
-} from '@/components/form-designer/properties/primitives'
+} from './primitives'
 import type { Material } from './types'
 
 /**
@@ -40,6 +40,28 @@ export const textareaFieldMaterial: Material = {
           padding: '6px 10px',
           color: 'var(--text)',
           cursor: 'grab',
+        }}
+      />
+    )
+  },
+  runtimeRenderer: ({ field, value, onChange, readOnly }) => {
+    const cfg = field.config as TextareaConfig
+    const v = typeof value === 'string' ? value : ''
+    return (
+      <textarea
+        value={v}
+        onChange={(e) => onChange(e.target.value)}
+        readOnly={readOnly}
+        placeholder={cfg.placeholder}
+        rows={cfg.rows ?? 4}
+        maxLength={cfg.maxLength ?? undefined}
+        className="w-full ts-13 resize-y"
+        style={{
+          background: 'var(--bg)',
+          border: '1px solid var(--line)',
+          borderRadius: 4,
+          padding: '6px 10px',
+          color: 'var(--text)',
         }}
       />
     )

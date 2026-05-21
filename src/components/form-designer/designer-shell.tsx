@@ -1,6 +1,7 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState, useTransition } from 'react'
+import { useRouter } from 'next/navigation'
 import { useAtom } from 'jotai'
 import {
   DndContext,
@@ -32,7 +33,7 @@ import {
   PALETTE_ORDER,
   getMaterial,
   isContainerKind,
-} from './materials/registry'
+} from '@/components/form-materials/registry'
 import { PropertyPanel } from './properties/property-panel'
 
 /**
@@ -58,11 +59,79 @@ import { PropertyPanel } from './properties/property-panel'
  * D6 fills in the runtime Renderer + server persistence into
  * custom_form_schemas.
  */
-export function DesignerShell() {
+/**
+ * Per-admin workspace option (passed from the server). Save targets one
+ * workspace at a time; the picker shows label + id so the owner can
+ * disambiguate two workspaces named the same.
+ */
+export interface DesignerWorkspaceOption {
+  id: string
+  name: string
+}
+
+/** Server actions invoked by the toolbar — kept loose so the shell stays client-only. */
+export interface DesignerStorageActions {
+  /** Create a new saved schema. Returns the row id for navigation. */
+  save: (input: {
+    workspaceId: string
+    label: string
+    schema: import('@/lib/form-designer/schema').FormSchema
+  }) => Promise<{ id: string }>
+  /** Overwrite an existing schema's content + label. */
+  update?: (input: {
+    id: string
+    workspaceId: string
+    label: string
+    schema: import('@/lib/form-designer/schema').FormSchema
+  }) => Promise<void>
+}
+
+export interface DesignerShellProps {
+  /**
+   * Workspaces the signed-in user can save into (admin role). When the
+   * list has more than one, the Save dialog asks the owner to pick;
+   * empty list disables the Save button (read-only Designer mode).
+   */
+  workspaces?: DesignerWorkspaceOption[]
+  /**
+   * Already-loaded schema to seed the canvas. Used by the edit
+   * /admin/forms/[id] page; new-form page leaves this undefined so
+   * the localStorage draft (atomWithStorage) takes over.
+   */
+  initialSchema?: {
+    id: string
+    workspaceId: string
+    label: string
+    schema: import('@/lib/form-designer/schema').FormSchema
+  }
+  /** Server actions; absent on the read-only preview embed. */
+  storage?: DesignerStorageActions
+  /** Path to navigate to after save (default /admin/forms). */
+  postSaveHref?: string
+}
+
+export function DesignerShell({
+  workspaces = [],
+  initialSchema,
+  storage,
+  postSaveHref = '/admin/forms',
+}: DesignerShellProps = {}) {
   const [schema, setSchema] = useAtom(formSchemaAtom)
   const [selectedId, setSelectedId] = useAtom(selectedFieldIdAtom)
   /** Map tab-layout id → currently focused tab id (designer-only UI state). */
   const [activeTabBy, setActiveTabBy] = useState<Record<string, string>>({})
+  const [savePending, startSave] = useTransition()
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const router = useRouter()
+
+  /** Hydrate from the server-provided schema once (edit mode). */
+  const [hydrated, setHydrated] = useState(false)
+  useEffect(() => {
+    if (!hydrated && initialSchema) {
+      setSchema(initialSchema.schema)
+      setHydrated(true)
+    }
+  }, [hydrated, initialSchema, setSchema])
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -120,6 +189,70 @@ export function DesignerShell() {
 
   function setActiveTab(layoutId: string, tabId: string) {
     setActiveTabBy((m) => ({ ...m, [layoutId]: tabId }))
+  }
+
+  /** Persist the current canvas state through the parent-provided action. */
+  function saveSchema() {
+    if (!storage || workspaces.length === 0) return
+    if (schema.fields.length === 0) {
+      setSaveError('Add at least one field before saving.')
+      return
+    }
+    const defaultLabel = initialSchema?.label ?? 'Untitled form'
+    const label =
+      typeof window === 'undefined'
+        ? defaultLabel
+        : window.prompt('Schema label', defaultLabel) ?? defaultLabel
+    if (!label.trim()) {
+      setSaveError('Label is required.')
+      return
+    }
+    let workspaceId = initialSchema?.workspaceId
+    if (!workspaceId) {
+      if (workspaces.length === 1) {
+        workspaceId = workspaces[0].id
+      } else {
+        const choices = workspaces
+          .map((w, i) => `${i + 1}. ${w.name}`)
+          .join('\n')
+        const picked =
+          typeof window === 'undefined'
+            ? '1'
+            : window.prompt(
+                `Save into which workspace?\n${choices}`,
+                '1',
+              )
+        const idx = Number(picked) - 1
+        if (!Number.isInteger(idx) || idx < 0 || idx >= workspaces.length) {
+          setSaveError('Invalid workspace selection.')
+          return
+        }
+        workspaceId = workspaces[idx].id
+      }
+    }
+    setSaveError(null)
+    startSave(async () => {
+      try {
+        if (initialSchema && storage.update) {
+          await storage.update({
+            id: initialSchema.id,
+            workspaceId: workspaceId!,
+            label,
+            schema,
+          })
+          router.refresh()
+        } else {
+          await storage.save({
+            workspaceId: workspaceId!,
+            label,
+            schema,
+          })
+          router.push(postSaveHref)
+        }
+      } catch (err) {
+        setSaveError(err instanceof Error ? err.message : 'Save failed.')
+      }
+    })
   }
 
   const selectedField =
@@ -207,21 +340,62 @@ export function DesignerShell() {
                 : `${countFields(schema.fields)} field${countFields(schema.fields) === 1 ? '' : 's'} · drag within parent to reorder`}
             </p>
           </div>
-          {schema.fields.length > 0 && (
-            <button
-              type="button"
-              onClick={resetCanvas}
-              className="ts-12 mono px-3 py-1.5 rounded"
-              style={{
-                background: 'transparent',
-                color: 'var(--danger)',
-                border: '1px solid oklch(0.55 0.2 25 / 0.4)',
-                cursor: 'pointer',
-              }}
-            >
-              Reset canvas
-            </button>
-          )}
+          <div className="flex flex-col items-end gap-1.5">
+            <div className="flex items-center gap-2">
+              {storage && workspaces.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={saveSchema}
+                  disabled={savePending || schema.fields.length === 0}
+                  className="ts-12 mono px-3 py-1.5 rounded"
+                  style={{
+                    background:
+                      savePending || schema.fields.length === 0
+                        ? 'var(--panel2)'
+                        : 'oklch(0.6 0.18 280)',
+                    color:
+                      savePending || schema.fields.length === 0
+                        ? 'var(--mute2)'
+                        : 'white',
+                    border: '1px solid oklch(0.6 0.18 280 / 0.6)',
+                    cursor:
+                      savePending || schema.fields.length === 0
+                        ? 'not-allowed'
+                        : 'pointer',
+                  }}
+                >
+                  {savePending
+                    ? 'Saving…'
+                    : initialSchema
+                      ? 'Update schema'
+                      : 'Save schema'}
+                </button>
+              ) : null}
+              {schema.fields.length > 0 && (
+                <button
+                  type="button"
+                  onClick={resetCanvas}
+                  className="ts-12 mono px-3 py-1.5 rounded"
+                  style={{
+                    background: 'transparent',
+                    color: 'var(--danger)',
+                    border: '1px solid oklch(0.55 0.2 25 / 0.4)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Reset canvas
+                </button>
+              )}
+            </div>
+            {saveError ? (
+              <span
+                className="ts-11"
+                style={{ color: 'var(--danger)' }}
+              >
+                {saveError}
+              </span>
+            ) : null}
+          </div>
         </div>
 
         <DndContext sensors={sensors} onDragEnd={handleDragEnd}>

@@ -4,7 +4,7 @@ import {
   NumberRow,
   TagListRow,
   TextRow,
-} from '@/components/form-designer/properties/primitives'
+} from './primitives'
 import type { Material } from './types'
 
 /**
@@ -60,6 +60,31 @@ export const richTextFieldMaterial: Material = {
           {cfg.placeholder ?? 'Write with formatting…'}
         </div>
       </div>
+    )
+  },
+  runtimeRenderer: ({ field, value, onChange, readOnly }) => {
+    // D6 ships a plain-textarea fallback. A full WYSIWYG (lexical /
+    // codemirror) is part of P6 polish — the form-renderer never
+    // imports it directly, so the wrap is one component swap away.
+    const cfg = field.config as RichTextConfig
+    const v = typeof value === 'string' ? value : ''
+    return (
+      <textarea
+        value={v}
+        onChange={(e) => onChange(e.target.value)}
+        readOnly={readOnly}
+        placeholder={cfg.placeholder ?? 'Write with formatting…'}
+        rows={6}
+        maxLength={cfg.maxLength ?? undefined}
+        className="w-full ts-13 resize-y"
+        style={{
+          background: 'var(--bg)',
+          border: '1px solid var(--line)',
+          borderRadius: 4,
+          padding: '6px 10px',
+          color: 'var(--text)',
+        }}
+      />
     )
   },
   propertyPanel: ({ field, onChange }) => {

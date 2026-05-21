@@ -3,7 +3,7 @@
 import {
   TextRow,
   ToggleRow,
-} from '@/components/form-designer/properties/primitives'
+} from './primitives'
 import type { Material } from './types'
 
 /**
