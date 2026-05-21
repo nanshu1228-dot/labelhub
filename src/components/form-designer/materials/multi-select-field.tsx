@@ -1,9 +1,22 @@
+'use client'
+
+import {
+  NumberRow,
+  OptionListEditor,
+  type OptionItem,
+} from '@/components/form-designer/properties/primitives'
 import type { Material } from './types'
 
 /**
  * Checkbox / tag-style multi-select. Spec calls this out as 标签选择.
  * Owner sets minSelected / maxSelected to bound the answer count.
  */
+type MultiSelectConfig = {
+  options?: OptionItem[]
+  minSelected?: number | null
+  maxSelected?: number | null
+}
+
 export const multiSelectFieldMaterial: Material = {
   kind: 'multi-select',
   name: 'Multi-select',
@@ -16,11 +29,9 @@ export const multiSelectFieldMaterial: Material = {
     ],
     minSelected: 0,
     maxSelected: null,
-  },
+  } satisfies MultiSelectConfig,
   designerPreview: ({ field }) => {
-    const cfg = field.config as {
-      options?: Array<{ value: string; label: string }>
-    }
+    const cfg = field.config as MultiSelectConfig
     const options = cfg.options ?? []
     return (
       <div
@@ -50,6 +61,34 @@ export const multiSelectFieldMaterial: Material = {
           ))
         )}
       </div>
+    )
+  },
+  propertyPanel: ({ field, onChange }) => {
+    const cfg = field.config as MultiSelectConfig
+    function patch(next: Partial<MultiSelectConfig>) {
+      onChange({ ...field, config: { ...cfg, ...next } })
+    }
+    return (
+      <>
+        <OptionListEditor
+          options={cfg.options ?? []}
+          onChange={(options) => patch({ options })}
+        />
+        <NumberRow
+          label="Min selected"
+          value={cfg.minSelected ?? null}
+          onChange={(v) => patch({ minSelected: v })}
+          min={0}
+          placeholder="0"
+        />
+        <NumberRow
+          label="Max selected"
+          value={cfg.maxSelected ?? null}
+          onChange={(v) => patch({ maxSelected: v })}
+          min={1}
+          placeholder="No limit"
+        />
+      </>
     )
   },
 }

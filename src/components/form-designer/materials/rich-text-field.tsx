@@ -1,3 +1,10 @@
+'use client'
+
+import {
+  NumberRow,
+  TagListRow,
+  TextRow,
+} from '@/components/form-designer/properties/primitives'
 import type { Material } from './types'
 
 /**
@@ -5,6 +12,13 @@ import type { Material } from './types'
  * (likely lexical or a thin contenteditable wrapper). The designer
  * preview is a static placeholder card so the canvas stays cheap.
  */
+type RichTextConfig = {
+  placeholder?: string
+  minLength?: number | null
+  maxLength?: number | null
+  toolbar?: string[]
+}
+
 export const richTextFieldMaterial: Material = {
   kind: 'rich-text',
   name: 'Rich text',
@@ -15,9 +29,9 @@ export const richTextFieldMaterial: Material = {
     maxLength: 8000,
     /** Which toolbar groups to expose. D6 wires these into the editor. */
     toolbar: ['bold', 'italic', 'underline', 'link', 'list'],
-  },
+  } satisfies RichTextConfig,
   designerPreview: ({ field }) => {
-    const cfg = field.config as { placeholder?: string }
+    const cfg = field.config as RichTextConfig
     return (
       <div
         className="rounded ts-13"
@@ -46,6 +60,40 @@ export const richTextFieldMaterial: Material = {
           {cfg.placeholder ?? 'Write with formatting…'}
         </div>
       </div>
+    )
+  },
+  propertyPanel: ({ field, onChange }) => {
+    const cfg = field.config as RichTextConfig
+    function patch(next: Partial<RichTextConfig>) {
+      onChange({ ...field, config: { ...cfg, ...next } })
+    }
+    return (
+      <>
+        <TextRow
+          label="Placeholder"
+          value={cfg.placeholder ?? ''}
+          onChange={(v) => patch({ placeholder: v })}
+        />
+        <NumberRow
+          label="Min length"
+          value={cfg.minLength ?? null}
+          onChange={(v) => patch({ minLength: v })}
+          min={0}
+        />
+        <NumberRow
+          label="Max length"
+          value={cfg.maxLength ?? null}
+          onChange={(v) => patch({ maxLength: v })}
+          min={0}
+        />
+        <TagListRow
+          label="Toolbar"
+          hint="bold, italic, underline, link, list, code, quote"
+          value={cfg.toolbar ?? []}
+          onChange={(toolbar) => patch({ toolbar })}
+          placeholder="bold, italic, underline"
+        />
+      </>
     )
   },
 }

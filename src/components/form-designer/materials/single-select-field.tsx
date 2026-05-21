@@ -1,9 +1,21 @@
+'use client'
+
+import {
+  OptionListEditor,
+  SelectRow,
+  type OptionItem,
+} from '@/components/form-designer/properties/primitives'
 import type { Material } from './types'
 
 /**
- * Radio-style single-select. Owner defines options[]. D4 property
- * panel exposes options CRUD with inline add/remove rows.
+ * Radio-style single-select. Owner defines options[]. The property
+ * panel exposes options CRUD via {@link OptionListEditor}.
  */
+type SingleSelectConfig = {
+  options?: OptionItem[]
+  layout?: 'vertical' | 'horizontal'
+}
+
 export const singleSelectFieldMaterial: Material = {
   kind: 'single-select',
   name: 'Single select',
@@ -14,12 +26,9 @@ export const singleSelectFieldMaterial: Material = {
       { value: 'b', label: 'Option B' },
     ],
     layout: 'vertical',
-  },
+  } satisfies SingleSelectConfig,
   designerPreview: ({ field }) => {
-    const cfg = field.config as {
-      options?: Array<{ value: string; label: string }>
-      layout?: 'vertical' | 'horizontal'
-    }
+    const cfg = field.config as SingleSelectConfig
     const options = cfg.options ?? []
     return (
       <div
@@ -51,6 +60,29 @@ export const singleSelectFieldMaterial: Material = {
           ))
         )}
       </div>
+    )
+  },
+  propertyPanel: ({ field, onChange }) => {
+    const cfg = field.config as SingleSelectConfig
+    function patch(next: Partial<SingleSelectConfig>) {
+      onChange({ ...field, config: { ...cfg, ...next } })
+    }
+    return (
+      <>
+        <OptionListEditor
+          options={cfg.options ?? []}
+          onChange={(options) => patch({ options })}
+        />
+        <SelectRow
+          label="Layout"
+          value={cfg.layout ?? 'vertical'}
+          onChange={(v) => patch({ layout: v })}
+          options={[
+            { value: 'vertical', label: 'Vertical (stacked)' },
+            { value: 'horizontal', label: 'Horizontal (inline)' },
+          ]}
+        />
+      </>
     )
   },
 }

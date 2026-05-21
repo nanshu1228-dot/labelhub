@@ -1,3 +1,9 @@
+'use client'
+
+import {
+  SelectRow,
+  TextRow,
+} from '@/components/form-designer/properties/primitives'
 import type { Material } from './types'
 
 /**
@@ -8,6 +14,11 @@ import type { Material } from './types'
  * `sourcePath` is a dotted accessor into the topic's `item_data` jsonb
  * (e.g. "prompt", "reference.text"). D6 Renderer resolves it.
  */
+type ShowItemConfig = {
+  sourcePath?: string
+  renderAs?: 'plain' | 'markdown' | 'code' | 'image' | 'json'
+}
+
 export const showItemFieldMaterial: Material = {
   kind: 'show-item',
   name: 'Show item',
@@ -16,9 +27,9 @@ export const showItemFieldMaterial: Material = {
     sourcePath: 'prompt',
     /** Render mode — plain text vs markdown vs preformatted code. */
     renderAs: 'markdown',
-  },
+  } satisfies ShowItemConfig,
   designerPreview: ({ field }) => {
-    const cfg = field.config as { sourcePath?: string; renderAs?: string }
+    const cfg = field.config as ShowItemConfig
     return (
       <div
         className="rounded p-3 ts-13"
@@ -40,6 +51,35 @@ export const showItemFieldMaterial: Material = {
           here at runtime · {cfg.renderAs ?? 'markdown'}]
         </div>
       </div>
+    )
+  },
+  propertyPanel: ({ field, onChange }) => {
+    const cfg = field.config as ShowItemConfig
+    function patch(next: Partial<ShowItemConfig>) {
+      onChange({ ...field, config: { ...cfg, ...next } })
+    }
+    return (
+      <>
+        <TextRow
+          label="Source path"
+          hint="Dotted accessor into topic.itemData (e.g. prompt, reference.text)."
+          value={cfg.sourcePath ?? ''}
+          onChange={(v) => patch({ sourcePath: v })}
+          placeholder="prompt"
+        />
+        <SelectRow
+          label="Render as"
+          value={cfg.renderAs ?? 'markdown'}
+          onChange={(v) => patch({ renderAs: v })}
+          options={[
+            { value: 'plain', label: 'Plain text' },
+            { value: 'markdown', label: 'Markdown' },
+            { value: 'code', label: 'Code block' },
+            { value: 'json', label: 'JSON' },
+            { value: 'image', label: 'Image (URL or data URI)' },
+          ]}
+        />
+      </>
     )
   },
 }

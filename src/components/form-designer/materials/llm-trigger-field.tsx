@@ -1,3 +1,9 @@
+'use client'
+
+import {
+  SelectRow,
+  TextRow,
+} from '@/components/form-designer/properties/primitives'
 import type { Material } from './types'
 
 /**
@@ -10,6 +16,13 @@ import type { Material } from './types'
  * same form (validated at save time by D6 storage layer). This is
  * also the per-field "AI assist" entry point referenced in D10.
  */
+type LlmTriggerConfig = {
+  buttonLabel?: string
+  promptTemplate?: string
+  targetFieldId?: string
+  tier?: 'fast' | 'default' | 'premium'
+}
+
 export const llmTriggerFieldMaterial: Material = {
   kind: 'llm-trigger',
   name: 'LLM assist',
@@ -24,12 +37,9 @@ export const llmTriggerFieldMaterial: Material = {
     targetFieldId: '',
     /** Tier passed to chat() — fast (Haiku) is the default for assist. */
     tier: 'fast',
-  },
+  } satisfies LlmTriggerConfig,
   designerPreview: ({ field }) => {
-    const cfg = field.config as {
-      buttonLabel?: string
-      targetFieldId?: string
-    }
+    const cfg = field.config as LlmTriggerConfig
     return (
       <div className="ts-13" style={{ cursor: 'grab' }}>
         <button
@@ -52,6 +62,47 @@ export const llmTriggerFieldMaterial: Material = {
           <code>{cfg.targetFieldId || '(inline only)'}</code>
         </div>
       </div>
+    )
+  },
+  propertyPanel: ({ field, onChange }) => {
+    const cfg = field.config as LlmTriggerConfig
+    function patch(next: Partial<LlmTriggerConfig>) {
+      onChange({ ...field, config: { ...cfg, ...next } })
+    }
+    return (
+      <>
+        <TextRow
+          label="Button label"
+          value={cfg.buttonLabel ?? ''}
+          onChange={(v) => patch({ buttonLabel: v })}
+          placeholder="Ask Claude"
+        />
+        <TextRow
+          label="Prompt template"
+          hint="Appended to the workspace system prompt. Form context is added automatically."
+          value={cfg.promptTemplate ?? ''}
+          onChange={(v) => patch({ promptTemplate: v })}
+          multiline
+        />
+        <TextRow
+          label="Target field ID"
+          hint="ID of the sibling field this assist fills. Empty = inline-only."
+          value={cfg.targetFieldId ?? ''}
+          onChange={(v) => patch({ targetFieldId: v })}
+          placeholder="f_xxx"
+        />
+        <SelectRow
+          label="Tier"
+          hint="fast = Haiku, default = Sonnet, premium = Opus"
+          value={cfg.tier ?? 'fast'}
+          onChange={(v) => patch({ tier: v })}
+          options={[
+            { value: 'fast', label: 'fast (Haiku)' },
+            { value: 'default', label: 'default (Sonnet)' },
+            { value: 'premium', label: 'premium (Opus)' },
+          ]}
+        />
+      </>
     )
   },
 }

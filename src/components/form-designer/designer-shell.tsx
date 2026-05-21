@@ -26,6 +26,7 @@ import {
   PALETTE_ORDER,
   getMaterial,
 } from './materials/registry'
+import { PropertyPanel } from './properties/property-panel'
 
 /**
  * Finals P1 D3 — Designer shell wired to the 9-material registry +
@@ -239,15 +240,15 @@ export function DesignerShell() {
           § PROPERTIES
         </div>
         {selectedField ? (
-          <PropertiesStub
+          <PropertyPanel
             field={selectedField}
             onChange={patchSelectedField}
             onDelete={deleteSelectedField}
           />
         ) : (
           <p className="ts-12" style={{ color: 'var(--mute2)' }}>
-            Select a field on the canvas to edit. D4 replaces this
-            stub with per-material property editors.
+            Select a field on the canvas to edit its label, config,
+            and validation rules.
           </p>
         )}
       </aside>
@@ -334,77 +335,3 @@ function SortableField({
   )
 }
 
-function PropertiesStub({
-  field,
-  onChange,
-  onDelete,
-}: {
-  field: FieldNode
-  onChange: (next: FieldNode) => void
-  onDelete: () => void
-}) {
-  return (
-    <div className="flex flex-col gap-3">
-      <label className="ts-12">
-        <div className="lbl mb-1" style={{ color: 'var(--mute)' }}>
-          LABEL
-        </div>
-        <input
-          type="text"
-          value={field.label}
-          onChange={(e) => onChange({ ...field, label: e.target.value })}
-          className="w-full ts-13 mono"
-          style={{
-            background: 'var(--bg)',
-            border: '1px solid var(--line)',
-            borderRadius: 4,
-            padding: '6px 10px',
-            color: 'var(--text)',
-          }}
-        />
-      </label>
-      <label className="ts-12">
-        <div className="lbl mb-1" style={{ color: 'var(--mute)' }}>
-          HELPER TEXT
-        </div>
-        <input
-          type="text"
-          value={field.helperText ?? ''}
-          onChange={(e) =>
-            onChange({
-              ...field,
-              helperText: e.target.value || undefined,
-            })
-          }
-          placeholder="Optional one-line hint"
-          className="w-full ts-13"
-          style={{
-            background: 'var(--bg)',
-            border: '1px solid var(--line)',
-            borderRadius: 4,
-            padding: '6px 10px',
-            color: 'var(--text)',
-          }}
-        />
-      </label>
-      <div className="ts-11 mono" style={{ color: 'var(--mute2)' }}>
-        ID: <code>{field.id}</code>
-        <br />
-        Kind: <code>{field.kind}</code>
-      </div>
-      <button
-        type="button"
-        onClick={onDelete}
-        className="ts-12 mono px-3 py-1.5 rounded"
-        style={{
-          background: 'transparent',
-          color: 'var(--danger)',
-          border: '1px solid oklch(0.55 0.2 25 / 0.4)',
-          cursor: 'pointer',
-        }}
-      >
-        Delete field
-      </button>
-    </div>
-  )
-}
