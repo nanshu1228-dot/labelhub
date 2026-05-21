@@ -104,6 +104,17 @@ export function FormRenderer({
 
   const visibleFields = filterVisibleFields(schema.fields, value)
 
+  // D10 — sibling write for llm-trigger. The Renderer is the only
+  // place that knows the full value-dict, so it exposes a callback
+  // that material runtimes can use to fill targetFieldId. Other
+  // materials ignore.
+  const setSiblingField = useCallback(
+    (fieldId: string, next: unknown) => {
+      onChange({ ...value, [fieldId]: next })
+    },
+    [onChange, value],
+  )
+
   return (
     <div className="flex flex-col gap-4">
       {visibleFields.map((f) => (
@@ -115,6 +126,7 @@ export function FormRenderer({
           itemData={itemData}
           readOnly={readOnly}
           onChange={(next) => handleField(f.id, next)}
+          onSetField={setSiblingField}
         />
       ))}
     </div>
@@ -128,6 +140,7 @@ function RenderedField({
   itemData,
   readOnly,
   onChange,
+  onSetField,
 }: {
   field: FieldNode
   value: unknown
@@ -135,6 +148,7 @@ function RenderedField({
   itemData?: Record<string, unknown>
   readOnly: boolean
   onChange: (next: unknown) => void
+  onSetField?: (fieldId: string, next: unknown) => void
 }) {
   // Container kinds the Renderer walks itself — they have no
   // payload of their own.
@@ -179,6 +193,9 @@ function RenderedField({
           value={resolvedValue}
           onChange={onChange}
           readOnly={readOnly}
+          allValues={allValues}
+          itemData={itemData}
+          onSetField={onSetField}
         />
       ) : (
         <span className="ts-12" style={{ color: 'var(--mute2)' }}>
@@ -242,6 +259,7 @@ function GroupBlock({
           itemData={itemData}
           readOnly={readOnly}
           onChange={(next) => setChild(c.id, next)}
+          onSetField={setChild}
         />
       ))}
     </fieldset>

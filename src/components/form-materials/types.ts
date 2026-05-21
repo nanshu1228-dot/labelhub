@@ -35,6 +35,24 @@ export interface RuntimeRendererProps {
   onChange: (next: unknown) => void
   /** Read-only flag — e.g. reviewer viewing a submitted annotation. */
   readOnly?: boolean
+  /**
+   * D10 — write a value into a sibling field. Used by `llm-trigger`
+   * to stuff Claude's response into the configured `targetFieldId`.
+   * The Renderer wires this with the parent form's full value-dict
+   * setter; other materials can leave it unused.
+   */
+  onSetField?: (fieldId: string, next: unknown) => void
+  /**
+   * D10 — the full form value dict for the current scope (root or
+   * group). `llm-trigger` reads it to build context for Claude;
+   * other materials don't need it.
+   */
+  allValues?: Record<string, unknown>
+  /**
+   * D10 — topic.itemData for the current annotation, so an LLM
+   * assist can include the prompt + reference text in its context.
+   */
+  itemData?: Record<string, unknown>
 }
 
 export interface PropertyPanelProps {

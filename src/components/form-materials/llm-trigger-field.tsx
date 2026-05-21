@@ -1,10 +1,11 @@
 'use client'
 
+import { useState } from 'react'
 import {
   SelectRow,
   TextRow,
 } from './primitives'
-import type { Material } from './types'
+import type { Material, RuntimeRendererProps } from './types'
 
 /**
  * LLM-trigger widget — Spec 4.2 calls it out by name. The Labeler
@@ -21,6 +22,114 @@ type LlmTriggerConfig = {
   promptTemplate?: string
   targetFieldId?: string
   tier?: 'fast' | 'default' | 'premium'
+}
+
+function LlmTriggerRuntime({
+  field,
+  readOnly,
+  allValues,
+  itemData,
+  onSetField,
+  onChange,
+}: RuntimeRendererProps) {
+  const cfg = field.config as LlmTriggerConfig
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [lastAnswer, setLastAnswer] = useState<string | null>(null)
+
+  async function trigger() {
+    if (readOnly || pending) return
+    setError(null)
+    setPending(true)
+    try {
+      const res = await fetch('/api/llm-assist', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          promptTemplate:
+            cfg.promptTemplate ??
+            'Suggest a short answer for the labeled field.',
+          context: allValues ?? {},
+          tier: cfg.tier ?? 'fast',
+          itemData,
+        }),
+      })
+      if (!res.ok) {
+        let msg = `LLM assist failed (${res.status})`
+        try {
+          const body = (await res.json()) as { error?: string }
+          if (body.error) msg = body.error
+        } catch {
+          // body wasn't JSON — keep status message
+        }
+        setError(msg)
+        return
+      }
+      const body = (await res.json()) as { text?: string }
+      const text = body.text?.trim() ?? ''
+      setLastAnswer(text)
+      // If a targetFieldId is configured AND we have a sibling-write
+      // hook, stuff the answer there. Otherwise the answer surfaces
+      // inline below the button so the labeler can copy-paste.
+      if (cfg.targetFieldId && onSetField) {
+        onSetField(cfg.targetFieldId, text)
+      } else {
+        // No target — record the most recent answer on this field's
+        // own value slot so it survives a re-render.
+        onChange(text)
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Network error')
+    } finally {
+      setPending(false)
+    }
+  }
+
+  return (
+    <div className="ts-13 flex flex-col gap-1.5">
+      <button
+        type="button"
+        onClick={trigger}
+        disabled={pending || readOnly}
+        className="ts-13 mono inline-flex items-center gap-2 px-3 py-1.5 rounded self-start"
+        style={{
+          background: 'oklch(0.55 0.18 320 / 0.1)',
+          color: 'oklch(0.55 0.18 320)',
+          border: '1px solid oklch(0.55 0.18 320 / 0.4)',
+          cursor: pending || readOnly ? 'not-allowed' : 'pointer',
+          opacity: pending ? 0.6 : readOnly ? 0.5 : 1,
+        }}
+      >
+        🪄 {pending ? 'Asking…' : cfg.buttonLabel ?? 'Ask Claude'}
+      </button>
+      {error ? (
+        <span className="ts-11" style={{ color: 'var(--danger)' }}>
+          {error}
+        </span>
+      ) : (
+        <span
+          className="ts-11 mono"
+          style={{ color: 'var(--mute2)' }}
+        >
+          fills →{' '}
+          <code>{cfg.targetFieldId || '(inline below)'}</code>
+        </span>
+      )}
+      {!cfg.targetFieldId && lastAnswer ? (
+        <div
+          className="rounded ts-12 p-2"
+          style={{
+            background: 'var(--bg)',
+            border: '1px solid var(--line)',
+            color: 'var(--text)',
+            whiteSpace: 'pre-wrap',
+          }}
+        >
+          {lastAnswer}
+        </div>
+      ) : null}
+    </div>
+  )
 }
 
 export const llmTriggerFieldMaterial: Material = {
@@ -64,39 +173,7 @@ export const llmTriggerFieldMaterial: Material = {
       </div>
     )
   },
-  runtimeRenderer: ({ field, readOnly }) => {
-    // D6 ships a non-functional placeholder. D10 wires the actual
-    // POST → /api/llm-assist + per-user rate limit. The Renderer
-    // intentionally has no Claude client import; the button hits a
-    // route handler.
-    const cfg = field.config as LlmTriggerConfig
-    return (
-      <div className="ts-13 flex flex-col gap-1.5">
-        <button
-          type="button"
-          disabled
-          aria-disabled={true}
-          className="ts-13 mono inline-flex items-center gap-2 px-3 py-1.5 rounded self-start"
-          style={{
-            background: 'oklch(0.55 0.18 320 / 0.1)',
-            color: 'oklch(0.55 0.18 320)',
-            border: '1px solid oklch(0.55 0.18 320 / 0.4)',
-            cursor: 'not-allowed',
-            opacity: readOnly ? 0.5 : 1,
-          }}
-        >
-          🪄 {cfg.buttonLabel ?? 'Ask Claude'}
-        </button>
-        <span
-          className="ts-11 mono"
-          style={{ color: 'var(--mute2)' }}
-        >
-          AI assist wires in D10 · fills →{' '}
-          <code>{cfg.targetFieldId || '(inline only)'}</code>
-        </span>
-      </div>
-    )
-  },
+  runtimeRenderer: LlmTriggerRuntime,
   propertyPanel: ({ field, onChange }) => {
     const cfg = field.config as LlmTriggerConfig
     function patch(next: Partial<LlmTriggerConfig>) {
