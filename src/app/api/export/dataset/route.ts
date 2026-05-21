@@ -9,27 +9,34 @@ import {
   reshapeTeaching,
   type TeachingItem,
 } from '@/lib/quality/teaching-reshape'
+import {
+  isExportFormat,
+  pickFormatterFor,
+  type ExportFormat,
+} from '@/lib/export/formatters'
 
 /**
- * GET /api/export/dataset?versionId=...&format=raw|teaching
+ * GET /api/export/dataset?versionId=...&format=raw|teaching&encoding=json|jsonl|csv|excel
  *
- * Streams the frozen manifest of a dataset version as JSONL.
+ * Streams the frozen manifest of a dataset version. Two orthogonal
+ * controls:
  *
- * `format=raw` (default) — one line per manifest entry, full verbatim
- * fields (annotation + topic + task metadata + payload snapshot).
- * Useful for archival / re-import / debugging.
+ *   `format` (content shape)
+ *     - `raw` (default) — one entry per manifest row, full verbatim
+ *       fields (annotation + topic + task metadata + payload).
+ *     - `teaching` (Phase-18) — only entries with claude_proposal,
+ *       reshaped to (prompt, ai_proposal, human_correction, delta)
+ *       so an SFT / DPO pipeline can ingest without a transform.
  *
- * `format=teaching` (Phase-18) — only items that carry an
- * `claude_proposal` (i.e. the AI draft-reviewer ran on them), reshaped
- * into the (prompt, ai_proposal, human_correction, delta) triplet
- * that an SFT / DPO training pipeline can ingest without a transform
- * step. Items without an AI proposal are skipped — they're not
- * teaching signals, just labels.
+ *   `encoding` (Finals D15 — output file format)
+ *     - `jsonl` (default; identical to the original route behavior)
+ *     - `json`  (single array document)
+ *     - `csv`   (RFC 4180 with formula-injection defense)
+ *     - `excel` (.xlsx via SheetJS; buffered, not streamed)
  *
- * Auth: admin of the version's workspace. We resolve the version
- * first so the admin gate is correctly scoped to the row's workspace
- * (a cross-workspace versionId leaks no data because the auth check
- * happens before we serialize the manifest).
+ * Auth: admin of the version's workspace. The version row's
+ * workspace is resolved BEFORE the admin gate so a cross-workspace
+ * versionId still hits the workspace-scoped guard.
  */
 export async function GET(request: NextRequest) {
   const start = Date.now()
@@ -54,6 +61,19 @@ export async function GET(request: NextRequest) {
       )
     }
     const format = formatRaw as 'raw' | 'teaching'
+    // D15 — output encoding parameter. Defaults to jsonl so the
+    // route's pre-finals contract is preserved.
+    const encodingRaw = (
+      url.searchParams.get('encoding') ?? 'jsonl'
+    ).toLowerCase()
+    if (!isExportFormat(encodingRaw)) {
+      throw new AppError(
+        'VALIDATION_ERROR',
+        `Unknown encoding "${encodingRaw}". Use json, jsonl, csv, or excel.`,
+        400,
+      )
+    }
+    const encoding: ExportFormat = encodingRaw
     if (!versionId) {
       throw new AppError(
         'VALIDATION_ERROR',
@@ -78,30 +98,55 @@ export async function GET(request: NextRequest) {
     const { user } = await requireWorkspaceAdmin(version.workspaceId)
     userId = user.id
 
-    // 2. Serialize manifest as JSONL. Format chooser:
+    // 2. Project the manifest into content-shape rows.
     //    `raw`      → every manifest entry, verbatim
     //    `teaching` → only entries with claude_proposal, reshaped to
     //                 (prompt, ai_proposal, human_correction, delta)
-    const entries: unknown[] =
+    const entries: Record<string, unknown>[] = (
       format === 'teaching'
         ? version.manifest
             .map(reshapeTeaching)
             .filter((x): x is TeachingItem => x !== null)
         : version.manifest
+    ) as Record<string, unknown>[]
 
-    const lines = entries.map((it) => JSON.stringify(it)).join('\n')
-    responseBytes = Buffer.byteLength(lines, 'utf8')
+    // D15 — pick the encoding's formatter and buffer its bytes for
+    // logging + response. Excel must buffer (sheetjs doesn't stream);
+    // the others are streaming-shape async iterators but we still
+    // collect for the response body so the x-export-count header
+    // remains a single shot. Streaming directly to Response.body
+    // would need a chunked-aware Response; deferring that to D18.
+    const formatter = pickFormatterFor(encoding)
 
-    const filename = `labelhub-${version.workspaceId.slice(0, 8)}-${version.label}${format === 'teaching' ? '-teaching' : ''}.jsonl`
-    response = new Response(lines, {
+    async function* rowIterator() {
+      for (const entry of entries) yield entry
+    }
+    const chunks: Uint8Array[] = []
+    let totalBytes = 0
+    for await (const chunk of formatter(rowIterator())) {
+      chunks.push(chunk)
+      totalBytes += chunk.length
+    }
+    const body = new Uint8Array(totalBytes)
+    let offset = 0
+    for (const c of chunks) {
+      body.set(c, offset)
+      offset += c.length
+    }
+    responseBytes = totalBytes
+
+    const extLabel = format === 'teaching' ? '-teaching' : ''
+    const filename = `labelhub-${version.workspaceId.slice(0, 8)}-${version.label}${extLabel}.${formatter.meta.extension}`
+    response = new Response(body, {
       status: 200,
       headers: {
-        'content-type': 'application/jsonl',
+        'content-type': formatter.meta.contentType,
         'content-disposition': `attachment; filename="${filename}"`,
         'cache-control': 'no-store',
         'x-export-count': String(entries.length),
         'x-version-label': version.label,
         'x-format': format,
+        'x-encoding': encoding,
       },
     })
 
@@ -116,6 +161,7 @@ export async function GET(request: NextRequest) {
         versionId: version.id,
         label: version.label,
         format,
+        encoding,
         bytes: responseBytes,
         itemCount: entries.length,
       },
