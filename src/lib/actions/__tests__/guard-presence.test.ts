@@ -104,6 +104,10 @@ const EXPECTED_GUARDS: Record<string, RegExp> = {
   // tune the rubric the agent uses against every annotation in the
   // task). Read path also guarded so the prompt doesn't leak.
   'ai-agent-config.ts': /requireWorkspaceAdmin\(/,
+  // Finals P3 D11 — batch review delegates to qcReviewAnnotation
+  // per-row; each row's auth + state-transition runs there, including
+  // requireWorkspaceQC. This file is the dispatcher.
+  'review-batch.ts': /qcReviewAnnotation\(/,
 }
 
 /**
