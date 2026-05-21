@@ -116,6 +116,51 @@ awaiting_acceptance  revising
 | `awaiting_acceptance` | ✅ | (same as submitted) | … | … |
 | `drafting` / `revising` / `approved` / `rejected` | ❌ ConflictError | — | — | — |
 
+## Finals additions (P1 + P2 + P3)
+
+### Custom Form Designer (4.2)
+| Surface | Roles | Notes |
+|---|---|---|
+| `/admin/forms` (list) | admin only | 404 to non-admins; only workspaces this user admins are listed. |
+| `/admin/forms/new` + `/admin/forms/[id]` (Designer) | admin only | Save targets one of the admin's workspaces. |
+| `createCustomFormSchema` / `updateCustomFormSchema` / `archiveCustomFormSchema` | `requireWorkspaceAdmin` per save target | `custom_form_schemas` rows isolated by `workspace_id`. |
+| `loadCustomFormSchema` | Any signed-in user | Renderer-side path; the consuming task's workspace gates the read upstream. |
+| `/api/llm-assist` (Labeler AI assist) | `requireUser` + per-user rate limit (10/min) + daily AI quota | Body capped at 32KB; tier configurable per `llm-trigger` field. |
+
+### AI Review Agent (4.4)
+| Surface | Roles | Notes |
+|---|---|---|
+| `/workspaces/[id]/tasks/[taskId]/ai-agent` | admin only | 404 to non-admins; read AND write both guarded via `requireWorkspaceAdmin`. The Prompt blob can encode proprietary review criteria so even reads are gated. |
+| `saveAiAgentConfig` / `getAiAgentConfig` | `requireWorkspaceAdmin(task.workspaceId)` | Zod validates `passAt > sendBackAt` and unique dimension ids. |
+| `scheduleAIReviewIfMissing` (after-hook) | System (no actor) | Runs in Vercel's `after()` window; idempotent via `idempotency_key UNIQUE` index. Never throws to the caller. |
+| `runReviewAgent` (Function Calling) | System | Honors per-user `assertWithinDailyAIQuota(submitterId)`. Quota-exhausted: verdict row flips to `status='failed'`. |
+
+### Review workbench (4.5)
+| Surface | Roles | Notes |
+|---|---|---|
+| `/review` (queue) | qc OR admin | 404 if user has neither role in any workspace. Cross-workspace queue is hard-isolated — the user's allowed workspace ids are computed on every request from `workspace_members` and used as an `inArray` filter. |
+| `/review/[id]` (single view) | `requireWorkspaceQC(annotation.workspaceId)` | 404 if not qc/admin; 404 also if the resolved annotation doesn't exist (don't leak existence). |
+| `batchReviewAnnotations` | Per-row `requireWorkspaceQC` via `qcReviewAnnotation` | Mixed-workspace batches OK — rows the caller can't QC end up in `failed`, the rest succeed. |
+| `qcReviewAnnotation` | `requireWorkspaceQC` + state-machine `applyTransition()` | Self-QC blocked (submitter cannot QC their own work). State machine throws `IllegalTransitionError` when topic isn't `submitted` or `reviewing`. |
+
+### Workflow state machine (D12)
+| From | Action | Role(s) | To | Notes |
+|---|---|---|---|---|
+| `drafting` | `submit` | annotator | `ai_review` | After-hook schedules AI agent. |
+| `drafting` | `skip_ai` | admin / ai | `submitted` | Used when `aiAgent.enabled=false`. |
+| `revising` | `resubmit` | annotator | `ai_review` | Second-submit mirrors the first. |
+| `ai_review` | `ai_pass` | ai | `reviewing` | Scheduler write only. |
+| `ai_review` | `ai_send_back` | ai | `drafting` | + `writeRevision(kind='ai_send_back')`. |
+| `ai_review` | `ai_human_review` | ai | `reviewing` | Verdict carries `__priority` flag. |
+| `ai_review` | `ai_fail` | ai | `submitted` | Rollback so a human reviewer can still act. |
+| `submitted` / `reviewing` | `qc_pass` | qc / admin | `awaiting_acceptance` | |
+| `submitted` / `reviewing` | `qc_request_revision` | qc / admin | `revising` | |
+| `submitted` / `reviewing` / `awaiting_acceptance` | `admin_accept` | admin | `approved` | Idempotent if already approved. |
+| `submitted` / `reviewing` / `awaiting_acceptance` | `admin_reject` | admin | `rejected` | Idempotent if already rejected. |
+| `awaiting_acceptance` | `qc_request_revision` | admin | `revising` | Late kickback after QC sign-off. |
+
+`applyTransition()` from `src/lib/quality/state-machine.ts` is the single point of authority. Illegal moves throw `IllegalTransitionError`; role mismatches throw `ForbiddenRoleError`. Idempotency is **terminal-only** — re-approving an `approved` row is a benign no-op; re-running a mid-stream action throws so race bugs don't get masked.
+
 ## Cross-tenant boundary (every action)
 
 Every action's first DB read resolves the target resource's `workspace_id`, then calls the role guard against THAT workspace. A signed-in user in workspace A who passes a resource id from workspace B gets:

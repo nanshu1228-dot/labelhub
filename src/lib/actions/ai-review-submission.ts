@@ -46,6 +46,7 @@ import {
 } from '@/lib/ai/review-agent'
 import { assertWithinDailyAIQuota, logAICall } from '@/lib/ai/quota'
 import { writeRevision } from '@/lib/quality/annotation-revisions'
+import { emitNotification } from '@/lib/notifications/emit'
 
 const inputSchema = z.object({
   annotationId: uuidLike,
@@ -319,6 +320,22 @@ export async function scheduleAIReviewIfMissing(input: {
             reason: payload.reasoning,
           },
         })
+        // D13 — surface the send-back in the submitter's inbox so
+        // they see "AI sent it back" without refreshing the queue.
+        await emitNotification({
+          userId: row.annotationUserId,
+          workspaceId: row.workspaceId,
+          type: 'ai_review.sent_back',
+          title: 'AI sent your work back for revisions',
+          body: payload.reasoning.slice(0, 200),
+          linkUrl: `/topics/${row.topicId}/annotate`,
+          payload: {
+            annotationId: parsed.annotationId,
+            verdictId: verdictRowId,
+            score: payload.score,
+          },
+          actorId: null,
+        })
       } else {
         // human_review — set status to 'reviewing' but flag priority
         // via a side-channel on the verdict row's scores blob so the
@@ -351,6 +368,23 @@ export async function scheduleAIReviewIfMissing(input: {
             verdict: 'human_review',
             score: payload.score,
           },
+        })
+        // D13 — also surface human_review to the submitter so they
+        // know their work is being escalated (not just passing
+        // silently to QC).
+        await emitNotification({
+          userId: row.annotationUserId,
+          workspaceId: row.workspaceId,
+          type: 'ai_review.escalated',
+          title: 'AI flagged your submission for human review',
+          body: payload.reasoning.slice(0, 200),
+          linkUrl: `/topics/${row.topicId}/annotate`,
+          payload: {
+            annotationId: parsed.annotationId,
+            verdictId: verdictRowId,
+            score: payload.score,
+          },
+          actorId: null,
         })
       }
     } catch (e) {

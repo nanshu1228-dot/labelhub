@@ -13,6 +13,9 @@ vi.mock('@/lib/ai/review-agent', () => ({
 vi.mock('@/lib/quality/annotation-revisions', () => ({
   writeRevision: vi.fn().mockResolvedValue({ revisionId: 'rev-1' }),
 }))
+vi.mock('@/lib/notifications/emit', () => ({
+  emitNotification: vi.fn().mockResolvedValue(undefined),
+}))
 
 import {
   deleteVerdictForRerun,
@@ -23,6 +26,7 @@ import { idempotencyKey } from '../ai-review-keys'
 import { getDb } from '@/lib/db/client'
 import { runReviewAgentWithRetry } from '@/lib/ai/review-agent'
 import { writeRevision } from '@/lib/quality/annotation-revisions'
+import { emitNotification } from '@/lib/notifications/emit'
 
 /**
  * AI Review Agent scheduler tests — Finals P2 D7.
@@ -472,5 +476,115 @@ describe('verdict routing', () => {
     expect(
       (lastTopicStatus?.values as { status?: string }).status,
     ).toBe('submitted')
+  })
+})
+
+/**
+ * D13 — Notifications. The submitter's inbox gets a row whenever the
+ * AI agent makes a non-trivial decision (send_back or human_review).
+ * The pass case stays silent so we don't spam the labeler with
+ * "your work passed" on every submit.
+ */
+describe('notification emission (D13)', () => {
+  const TOPIC_ID = 'aaaa1111-1111-4111-8111-aaaaaaaaaaaa'
+  const WORKSPACE_ID = 'bbbb2222-2222-4222-8222-bbbbbbbbbbbb'
+  const SUBMITTER_ID = 'cccc3333-3333-4333-8333-cccccccccccc'
+
+  function customDesignerRow() {
+    return {
+      annotationId: ANNOTATION_ID,
+      annotationUserId: SUBMITTER_ID,
+      annotationPayload: { answer: 'submitted text' },
+      topicId: TOPIC_ID,
+      taskId: TASK_ID,
+      workspaceId: WORKSPACE_ID,
+      templateMode: 'custom-designer',
+      templateConfig: null,
+      topicItemData: { prompt: 'How many?' },
+    }
+  }
+
+  it('send_back emits an ai_review.sent_back notification to the submitter', async () => {
+    const s = makeDb({ selectQueue: [[customDesignerRow()]] })
+    mountDb(s)
+    vi.mocked(runReviewAgentWithRetry).mockResolvedValueOnce({
+      payload: {
+        verdict: 'send_back',
+        score: 22,
+        dimensions: {},
+        reasoning: 'Add more detail in section 2.',
+      },
+      usage: {
+        model: 'claude-haiku-4-5-20251001',
+        inputTokens: 10,
+        outputTokens: 5,
+      },
+    })
+    await scheduleAIReviewIfMissing({ annotationId: ANNOTATION_ID })
+    expect(vi.mocked(emitNotification)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'ai_review.sent_back',
+        userId: SUBMITTER_ID,
+        workspaceId: WORKSPACE_ID,
+      }),
+    )
+    const call = vi.mocked(emitNotification).mock.calls[0]?.[0]
+    expect(call?.body).toContain('Add more detail')
+  })
+
+  it('human_review emits an ai_review.escalated notification', async () => {
+    const s = makeDb({ selectQueue: [[customDesignerRow()]] })
+    mountDb(s)
+    vi.mocked(runReviewAgentWithRetry).mockResolvedValueOnce({
+      payload: {
+        verdict: 'human_review',
+        score: 50,
+        dimensions: {},
+        reasoning: 'borderline',
+      },
+      usage: {
+        model: 'claude-haiku-4-5-20251001',
+        inputTokens: 10,
+        outputTokens: 5,
+      },
+    })
+    await scheduleAIReviewIfMissing({ annotationId: ANNOTATION_ID })
+    expect(vi.mocked(emitNotification)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'ai_review.escalated',
+        userId: SUBMITTER_ID,
+        workspaceId: WORKSPACE_ID,
+      }),
+    )
+  })
+
+  it('pass does NOT emit any notification (silence is golden)', async () => {
+    const s = makeDb({ selectQueue: [[customDesignerRow()]] })
+    mountDb(s)
+    vi.mocked(runReviewAgentWithRetry).mockResolvedValueOnce({
+      payload: {
+        verdict: 'pass',
+        score: 92,
+        dimensions: {},
+        reasoning: 'looks good',
+      },
+      usage: {
+        model: 'claude-haiku-4-5-20251001',
+        inputTokens: 10,
+        outputTokens: 5,
+      },
+    })
+    await scheduleAIReviewIfMissing({ annotationId: ANNOTATION_ID })
+    expect(vi.mocked(emitNotification)).not.toHaveBeenCalled()
+  })
+
+  it('agent failure does NOT emit a notification (admin sees the audit log)', async () => {
+    const s = makeDb({ selectQueue: [[customDesignerRow()]] })
+    mountDb(s)
+    vi.mocked(runReviewAgentWithRetry).mockRejectedValueOnce(
+      new Error('LLM exploded'),
+    )
+    await scheduleAIReviewIfMissing({ annotationId: ANNOTATION_ID })
+    expect(vi.mocked(emitNotification)).not.toHaveBeenCalled()
   })
 })
