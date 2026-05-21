@@ -29,6 +29,20 @@ const TIMELINE_EVENT_TYPES = [
   'annotation.approved',
   'annotation.rejected',
   'annotation.review_replied',
+  /**
+   * Finals P2/P3 — AI Review Agent events (D9 emission, D12 timeline).
+   * The scheduler emits these in
+   * `src/lib/actions/ai-review-submission.ts`:
+   *
+   *   started   — pending verdict row inserted; topic moved to ai_review
+   *   completed — agent returned a pass/human_review verdict
+   *   sent_back — agent returned send_back; topic returned to drafting
+   *   failed    — agent exhausted retries; topic rolled back to submitted
+   */
+  'ai_review.started',
+  'ai_review.completed',
+  'ai_review.sent_back',
+  'ai_review.failed',
 ] as const
 
 export type TimelineEventType = (typeof TIMELINE_EVENT_TYPES)[number]
@@ -97,7 +111,21 @@ export async function getAnnotationAuditTimeline(opts: {
         ? p.message
         : typeof p.feedback === 'string'
           ? p.feedback
-          : ''
+          : // Finals D12 — AI Review Agent events carry their text under
+            // `reason` (send_back) or `error` (failed). Surface both via
+            // the same message slot the human events use.
+            typeof p.reason === 'string'
+            ? p.reason
+            : typeof p.error === 'string'
+              ? p.error
+              : ''
+    // For AI events the "decision" semantic is the verdict label.
+    const decision =
+      typeof p.decision === 'string'
+        ? p.decision
+        : typeof p.verdict === 'string'
+          ? p.verdict
+          : null
     return {
       eventId: r.id,
       ts: r.ts,
@@ -106,7 +134,7 @@ export async function getAnnotationAuditTimeline(opts: {
       actorDisplayName: u?.displayName ?? null,
       actorEmail: u?.email ?? null,
       message,
-      decision: typeof p.decision === 'string' ? p.decision : null,
+      decision,
       reviewerRole:
         typeof p.reviewerRole === 'string' ? p.reviewerRole : null,
     }

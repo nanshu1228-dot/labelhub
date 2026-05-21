@@ -44,6 +44,11 @@ import {
 } from '@/lib/db/schema'
 import { requireWorkspaceQC } from '@/lib/auth/guards'
 import {
+  applyTransition,
+  IllegalTransitionError,
+  type StageAction,
+} from '@/lib/quality/state-machine'
+import {
   ConflictError,
   NotFoundError,
 } from '@/lib/errors'
@@ -91,13 +96,6 @@ export async function qcReviewAnnotation(
 
   const { user, role } = await requireWorkspaceQC(task.workspaceId)
 
-  // QC can only act on annotations in flight. Anything already accepted /
-  // rejected / awaiting acceptance is past the QC stage.
-  if (topic.status !== 'submitted' && topic.status !== 'reviewing') {
-    throw new ConflictError(
-      `Cannot QC-review an annotation whose topic is ${topic.status}.`,
-    )
-  }
   // Don't allow self-QC: the submitter can't QC their own work.
   if (annotation.userId === user.id) {
     throw new ConflictError(
@@ -105,20 +103,34 @@ export async function qcReviewAnnotation(
     )
   }
 
-  const transition = {
-    pass: {
-      next: 'awaiting_acceptance' as const,
-      event: 'annotation.qc_passed' as const,
-    },
-    request_revision: {
-      next: 'revising' as const,
-      event: 'annotation.revised' as const,
-    },
-  } satisfies Record<
-    typeof parsed.decision,
-    { next: 'awaiting_acceptance' | 'revising'; event: string }
-  >
-  const { next, event } = transition[parsed.decision]
+  // Delegate the legality + role check to the canonical state machine
+  // (src/lib/quality/state-machine.ts). The machine throws
+  // IllegalTransitionError when the topic isn't in submitted/reviewing
+  // (covers what the ad-hoc check used to do) and ForbiddenRoleError
+  // when the role doesn't match.
+  const action: StageAction =
+    parsed.decision === 'pass' ? 'qc_pass' : 'qc_request_revision'
+  let transition: ReturnType<typeof applyTransition>
+  try {
+    // requireWorkspaceQC narrowed `role` to admin|qc above. The
+    // state machine's Actor type is the same set + 'annotator'|'ai';
+    // a cast is safe here.
+    transition = applyTransition({
+      from: topic.status,
+      action,
+      role: role as 'admin' | 'qc',
+    })
+  } catch (e) {
+    if (e instanceof IllegalTransitionError) {
+      throw new ConflictError(
+        `Cannot QC-review an annotation whose topic is ${topic.status}.`,
+      )
+    }
+    throw e
+  }
+  const next = transition.to as 'awaiting_acceptance' | 'revising'
+  const event =
+    parsed.decision === 'pass' ? 'annotation.qc_passed' : 'annotation.revised'
 
   const updated = await db
     .update(topics)

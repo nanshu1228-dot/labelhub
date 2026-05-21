@@ -58,6 +58,33 @@ const EVENT_META: Record<
     bg: 'var(--panel2)',
     fg: 'var(--mute)',
   },
+  // Finals D12 — AI Review Agent events. Distinct palette (violet
+  // tint) so reviewers eyeballing the timeline see AI vs human moves
+  // at a glance.
+  'ai_review.started': {
+    dot: '🪄',
+    label: 'AI review started',
+    bg: 'oklch(0.55 0.18 320 / 0.08)',
+    fg: 'oklch(0.55 0.18 320)',
+  },
+  'ai_review.completed': {
+    dot: '✓',
+    label: 'AI verdict',
+    bg: 'oklch(0.55 0.18 320 / 0.08)',
+    fg: 'oklch(0.55 0.18 320)',
+  },
+  'ai_review.sent_back': {
+    dot: '↻',
+    label: 'AI sent back',
+    bg: 'oklch(0.7 0.14 75 / 0.15)',
+    fg: 'oklch(0.7 0.14 75)',
+  },
+  'ai_review.failed': {
+    dot: '⚠',
+    label: 'AI failed',
+    bg: 'var(--panel2)',
+    fg: 'var(--danger)',
+  },
 }
 
 /**
