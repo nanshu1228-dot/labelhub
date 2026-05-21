@@ -1,7 +1,7 @@
 'use server'
 
 /**
- * AI Review Agent — per-submission auto-trigger — Finals P2 D7.
+ * AI Review Agent — per-submission auto-trigger — Finals P2 D7+D8.
  *
  * Spec 4.4 calls this out by name (AI 审核 Agent ⭐⭐⭐). On every
  * annotation submit transition, an after-hook fires this scheduler
@@ -9,15 +9,12 @@
  *
  *   1. checks whether a verdict already exists for this annotation
  *      (idempotency_key = sha256(annotationId + judgeId + schemaV))
- *   2. inserts a `pending` row in `ai_submission_verdicts` for the
- *      worker to pick up (or to call inline if quota allows)
+ *   2. inserts a `pending` row in `ai_submission_verdicts`
  *   3. invokes the function-calling Claude path (D8) and writes the
- *      structured verdict back
+ *      structured verdict back to the row
  *
- * D7 ships the schema + scheduler skeleton ONLY — no actual Claude
- * call yet. The row sits in `pending` and a future commit (D8) wires
- * the LLM. This staging keeps the after-hook wiring testable today
- * without burning quota.
+ * The annotation submit path stays unchanged in latency: this whole
+ * function runs in Vercel's after() window, NOT the request path.
  *
  * Design mirrors `src/lib/actions/trajectory-hints.ts:248-272`:
  *   - exported `scheduleAIReviewIfMissing` for use from `after()`
@@ -25,8 +22,10 @@
  *   - never throws — surface failures via console.warn so the
  *     after-window doesn't block the user response
  *
- * The annotation submit path stays unchanged in latency: this whole
- * function runs in Vercel's after() window, NOT the request path.
+ * Quota: D8 calls `assertWithinDailyAIQuota` against the submitter
+ * BEFORE the Claude call; quota-exhausted submits leave a 'failed'
+ * verdict with status='quota_exhausted' so the audit log carries
+ * the signal.
  */
 
 import { z } from 'zod'
@@ -40,6 +39,11 @@ import {
   topics,
 } from '@/lib/db/schema'
 import { uuidLike } from '@/lib/validators/uuid'
+import {
+  runReviewAgentWithRetry,
+  type ReviewDimension,
+} from '@/lib/ai/review-agent'
+import { assertWithinDailyAIQuota, logAICall } from '@/lib/ai/quota'
 
 const inputSchema = z.object({
   annotationId: uuidLike,
@@ -80,13 +84,19 @@ export async function scheduleAIReviewIfMissing(input: {
     const db = getDb()
     // Annotation → Topic → Task in one round trip. `annotation.taskId`
     // doesn't exist; the task lives behind the topic that owns the
-    // annotation.
+    // annotation. Also pull the submitter + workspaceId so we can
+    // attribute quota correctly.
     const [row] = await db
       .select({
         annotationId: annotations.id,
+        annotationUserId: annotations.userId,
+        annotationPayload: annotations.payload,
+        topicId: annotations.topicId,
         taskId: topics.taskId,
+        workspaceId: tasks.workspaceId,
         templateMode: tasks.templateMode,
         templateConfig: tasks.templateConfig,
+        topicItemData: topics.itemData,
       })
       .from(annotations)
       .innerJoin(topics, eq(topics.id, annotations.topicId))
@@ -101,14 +111,23 @@ export async function scheduleAIReviewIfMissing(input: {
     }
 
     const cfg =
-      (task.templateConfig as { aiAgent?: { enabled?: boolean; judgeId?: string } } | null)
-        ?.aiAgent
+      (task.templateConfig as {
+        aiAgent?: {
+          enabled?: boolean
+          judgeId?: string
+          promptTemplate?: string
+          dimensions?: ReviewDimension[]
+          passAt?: number
+          sendBackAt?: number
+          tier?: 'fast' | 'default' | 'premium'
+        }
+      } | null)?.aiAgent
     const enabled =
       cfg?.enabled ?? task.templateMode === 'custom-designer'
     if (!enabled) return
 
     const judgeId = cfg?.judgeId ?? 'default'
-    const schemaVersion = 1 // D8 reads this from the FormSchema row.
+    const schemaVersion = 1 // D9 reads this from the FormSchema row.
     const key = idempotencyKey({
       annotationId: parsed.annotationId,
       judgeId,
@@ -117,11 +136,13 @@ export async function scheduleAIReviewIfMissing(input: {
 
     // Insert pending row. ON CONFLICT DO NOTHING relies on the
     // ai_verdicts_idempotency_uniq index from the D1 migration.
-    await db
+    // If the row already exists, the LLM call below was already done
+    // (or in flight from another submit) — short-circuit out.
+    const inserted = await db
       .insert(aiSubmissionVerdicts)
       .values({
         annotationId: parsed.annotationId,
-        judgeId: null, // wired in D8 once judges are workspace-scoped
+        judgeId: null, // wired in D9 once judges are workspace-scoped
         status: 'pending',
         idempotencyKey: key,
         attempts: 0,
@@ -129,10 +150,101 @@ export async function scheduleAIReviewIfMissing(input: {
       .onConflictDoNothing({
         target: aiSubmissionVerdicts.idempotencyKey,
       })
+      .returning({ id: aiSubmissionVerdicts.id })
 
-    // D8 will call into src/lib/ai/review-agent.ts here. The pending
-    // row is the contract — anything reading the table can see a
-    // verdict is in flight.
+    if (inserted.length === 0) return
+
+    const verdictRowId = inserted[0].id
+
+    // Default prompt + dimensions for owners who haven't customized.
+    // Keeps the default-on behavior for custom-designer tasks useful
+    // out of the box.
+    const promptTemplate =
+      cfg?.promptTemplate ??
+      'Review this annotation for completeness, accuracy, and adherence ' +
+        'to the task instructions. Pass if it is publishable, send_back ' +
+        'if it needs minor edits, human_review if it requires expert ' +
+        'judgment.'
+    const dimensions: ReviewDimension[] =
+      cfg?.dimensions ??
+      [
+        { id: 'completeness', name: 'Completeness' },
+        { id: 'accuracy', name: 'Accuracy' },
+        { id: 'clarity', name: 'Clarity' },
+      ]
+
+    // Quota gate. Attribute to the submitter so heavy users see the
+    // limit, not the workspace owner.
+    try {
+      await assertWithinDailyAIQuota(row.annotationUserId)
+    } catch (e) {
+      await db
+        .update(aiSubmissionVerdicts)
+        .set({
+          status: 'failed',
+          errorText:
+            e instanceof Error ? e.message : 'quota assertion failed',
+          finishedAt: new Date(),
+        })
+        .where(eq(aiSubmissionVerdicts.id, verdictRowId))
+      return
+    }
+
+    // Run the LLM. Retry with backoff (3 attempts) inside the agent;
+    // we bump the verdict-row attempts counter after each completion
+    // so the audit log knows how many tries this verdict took.
+    try {
+      const { payload, usage } = await runReviewAgentWithRetry({
+        tier: cfg?.tier,
+        promptTemplate,
+        dimensions,
+        submissionJson: JSON.stringify(row.annotationPayload ?? {}),
+        contextText:
+          row.topicItemData != null
+            ? JSON.stringify(row.topicItemData).slice(0, 6000)
+            : undefined,
+        passAt: cfg?.passAt,
+        sendBackAt: cfg?.sendBackAt,
+        feature: 'ai-review-agent',
+      })
+
+      await db
+        .update(aiSubmissionVerdicts)
+        .set({
+          status: 'completed',
+          verdict: payload.verdict,
+          scores: payload.dimensions,
+          reasoning: payload.reasoning,
+          attempts: 1,
+          finishedAt: new Date(),
+        })
+        .where(eq(aiSubmissionVerdicts.id, verdictRowId))
+
+      // Log the token usage so the workspace's daily budget
+      // dashboard can attribute the cost.
+      try {
+        await logAICall({
+          userId: row.annotationUserId,
+          feature: 'ai-review-agent',
+          model: usage.model,
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+          workspaceId: row.workspaceId,
+        })
+      } catch {
+        // Cost-log failure shouldn't roll back the verdict.
+      }
+    } catch (e) {
+      await db
+        .update(aiSubmissionVerdicts)
+        .set({
+          status: 'failed',
+          errorText: e instanceof Error ? e.message : 'agent failed',
+          attempts: 3,
+          finishedAt: new Date(),
+        })
+        .where(eq(aiSubmissionVerdicts.id, verdictRowId))
+    }
   } catch (e) {
     // After-hook isolation — never bubble up to the caller. Submit
     // latency stays unchanged even if the scheduler crashes.
