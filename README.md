@@ -8,7 +8,7 @@
 
 **Live demo →** [`labelhub-gamma.vercel.app`](https://labelhub-gamma.vercel.app)
 
-[![Tests](https://img.shields.io/badge/tests-421%20passing-brightgreen)]() [![Build](https://img.shields.io/badge/build-passing-brightgreen)]() [![Next.js](https://img.shields.io/badge/next-16.2.6-black)]() [![License](https://img.shields.io/badge/license-MIT-blue)]()
+[![Tests](https://img.shields.io/badge/tests-748%20passing-brightgreen)]() [![Build](https://img.shields.io/badge/build-passing-brightgreen)]() [![Next.js](https://img.shields.io/badge/next-16.2.6-black)]() [![License](https://img.shields.io/badge/license-MIT-blue)]()
 
 ---
 
@@ -110,6 +110,52 @@ your call appears with the full reasoning trace, both turns side by
 side.
 
 </details>
+
+## Finals build (spec 4.1 – 4.6)
+
+The prelims thesis ("Annotation-Aware LLM Gateway") stays the
+differentiator. Finals adds the missing platform layers so the
+gateway has somewhere to land the captured signal.
+
+| Spec section | Surface | File pointer |
+|---|---|---|
+| **4.1 任务导入** (multi-format) | `/admin/tasks/[id]/import` + parser registry for JSON / JSONL / CSV / Excel; 3 distribution strategies | `src/lib/import/parsers/*` · `src/lib/import/distribution.ts` |
+| **4.2 动态表单 Designer** ⭐⭐⭐ | `/admin/forms/*` 11-material drag-drop canvas; JSON-Schema-draft-07 serializer; field linkage + custom validation; group + tab-layout containers; Designer/Renderer ESLint-decoupled | `src/components/form-designer/*` · `src/components/form-materials/*` · `src/components/form-renderer/*` · `src/lib/form-designer/*` |
+| **4.3 Labeler workbench** | `/my/queue` + per-field 🪄 AI assist on `llm-trigger` material; keyboard nav (J/K, arrows); loading skeleton; mobile-responsive | `src/app/api/llm-assist/*` · `src/components/form-materials/llm-trigger-field.tsx` · `src/components/labeler/use-prev-next-nav.ts` |
+| **4.4 AI 审核 Agent** ⭐⭐⭐ | Per-submission auto-trigger via `after()`; Function Calling structured verdict (`pass`/`send_back`/`human_review`); idempotency + retry + quota gate; owner config UI; verdict routes topic state | `src/lib/actions/ai-review-submission.ts` · `src/lib/ai/review-agent.ts` · `src/app/workspaces/[id]/tasks/[taskId]/ai-agent/*` · [`docs/AI_AGENT.md`](docs/AI_AGENT.md) |
+| **4.5 审核工作流** | `/review` queue (cross-workspace, AI-priority sort); `/review/[id]` single view with diff + verdict panel; batch approve / send-back; formal state machine; audit timeline with AI events | `src/app/review/*` · `src/components/review/*` · `src/lib/quality/state-machine.ts` · `src/lib/actions/review-batch.ts` |
+| **4.6 多格式导出** | `/api/export/dataset?encoding=json|jsonl|csv|excel`; formatter registry mirrors the import parsers; field mapping config | `src/lib/export/formatters/*` · `src/app/api/export/dataset/*` |
+
+**State machine (D12)**: 19 documented transitions, 4 actors (annotator / ai / qc / admin), idempotency-on-terminal-only. `src/lib/quality/state-machine.ts` is the canonical authority; illegal moves throw `IllegalTransitionError`. Lifecycle:
+
+```
+drafting ─submit→ ai_review ─ai_pass→ reviewing ─qc_pass→ awaiting_acceptance ─admin_accept→ approved
+                          └ai_send_back→ drafting (with ai_send_back revision)
+                          └ai_human_review→ reviewing (priority flag)
+                          └ai_fail→ submitted (human takeover)
+```
+
+**Test inventory**: 748 unit + integration tests across 50 files. Coverage focus areas:
+- Designer ↔ JSON Schema round-trip (24 tests)
+- State-machine matrix (44 tests, legal / illegal / idempotent / role-gated)
+- AI Review Agent: function calling + retry + verdict routing + notification fan-out (37 tests)
+- Multi-format parsers + formatters (71 tests; round-trips parser ↔ formatter)
+- Review batch ops + queue isolation (18 tests)
+
+**3-minute quickstart for judges:**
+1. Open the Designer at `https://labelhub-gamma.vercel.app/admin/forms/new`. Drag 4-5 widgets onto the canvas; the right-pane property editors tune each one. Save.
+2. The saved schema is selectable when creating a `custom-designer` task at `/workspaces/[id]/tasks/new` — assign topics via the importer at `/admin/tasks/[id]/import` (paste JSONL or upload .xlsx).
+3. Switch to a Labeler account at `/my/queue`. Click a topic → the Renderer hydrates the schema. Click 🪄 to invoke the AI assist; submit when done.
+4. Submit fires the AI Review Agent in Vercel's `after()` window. Refresh `/review` to see the verdict + priority sort.
+5. As QC, approve or send-back via the queue's batch bar OR the single-annotation view at `/review/[id]`.
+6. Audit timeline on the review page shows `ai_review.started → ai_review.completed`-or-`sent_back → qc_passed` lineage.
+7. Export the result as Excel via `/api/export/dataset?versionId=…&encoding=excel`.
+
+Deeper reading:
+- [`docs/AI_AGENT.md`](docs/AI_AGENT.md) — AI Review Agent lifecycle + Function Calling + retry semantics + idempotency
+- [`docs/API.md`](docs/API.md) — every HTTP endpoint + auth gate + error code
+- [`docs/ROLE_PERMISSIONS.md`](docs/ROLE_PERMISSIONS.md) — role × action matrix incl. all finals surfaces
+- [`docs/finals-plan.md`](docs/finals-plan.md) — 20-day execution plan + risk matrix + cut list
 
 ## Architecture
 
