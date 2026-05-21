@@ -113,6 +113,18 @@ const EXPECTED_GUARDS: Record<string, RegExp> = {
 const ALLOWED_NO_GUARD: Set<string> = new Set([
   // Supabase auth bridge — sign-in/up flows don't have workspace context.
   'auth.ts',
+  // Finals P2 D7 — AI Review scheduler runs in Vercel's after() window
+  // AFTER the submitter has been guarded by submitAnnotation's
+  // requireWorkspaceMember. The scheduler operates on annotation-ID
+  // alone and walks back to the workspace; opening it directly without
+  // a valid annotationId is a no-op (Zod parse fails closed). The
+  // after-hook isolation contract (never throw, never block) is the
+  // safety guarantee here, not a guard call.
+  'ai-review-submission.ts',
+  // Pure helpers split out of ai-review-submission.ts so the
+  // 'use server' file can stay async-only (Next.js requirement).
+  // No DB / no auth touched here.
+  'ai-review-keys.ts',
 ])
 
 describe('Server-action guard presence', () => {

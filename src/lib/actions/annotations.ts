@@ -14,6 +14,7 @@ import { fanoutWebhook } from '@/lib/webhooks/fanout'
 import { emitNotification } from '@/lib/notifications/emit'
 import { recomputeAndPersistTrust } from '@/lib/quality/trust-recompute'
 import { scanInviteRewardOnApproval } from '@/lib/billing/invite-rewards'
+import { scheduleAIReviewIfMissing } from '@/lib/actions/ai-review-submission'
 import { readTrustStatus } from '@/lib/actions/trust-status'
 import { writeRevision } from '@/lib/quality/annotation-revisions'
 import { uuidLike } from '@/lib/validators/uuid'
@@ -421,6 +422,19 @@ export async function submitAnnotation(input: z.infer<typeof submitSchema>) {
     payload: validatedPayload,
     kind: 'submit',
   })
+
+  // Finals P2 D7: schedule the AI Review Agent in Vercel's after()
+  // window so the submit response stays snappy. The scheduler is
+  // idempotent (UNIQUE on idempotency_key) so re-submits don't
+  // re-spend quota; D8 wires the actual Claude call against the
+  // pending row created here. Mirror of the trajectory-hints
+  // pattern (src/lib/actions/trajectory-hints.ts:248-272).
+  after(() =>
+    scheduleAIReviewIfMissing({ annotationId: annotation.id }).catch((e) => {
+      // eslint-disable-next-line no-console
+      console.warn('[ai-review] schedule failed', e)
+    }),
+  )
 
   return annotation
 }
