@@ -288,16 +288,81 @@ export function DesignerShell({
 
   return (
     <div
-      className="grid h-screen"
+      className="lh-designer-grid"
       style={{
-        gridTemplateColumns: '240px 1fr 320px',
         background: 'var(--bg)',
         color: 'var(--text)',
       }}
     >
+      <style>{`
+        /* Designer responsive grid — D20-B.
+         * Desktop (≥1280px): classic 3-column (palette / canvas / properties).
+         * Tablet (1024-1279px): 2-column (palette + canvas); properties moves
+         *   under the canvas as a stacked panel.
+         * Narrow (<1024px): single column; palette becomes a horizontal
+         *   chip-row at the top; properties stays under the canvas.
+         * Heights collapse to min-content under 1024px so the page
+         *   scrolls instead of forcing internal scroll inside aside panes.
+         */
+        .lh-designer-grid {
+          display: grid;
+          min-height: 100vh;
+          grid-template-columns: 1fr;
+          grid-template-areas:
+            'palette'
+            'canvas'
+            'properties';
+        }
+        .lh-designer-grid > [data-region='palette'] {
+          grid-area: palette;
+          max-height: 220px;
+          overflow-x: auto;
+          overflow-y: auto;
+        }
+        .lh-designer-grid > [data-region='canvas'] {
+          grid-area: canvas;
+          min-height: 480px;
+        }
+        .lh-designer-grid > [data-region='properties'] {
+          grid-area: properties;
+          max-height: 60vh;
+        }
+        @media (min-width: 1024px) {
+          .lh-designer-grid {
+            grid-template-columns: 240px minmax(0, 1fr);
+            grid-template-rows: 1fr;
+            grid-template-areas:
+              'palette canvas'
+              'palette properties';
+            height: 100vh;
+          }
+          .lh-designer-grid > [data-region='palette'] {
+            max-height: none;
+            overflow-x: visible;
+            overflow-y: auto;
+          }
+          .lh-designer-grid > [data-region='canvas'] {
+            overflow-y: auto;
+          }
+          .lh-designer-grid > [data-region='properties'] {
+            max-height: 50vh;
+            overflow-y: auto;
+          }
+        }
+        @media (min-width: 1280px) {
+          .lh-designer-grid {
+            grid-template-columns: 240px minmax(0, 1fr) 320px;
+            grid-template-areas: 'palette canvas properties';
+          }
+          .lh-designer-grid > [data-region='properties'] {
+            max-height: none;
+          }
+        }
+      `}</style>
       {/* PALETTE */}
       <aside
-        className="border-r overflow-y-auto p-4"
+        data-region="palette"
+        className="border-r p-4"
         style={{ borderColor: 'var(--line)', background: 'var(--panel)' }}
       >
         {templates.length > 0 ? (
@@ -395,7 +460,7 @@ export function DesignerShell({
       </aside>
 
       {/* CANVAS */}
-      <main className="overflow-y-auto p-6">
+      <main data-region="canvas" className="p-6">
         <div className="mb-4 flex items-baseline justify-between">
           <div>
             <div className="lbl" style={{ color: 'var(--mute)' }}>
@@ -511,7 +576,8 @@ export function DesignerShell({
 
       {/* PROPERTIES */}
       <aside
-        className="border-l overflow-y-auto p-4"
+        data-region="properties"
+        className="border-l p-4"
         style={{ borderColor: 'var(--line)', background: 'var(--panel)' }}
       >
         <div className="lbl mb-3" style={{ color: 'var(--mute)' }}>

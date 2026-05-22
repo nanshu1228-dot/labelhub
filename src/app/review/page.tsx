@@ -259,8 +259,9 @@ function FilterChip({
   return (
     <Link
       href={href}
-      className="ts-12 mono px-2 py-1 rounded"
+      className="ts-12 mono px-3 rounded inline-flex items-center"
       style={{
+        minHeight: 36,
         background: active ? 'var(--accent-soft)' : 'var(--panel2)',
         border: `1px solid ${active ? 'var(--accent-line)' : 'var(--line)'}`,
         color: 'var(--text)',

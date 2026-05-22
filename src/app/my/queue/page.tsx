@@ -496,24 +496,24 @@ function TemplateModeFilter({
   function href(mode: string | null): string {
     return templateModeFilterHref({ mode, workspaceId })
   }
+  const chipStyle = (active: boolean): React.CSSProperties => ({
+    background: active ? 'var(--accent)' : 'var(--panel2)',
+    color: active ? 'white' : 'var(--text)',
+    border: '1px solid var(--line)',
+    borderRadius: 6,
+    padding: '0 12px',
+    minHeight: 36,
+    fontSize: 12,
+    textDecoration: 'none',
+    display: 'inline-flex',
+    alignItems: 'center',
+  })
   return (
     <div className="flex items-center gap-2 flex-wrap mb-6">
       <span className="lbl" style={{ color: 'var(--mute2)' }}>
         mode:
       </span>
-      <Link
-        href={href(null)}
-        className="mono"
-        style={{
-          background: activeMode === null ? 'var(--accent)' : 'var(--panel2)',
-          color: activeMode === null ? 'white' : 'var(--text)',
-          border: '1px solid var(--line)',
-          borderRadius: 4,
-          padding: '2px 10px',
-          fontSize: 11,
-          textDecoration: 'none',
-        }}
-      >
+      <Link href={href(null)} className="mono" style={chipStyle(activeMode === null)}>
         all
       </Link>
       {modes.map((m) => (
@@ -521,16 +521,7 @@ function TemplateModeFilter({
           key={m}
           href={href(m)}
           className="mono"
-          style={{
-            background:
-              activeMode === m ? 'var(--accent)' : 'var(--panel2)',
-            color: activeMode === m ? 'white' : 'var(--text)',
-            border: '1px solid var(--line)',
-            borderRadius: 4,
-            padding: '2px 10px',
-            fontSize: 11,
-            textDecoration: 'none',
-          }}
+          style={chipStyle(activeMode === m)}
         >
           {m}
         </Link>
@@ -547,6 +538,22 @@ function WorkspaceFilter({
   activeWorkspaceId: string | null
 }) {
   if (workspaces.length <= 1) return null
+  const chipStyle = (
+    active: boolean,
+    extra?: React.CSSProperties,
+  ): React.CSSProperties => ({
+    background: active ? 'var(--accent)' : 'var(--panel2)',
+    color: active ? 'white' : 'var(--text)',
+    border: '1px solid var(--line)',
+    borderRadius: 6,
+    padding: '0 12px',
+    minHeight: 36,
+    fontSize: 12,
+    textDecoration: 'none',
+    display: 'inline-flex',
+    alignItems: 'center',
+    ...extra,
+  })
   return (
     <div className="flex items-center gap-2 flex-wrap mb-6">
       <span className="lbl" style={{ color: 'var(--mute2)' }}>
@@ -555,16 +562,7 @@ function WorkspaceFilter({
       <Link
         href="/my/queue"
         className="mono"
-        style={{
-          background:
-            activeWorkspaceId === null ? 'var(--accent)' : 'var(--panel2)',
-          color: activeWorkspaceId === null ? 'white' : 'var(--text)',
-          border: '1px solid var(--line)',
-          borderRadius: 4,
-          padding: '2px 10px',
-          fontSize: 11,
-          textDecoration: 'none',
-        }}
+        style={chipStyle(activeWorkspaceId === null)}
       >
         all
       </Link>
@@ -573,20 +571,9 @@ function WorkspaceFilter({
           key={w.workspaceId}
           href={`/my/queue?workspaceId=${w.workspaceId}`}
           className="mono trunc-1"
-          style={{
-            background:
-              activeWorkspaceId === w.workspaceId
-                ? 'var(--accent)'
-                : 'var(--panel2)',
-            color:
-              activeWorkspaceId === w.workspaceId ? 'white' : 'var(--text)',
-            border: '1px solid var(--line)',
-            borderRadius: 4,
-            padding: '2px 10px',
-            fontSize: 11,
-            textDecoration: 'none',
+          style={chipStyle(activeWorkspaceId === w.workspaceId, {
             maxWidth: 180,
-          }}
+          })}
         >
           {w.workspaceName}
         </Link>

@@ -69,14 +69,35 @@ export function ReviewDetail({ detail, qcReview }: ReviewDetailProps) {
   }
 
   return (
-    <div
-      className="grid gap-6"
-      style={{
-        gridTemplateColumns: 'minmax(0, 1.4fr) minmax(280px, 1fr)',
-      }}
-    >
+    <div className="lh-review-detail-grid">
+      <style>{`
+        /* Review-detail responsive — D20-B.
+         * Desktop (≥1024px): 2-column with the form payload on the
+         *   left + AI verdict / decision form on the right.
+         * Tablet / mobile (<1024px): stacked — verdict + decision
+         *   stack ABOVE the form payload so the reviewer sees the
+         *   AI signal first, then reads the labeling on a long
+         *   single-column scroll.
+         */
+        .lh-review-detail-grid {
+          display: grid;
+          gap: 24px;
+          grid-template-columns: 1fr;
+        }
+        .lh-review-detail-grid > [data-pane='right'] {
+          order: -1;
+        }
+        @media (min-width: 1024px) {
+          .lh-review-detail-grid {
+            grid-template-columns: minmax(0, 1.4fr) minmax(280px, 1fr);
+          }
+          .lh-review-detail-grid > [data-pane='right'] {
+            order: 0;
+          }
+        }
+      `}</style>
       {/* LEFT — form + diff */}
-      <div className="flex flex-col gap-6">
+      <div data-pane="left" className="flex flex-col gap-6">
         <section
           className="rounded p-4"
           style={{
@@ -152,7 +173,7 @@ export function ReviewDetail({ detail, qcReview }: ReviewDetailProps) {
       </div>
 
       {/* RIGHT — AI verdict panel + review form */}
-      <div className="flex flex-col gap-6">
+      <div data-pane="right" className="flex flex-col gap-6">
         <section
           className="rounded p-4"
           style={{

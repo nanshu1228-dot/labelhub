@@ -117,8 +117,9 @@ export function ReviewQueueTable({
             type="button"
             disabled={pending}
             onClick={() => applyBatch('approve')}
-            className="ts-12 mono px-3 py-1 rounded"
+            className="ts-12 mono px-4 rounded inline-flex items-center justify-center"
             style={{
+              minHeight: 40,
               background: 'oklch(0.6 0.18 280)',
               color: 'white',
               border: '1px solid oklch(0.6 0.18 280 / 0.6)',
@@ -131,8 +132,9 @@ export function ReviewQueueTable({
             type="button"
             disabled={pending}
             onClick={() => applyBatch('request_revision')}
-            className="ts-12 mono px-3 py-1 rounded"
+            className="ts-12 mono px-4 rounded inline-flex items-center justify-center"
             style={{
+              minHeight: 40,
               background: 'transparent',
               color: 'var(--danger)',
               border: '1px solid oklch(0.55 0.2 25 / 0.4)',
@@ -144,8 +146,9 @@ export function ReviewQueueTable({
           <button
             type="button"
             onClick={() => setSelected(new Set())}
-            className="ts-12 mono px-2 py-1 rounded ml-auto"
+            className="ts-12 mono px-3 rounded ml-auto inline-flex items-center justify-center"
             style={{
+              minHeight: 40,
               background: 'transparent',
               color: 'var(--mute)',
               border: '1px solid var(--line)',
@@ -169,20 +172,43 @@ export function ReviewQueueTable({
         </div>
       ) : null}
 
+      <div
+        style={{
+          overflowX: 'auto',
+          // Tablet + mobile show a horizontal scrollbar when columns
+          // don't fit. Desktop has plenty of room; we still keep the
+          // wrapper so a stretched table never breaks layout.
+          WebkitOverflowScrolling: 'touch',
+        }}
+      >
       <table
-        className="w-full ts-13"
-        style={{ borderCollapse: 'separate', borderSpacing: 0 }}
+        className="ts-13"
+        style={{
+          borderCollapse: 'separate',
+          borderSpacing: 0,
+          width: '100%',
+          minWidth: 720,
+        }}
       >
         <thead>
           <tr style={{ color: 'var(--mute)' }}>
-            <Th width={32}>
-              <input
-                type="checkbox"
-                checked={allSelected}
-                onChange={toggleAll}
-                style={{ accentColor: 'oklch(0.6 0.18 280)' }}
-                aria-label="Select all rows"
-              />
+            <Th width={44}>
+              <label
+                className="inline-flex items-center justify-center"
+                style={{ width: 40, height: 40, cursor: 'pointer' }}
+              >
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  onChange={toggleAll}
+                  style={{
+                    accentColor: 'oklch(0.6 0.18 280)',
+                    width: 18,
+                    height: 18,
+                  }}
+                  aria-label="Select all rows"
+                />
+              </label>
             </Th>
             <Th>Submitted</Th>
             <Th>Workspace · Task</Th>
@@ -204,13 +230,22 @@ export function ReviewQueueTable({
                 }}
               >
                 <Td>
-                  <input
-                    type="checkbox"
-                    checked={isSel}
-                    onChange={() => toggleOne(item.annotationId)}
-                    style={{ accentColor: 'oklch(0.6 0.18 280)' }}
-                    aria-label={`Select ${item.annotationId}`}
-                  />
+                  <label
+                    className="inline-flex items-center justify-center"
+                    style={{ width: 40, height: 40, cursor: 'pointer' }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isSel}
+                      onChange={() => toggleOne(item.annotationId)}
+                      style={{
+                        accentColor: 'oklch(0.6 0.18 280)',
+                        width: 18,
+                        height: 18,
+                      }}
+                      aria-label={`Select ${item.annotationId}`}
+                    />
+                  </label>
                 </Td>
                 <Td>
                   <span className="mono">{formatDate(item.submittedAt)}</span>
@@ -258,8 +293,9 @@ export function ReviewQueueTable({
                 <Td>
                   <Link
                     href={`/review/${item.annotationId}`}
-                    className="ts-12 mono px-2 py-1 rounded"
+                    className="ts-12 mono px-3 rounded inline-flex items-center"
                     style={{
+                      minHeight: 36,
                       background: 'var(--panel2)',
                       border: '1px solid var(--line)',
                       color: 'var(--text)',
@@ -274,6 +310,7 @@ export function ReviewQueueTable({
           })}
         </tbody>
       </table>
+      </div>
     </div>
   )
 }
