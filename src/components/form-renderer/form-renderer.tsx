@@ -24,7 +24,7 @@
  * without ever touching the canvas / palette / property-panel code.
  */
 
-import { useCallback, useMemo, useState } from 'react'
+import { memo, useCallback, useMemo, useState } from 'react'
 import type {
   FieldNode,
   FormSchema,
@@ -159,7 +159,7 @@ export function FormRenderer({
   )
 }
 
-function RenderedField({
+function RenderedFieldImpl({
   field,
   value,
   allValues,
@@ -231,6 +231,41 @@ function RenderedField({
     </div>
   )
 }
+
+/**
+ * D20-C — RenderedField wrapped in React.memo with a value-only
+ * comparator so a keystroke in sibling field N doesn't re-render
+ * fields 1..N-1 + N+1..50.
+ *
+ * Comparator ignores callback identity (parent re-creates these
+ * inline; they're invoked, not introspected) but checks:
+ *   - field reference (same FieldNode → same schema slice)
+ *   - value identity (changes when this field's slot changed)
+ *   - allValues reference (changes when any sibling moved; needed
+ *     by llm-trigger's allValues prop, but for plain fields it's
+ *     a forced-equal because the parent splats a fresh dict each
+ *     time. We accept that compromise for fields that DON'T use
+ *     allValues — see useFieldNeedsAllValues below.)
+ *   - itemData reference, readOnly flag
+ *
+ * `llm-trigger` material is the only one that reads `allValues`; for
+ * every other kind we can ignore that prop entirely. We detect this
+ * by reading the field's kind in the comparator.
+ */
+const RenderedField = memo(RenderedFieldImpl, (prev, next) => {
+  if (prev.field !== next.field) return false
+  if (prev.value !== next.value) return false
+  if (prev.readOnly !== next.readOnly) return false
+  if (prev.itemData !== next.itemData) return false
+  // llm-trigger consumes allValues; for it, we must invalidate when
+  // the dict shifts. Every other kind can ignore allValues changes
+  // (its own `value` slot already captures its state).
+  const needsAllValues =
+    next.field.kind === 'llm-trigger' ||
+    (next.field.children?.some((c) => c.kind === 'llm-trigger') ?? false)
+  if (needsAllValues && prev.allValues !== next.allValues) return false
+  return true
+})
 
 /**
  * Group container — renders children inline. The group's value is

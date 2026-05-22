@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
@@ -94,6 +94,69 @@ function safeMediaUrl(url: string): string | null {
   return null
 }
 
+/**
+ * Module-level LRU cache for the markdown render output — D20-C.
+ *
+ * Without this, each ShowItem instance has its own useMemo cache.
+ * When the same content (e.g. the seed dataset's duplicated prompts
+ * across markdown rows) shows up in N ShowItems on the same page,
+ * react-markdown's tree-build runs N times. The LRU shares the
+ * compiled React tree across instances; subsequent renders return
+ * the cached node directly.
+ *
+ * Bounded size 50 — well past the seed's realistic duplicate count.
+ * Eviction is naive FIFO (Map preserves insertion order); good
+ * enough for a presentational cache.
+ */
+const MARKDOWN_CACHE = new Map<string, ReactNode>()
+const MARKDOWN_CACHE_LIMIT = 50
+
+function renderMarkdownCached(source: string): ReactNode {
+  const cached = MARKDOWN_CACHE.get(source)
+  if (cached !== undefined) return cached
+  const node: ReactNode = (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      urlTransform={(href) => {
+        if (!href) return ''
+        if (/^(javascript|vbscript|file):/i.test(href)) return ''
+        return href
+      }}
+      components={{
+        // eslint-disable-next-line @next/next/no-img-element, jsx-a11y/alt-text
+        img: ({ node: _node, ...props }) => (
+          // eslint-disable-next-line @next/next/no-img-element, jsx-a11y/alt-text
+          <img
+            {...props}
+            style={{
+              maxWidth: '100%',
+              borderRadius: 4,
+              ...(props.style ?? {}),
+            }}
+          />
+        ),
+      }}
+    >
+      {source}
+    </ReactMarkdown>
+  )
+  if (MARKDOWN_CACHE.size >= MARKDOWN_CACHE_LIMIT) {
+    // FIFO eviction — drop the oldest entry.
+    const oldest = MARKDOWN_CACHE.keys().next().value
+    if (oldest !== undefined) MARKDOWN_CACHE.delete(oldest)
+  }
+  MARKDOWN_CACHE.set(source, node)
+  return node
+}
+
+/**
+ * Test-only: clear the markdown LRU cache between tests so the
+ * cache state doesn't leak across files.
+ */
+export function _resetMarkdownCacheForTests(): void {
+  MARKDOWN_CACHE.clear()
+}
+
 export function ShowItemRuntime({
   field,
   value,
@@ -106,41 +169,14 @@ export function ShowItemRuntime({
   const renderAs: ShowItemRenderMode =
     configured === 'auto' ? detectShowItemRenderMode(value) : configured
 
-  // Memoize the markdown-parse tree per `value` — AGENTS.md perf
-  // rule "memoize markdown render output per row". The rendered tree
-  // is React elements; the cheap cache key is the raw string.
+  // D20-C — the markdown tree is now cached in a module-level LRU
+  // shared across instances. useMemo here returns the cached node
+  // identity for the same source string, so multiple ShowItems
+  // rendering the same content (e.g. duplicated prompts across
+  // seed dataset rows) reuse one compiled tree.
   const markdownNode = useMemo(() => {
     if (renderAs !== 'markdown' || typeof value !== 'string') return null
-    return (
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        urlTransform={(href) => {
-          // Allow http(s) + relative refs (Markdown anchors). Block
-          // javascript: / vbscript: / file: URLs.
-          if (!href) return ''
-          if (/^(javascript|vbscript|file):/i.test(href)) return ''
-          return href
-        }}
-        components={{
-          // Constrain images so they don't blow out the form
-          // layout; align with the explicit 'image' branch.
-          // eslint-disable-next-line @next/next/no-img-element, jsx-a11y/alt-text
-          img: ({ node: _node, ...props }) => (
-            // eslint-disable-next-line @next/next/no-img-element, jsx-a11y/alt-text
-            <img
-              {...props}
-              style={{
-                maxWidth: '100%',
-                borderRadius: 4,
-                ...(props.style ?? {}),
-              }}
-            />
-          ),
-        }}
-      >
-        {value}
-      </ReactMarkdown>
-    )
+    return renderMarkdownCached(value)
   }, [renderAs, value])
 
   if (value == null) {
