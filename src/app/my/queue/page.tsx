@@ -36,16 +36,26 @@ export const dynamic = 'force-dynamic'
  * Actions are all wired and ready.
  */
 export default async function MyQueuePage(props: {
-  searchParams?: Promise<{ workspaceId?: string }>
+  searchParams?: Promise<{
+    workspaceId?: string
+    templateMode?: string
+  }>
 }) {
   const search = (await props.searchParams) ?? {}
   const workspaceFilter =
     typeof search.workspaceId === 'string' ? search.workspaceId : undefined
+  // D19-B — templateMode filter chip-row. Filter applied in-memory
+  // after the existing queries (capped 50 rows; cost negligible) so
+  // we don't need to thread a new param through the query layer.
+  const templateModeFilter =
+    typeof search.templateMode === 'string' && search.templateMode
+      ? search.templateMode
+      : undefined
 
   const me = await optionalUser()
   if (!me) redirect('/signin?next=/my/queue')
 
-  const [workspaces, queue, stats, topicQueue, unreadCount] = await Promise.all([
+  const [workspaces, queueRaw, stats, topicQueueRaw, unreadCount] = await Promise.all([
     listMyAnnotatableWorkspaces({ userId: me.id }),
     listMyQueueForUser({
       userId: me.id,
@@ -63,6 +73,28 @@ export default async function MyQueuePage(props: {
     }),
     countUnreadNotifications(me.id).catch(() => 0),
   ])
+
+  // Apply templateMode filter post-query. The trajectory queue is
+  // always `agent-trace-eval`; the topic queue carries an explicit
+  // `templateMode`. When the filter is set:
+  //   - filter topicQueue by templateMode
+  //   - keep trajectory queue iff filter is 'agent-trace-eval' (or null)
+  // The chip-row below derives its options from whatever modes
+  // actually surfaced in the results so labelers don't see ghost
+  // chips for paradigms they're not in.
+  const queue =
+    templateModeFilter && templateModeFilter !== 'agent-trace-eval'
+      ? []
+      : queueRaw
+  const topicQueue = templateModeFilter
+    ? topicQueueRaw.filter((r) => r.templateMode === templateModeFilter)
+    : topicQueueRaw
+  const availableTemplateModes = Array.from(
+    new Set<string>([
+      ...(queueRaw.length > 0 ? ['agent-trace-eval'] : []),
+      ...topicQueueRaw.map((r) => r.templateMode),
+    ]),
+  ).sort()
 
   return (
     <main className="app-light min-h-screen px-6 py-8" style={{ background: 'var(--bg)' }}>
@@ -129,6 +161,12 @@ export default async function MyQueuePage(props: {
         <WorkspaceFilter
           workspaces={workspaces}
           activeWorkspaceId={workspaceFilter ?? null}
+        />
+
+        <TemplateModeFilter
+          modes={availableTemplateModes}
+          activeMode={templateModeFilter ?? null}
+          workspaceId={workspaceFilter ?? null}
         />
 
         {topicQueue.length > 0 && (
@@ -418,6 +456,85 @@ function Stat({
           {hint}
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * Template-mode chip-row — Finals D19-B.
+ *
+ * Lets the Labeler narrow the queue to one annotation paradigm
+ * (`custom-designer`, `pair-rubric`, `arena-gsb`, `agent-trace-eval`).
+ * Hidden when there's only one mode present so the UI stays calm
+ * for single-mode workspaces.
+ */
+/**
+ * Pure href builder for the template-mode chip-row. Exported so the
+ * unit tests can pin its output without spinning up React.
+ */
+export function templateModeFilterHref(opts: {
+  mode: string | null
+  workspaceId: string | null
+}): string {
+  const params = new URLSearchParams()
+  if (opts.workspaceId) params.set('workspaceId', opts.workspaceId)
+  if (opts.mode) params.set('templateMode', opts.mode)
+  const qs = params.toString()
+  return qs ? `/my/queue?${qs}` : '/my/queue'
+}
+
+function TemplateModeFilter({
+  modes,
+  activeMode,
+  workspaceId,
+}: {
+  modes: string[]
+  activeMode: string | null
+  workspaceId: string | null
+}) {
+  if (modes.length <= 1) return null
+  function href(mode: string | null): string {
+    return templateModeFilterHref({ mode, workspaceId })
+  }
+  return (
+    <div className="flex items-center gap-2 flex-wrap mb-6">
+      <span className="lbl" style={{ color: 'var(--mute2)' }}>
+        mode:
+      </span>
+      <Link
+        href={href(null)}
+        className="mono"
+        style={{
+          background: activeMode === null ? 'var(--accent)' : 'var(--panel2)',
+          color: activeMode === null ? 'white' : 'var(--text)',
+          border: '1px solid var(--line)',
+          borderRadius: 4,
+          padding: '2px 10px',
+          fontSize: 11,
+          textDecoration: 'none',
+        }}
+      >
+        all
+      </Link>
+      {modes.map((m) => (
+        <Link
+          key={m}
+          href={href(m)}
+          className="mono"
+          style={{
+            background:
+              activeMode === m ? 'var(--accent)' : 'var(--panel2)',
+            color: activeMode === m ? 'white' : 'var(--text)',
+            border: '1px solid var(--line)',
+            borderRadius: 4,
+            padding: '2px 10px',
+            fontSize: 11,
+            textDecoration: 'none',
+          }}
+        >
+          {m}
+        </Link>
+      ))}
     </div>
   )
 }

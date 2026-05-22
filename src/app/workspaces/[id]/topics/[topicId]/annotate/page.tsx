@@ -37,6 +37,8 @@ import {
 import { ReviewThread } from '@/components/quality/review-thread'
 import { PairRubricForm } from '@/components/topic-annotate/pair-rubric-form'
 import { ArenaGsbForm } from '@/components/topic-annotate/arena-gsb-form'
+import { CustomDesignerForm } from '@/components/topic-annotate/custom-designer-form'
+import { loadCustomFormSchema } from '@/lib/form-designer/storage'
 
 export const metadata: Metadata = {
   title: 'Annotate topic — LabelHub',
@@ -205,6 +207,21 @@ export default async function TopicAnnotatePage(props: {
   const viewerIsSubmitter =
     !!reviewContext && reviewContext.submitterId === me.id
 
+  // D19-B — resolve the custom-designer schema before the formNode
+  // builder. Only relevant when the task points at a saved schema
+  // via templateConfig.formSchemaId.
+  let customDesignerSchema: Awaited<
+    ReturnType<typeof loadCustomFormSchema>
+  > = null
+  if (task.templateMode === 'custom-designer') {
+    const tc = task.templateConfig as { formSchemaId?: string } | null
+    if (tc?.formSchemaId) {
+      customDesignerSchema = await loadCustomFormSchema({
+        id: tc.formSchemaId,
+      })
+    }
+  }
+
   const formNode = (() => {
     if (task.templateMode === 'pair-rubric') {
       return (
@@ -223,6 +240,21 @@ export default async function TopicAnnotatePage(props: {
               ? { pair: peerConsensus.pair, peerCount: peerConsensus.peerCount }
               : null
           }
+        />
+      )
+    }
+    if (task.templateMode === 'custom-designer' && customDesignerSchema) {
+      return (
+        <CustomDesignerForm
+          workspaceId={workspaceId}
+          workspaceName={workspace.name}
+          taskId={task.id}
+          taskName={task.name}
+          topicId={topicId}
+          topicStatus={displayStatus}
+          itemData={itemData}
+          schema={customDesignerSchema.schema}
+          initialPayload={displayPayload}
         />
       )
     }
