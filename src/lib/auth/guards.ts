@@ -1,4 +1,5 @@
 import 'server-only'
+import { cache } from 'react'
 import { and, eq } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { users, workspaceMembers, workspaces } from '@/lib/db/schema'
@@ -178,3 +179,47 @@ export async function requireWorkspaceQC(workspaceId: string) {
   }
   return result
 }
+
+/**
+ * Cross-workspace role summary — Finals D20-A.
+ *
+ * Drives the AppHeader's role-aware entry pills. One query against
+ * `workspace_members` per request; result tells the header whether
+ * the signed-in user has admin / qc / annotator role in ANY
+ * workspace, so:
+ *   - "Admin" pill renders iff hasAdmin
+ *   - "Review" pill renders iff hasQc || hasAdmin
+ *   - "Queue" pill renders iff hasAnnotator || hasQc || hasAdmin
+ *
+ * Wrapped in React.cache so multiple components in one render share
+ * a single DB roundtrip. Returns the zero-state when the userId is
+ * missing (unauthenticated header still renders, just with the
+ * wordmark + sign-in link).
+ */
+export interface RoleSummary {
+  hasAdmin: boolean
+  hasQc: boolean
+  hasAnnotator: boolean
+}
+
+export const resolveRoleSummary = cache(
+  async (userId: string | null | undefined): Promise<RoleSummary> => {
+    if (!userId) {
+      return { hasAdmin: false, hasQc: false, hasAnnotator: false }
+    }
+    const db = getDb()
+    const rows = await db
+      .select({ role: workspaceMembers.role })
+      .from(workspaceMembers)
+      .where(eq(workspaceMembers.userId, userId))
+    let hasAdmin = false
+    let hasQc = false
+    let hasAnnotator = false
+    for (const r of rows) {
+      if (r.role === 'admin') hasAdmin = true
+      else if (r.role === 'qc') hasQc = true
+      else if (r.role === 'annotator') hasAnnotator = true
+    }
+    return { hasAdmin, hasQc, hasAnnotator }
+  },
+)
