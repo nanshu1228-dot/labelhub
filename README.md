@@ -142,14 +142,35 @@ drafting ─submit→ ai_review ─ai_pass→ reviewing ─qc_pass→ awaiting_a
 - Multi-format parsers + formatters (71 tests; round-trips parser ↔ formatter)
 - Review batch ops + queue isolation (18 tests)
 
-**3-minute quickstart for judges:**
-1. Open the Designer at `https://labelhub-gamma.vercel.app/admin/forms/new`. Drag 4-5 widgets onto the canvas; the right-pane property editors tune each one. Save.
-2. The saved schema is selectable when creating a `custom-designer` task at `/workspaces/[id]/tasks/new` — assign topics via the importer at `/admin/tasks/[id]/import` (paste JSONL or upload .xlsx).
-3. Switch to a Labeler account at `/my/queue`. Click a topic → the Renderer hydrates the schema. Click 🪄 to invoke the AI assist; submit when done.
-4. Submit fires the AI Review Agent in Vercel's `after()` window. Refresh `/review` to see the verdict + priority sort.
-5. As QC, approve or send-back via the queue's batch bar OR the single-annotation view at `/review/[id]`.
-6. Audit timeline on the review page shows `ai_review.started → ai_review.completed`-or-`sent_back → qc_passed` lineage.
-7. Export the result as Excel via `/api/export/dataset?versionId=…&encoding=excel`.
+**Fastest path for judges — `npm run seed:finals-demo`:**
+The seed script bootstraps a demo workspace pre-loaded with the
+official `qa_quality` + `preference_compare` datasets (30 + 12 = 42
+rows) plus two curated FormSchemas wired into custom-designer
+tasks with the AI Review Agent already configured. Idempotent
+re-run via deterministic UUIDs.
+
+```bash
+cp .env.example .env.local   # set DATABASE_URL
+npm run db:push              # apply migrations
+npm run seed:finals-demo     # 42 topics + 2 tasks + 2 schemas in ≤10s
+npm run dev                  # open /my/queue and start labeling
+```
+
+**3-minute walkthrough for judges:**
+1. After the seed above, hit `/my/queue` — see 42 topics across two
+   tasks (or visit `/admin/forms/new` and pick **"Start from
+   template"** to inspect either schema in the Designer).
+2. Click any topic → the Renderer hydrates the schema; the AI hint
+   banner + autosave badge confirm the form is live. Cmd/Ctrl+Enter
+   submits without a mouse round-trip.
+3. Submit fires the AI Review Agent in Vercel's `after()` window;
+   `/review` queue picks up the verdict + priority sort.
+4. As QC, approve or send-back via the queue's batch bar OR the
+   single-annotation view at `/review/[id]`.
+5. Audit timeline on the review page shows `ai_review.started →
+   ai_review.completed`-or-`sent_back → qc_passed` lineage.
+6. Export the result as Excel via
+   `/api/export/dataset?versionId=…&encoding=excel`.
 
 Deeper reading:
 - [`docs/AI_AGENT.md`](docs/AI_AGENT.md) — AI Review Agent lifecycle + Function Calling + retry semantics + idempotency

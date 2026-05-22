@@ -86,6 +86,19 @@ export interface DesignerStorageActions {
   }) => Promise<void>
 }
 
+/**
+ * Curated starter template displayed in the "Start from template"
+ * dropdown. Shape mirrors a slice of the official template gallery
+ * (src/lib/form-designer/templates) but the Designer keeps a
+ * read-only view — pick one, the canvas hydrates from its schema.
+ */
+export interface DesignerTemplateOption {
+  id: string
+  label: string
+  description: string
+  schema: import('@/lib/form-designer/schema').FormSchema
+}
+
 export interface DesignerShellProps {
   /**
    * Workspaces the signed-in user can save into (admin role). When the
@@ -93,6 +106,13 @@ export interface DesignerShellProps {
    * empty list disables the Save button (read-only Designer mode).
    */
   workspaces?: DesignerWorkspaceOption[]
+  /**
+   * Curated starter templates exposed via a dropdown above the
+   * palette. Picking one replaces the current canvas; confirm
+   * prompt fires if the canvas isn't empty so the PM doesn't
+   * accidentally clobber in-progress work.
+   */
+  templates?: DesignerTemplateOption[]
   /**
    * Already-loaded schema to seed the canvas. Used by the edit
    * /admin/forms/[id] page; new-form page leaves this undefined so
@@ -112,6 +132,7 @@ export interface DesignerShellProps {
 
 export function DesignerShell({
   workspaces = [],
+  templates = [],
   initialSchema,
   storage,
   postSaveHref = '/admin/forms',
@@ -279,6 +300,61 @@ export function DesignerShell({
         className="border-r overflow-y-auto p-4"
         style={{ borderColor: 'var(--line)', background: 'var(--panel)' }}
       >
+        {templates.length > 0 ? (
+          <div className="mb-4 flex flex-col gap-1.5">
+            <label
+              className="lbl"
+              style={{ color: 'var(--mute)' }}
+              htmlFor="lh-template-picker"
+            >
+              § START FROM TEMPLATE
+            </label>
+            <select
+              id="lh-template-picker"
+              defaultValue=""
+              onChange={(e) => {
+                const id = e.target.value
+                e.currentTarget.value = '' // reset so re-picking same id triggers
+                if (!id) return
+                const tpl = templates.find((t) => t.id === id)
+                if (!tpl) return
+                const hasFields = schema.fields.length > 0
+                if (
+                  hasFields &&
+                  typeof window !== 'undefined' &&
+                  !window.confirm(
+                    `Replace the current canvas (${countFields(schema.fields)} field${countFields(schema.fields) === 1 ? '' : 's'}) with the "${tpl.label}" template?`,
+                  )
+                ) {
+                  return
+                }
+                setSchema(tpl.schema)
+                setSelectedId(null)
+              }}
+              className="ts-13"
+              style={{
+                background: 'var(--panel2)',
+                border: '1px solid var(--line)',
+                color: 'var(--text)',
+                borderRadius: 4,
+                padding: '6px 8px',
+              }}
+            >
+              <option value="">— pick a template —</option>
+              {templates.map((t) => (
+                <option key={t.id} value={t.id} title={t.description}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+            <p
+              className="ts-11"
+              style={{ color: 'var(--mute2)' }}
+            >
+              Curated starting points — covers every adopted material.
+            </p>
+          </div>
+        ) : null}
         <div className="lbl mb-3" style={{ color: 'var(--mute)' }}>
           § PALETTE
         </div>

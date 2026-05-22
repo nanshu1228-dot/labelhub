@@ -7,6 +7,7 @@ import {
   createCustomFormSchema,
   updateCustomFormSchema,
 } from '@/lib/form-designer/storage'
+import { OFFICIAL_TEMPLATES } from '@/lib/form-designer/templates'
 
 export const metadata: Metadata = {
   title: 'New Form · Designer — LabelHub',
@@ -38,9 +39,21 @@ export default async function NewFormPage() {
     name: c.name,
   }))
 
+  // D19-C — pass the curated official template list into the
+  // Designer so PMs can start from a pre-built schema instead of a
+  // blank canvas. We drop the AI-dimensions payload here; the
+  // dropdown only needs id/label/description/schema.
+  const templateOptions = OFFICIAL_TEMPLATES.map((t) => ({
+    id: t.id,
+    label: t.label,
+    description: t.description,
+    schema: t.schema,
+  }))
+
   return (
     <DesignerShell
       workspaces={workspaceOptions}
+      templates={templateOptions}
       storage={{
         save: createCustomFormSchema,
         update: updateCustomFormSchema,
