@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { beforeAll, describe, it, expect } from 'vitest'
 import {
   detectShowItemRenderMode,
   type ShowItemRenderMode,
@@ -154,9 +154,63 @@ describe('show-item-field source contract', () => {
     // Markdown branch wired via react-markdown + remark-gfm.
     expect(src).toContain("import ReactMarkdown from 'react-markdown'")
     expect(src).toContain("import remarkGfm from 'remark-gfm'")
-    // Video branch present + goes through safeMediaUrl whitelist.
-    expect(src).toContain('safeMediaUrl(value)')
     // Memoize markdown render (AGENTS.md perf rule).
     expect(src).toContain('useMemo')
   })
 })
+
+describe('D21-A — markdown raw <video> + VideoPlayer + safety', () => {
+  let src: string
+
+  beforeAll(async () => {
+    const fs = await import('node:fs/promises')
+    const path = await import('node:path')
+    src = await fs.readFile(
+      path.resolve(
+        process.cwd(),
+        'src/components/form-materials/show-item-field.tsx',
+      ),
+      'utf-8',
+    )
+  })
+
+  it('imports rehype-raw + rehype-sanitize for raw HTML in markdown', () => {
+    expect(src).toContain("import rehypeRaw from 'rehype-raw'")
+    expect(src).toContain("import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'")
+  })
+
+  it('rehype plugins applied to ReactMarkdown', () => {
+    expect(src).toContain(
+      'rehypePlugins={[rehypeRaw, [rehypeSanitize, SAFE_MARKDOWN_SCHEMA]]}',
+    )
+  })
+
+  it('sanitize schema allows video + source but inherits default-safe defaults', () => {
+    expect(src).toContain("'video',")
+    expect(src).toContain("'source',")
+    // Protocols restricted to http/https (no javascript:, data:, file:).
+    expect(src).toContain("src: ['http', 'https']")
+  })
+
+  it('VideoPlayer exists with onError + IntersectionObserver lazy preload', () => {
+    expect(src).toContain('const VideoPlayer = memo')
+    // onError swap to errored=true.
+    expect(src).toContain('setErrored(true)')
+    // IntersectionObserver-driven preload flip.
+    expect(src).toContain('IntersectionObserver')
+    expect(src).toContain("preload !== 'none'")
+    expect(src).toContain("rootMargin: '200px'")
+  })
+
+  it('errored state shows a friendly fallback panel with clickable URL', () => {
+    expect(src).toContain('Couldn&apos;t load this video.')
+    expect(src).toContain('Open the URL directly')
+    expect(src).toContain('rel="noopener noreferrer"')
+  })
+
+  it('markdown <video> components route through VideoPlayer', () => {
+    expect(src).toContain('video: ({ node: _node, src, children, ...rest })')
+    expect(src).toContain('return <VideoPlayer src={src}')
+  })
+})
+

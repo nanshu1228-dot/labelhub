@@ -1,8 +1,17 @@
 'use client'
 
-import { useMemo, type ReactNode } from 'react'
+import {
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import rehypeRaw from 'rehype-raw'
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import {
   SelectRow,
   TextRow,
@@ -95,6 +104,42 @@ function safeMediaUrl(url: string): string | null {
 }
 
 /**
+ * Sanitize schema — Finals D21-A.
+ *
+ * react-markdown by default DROPS raw HTML. We want raw `<video>`
+ * + `<img>` + `<a>` to flow through so the official qa_quality
+ * M0001 row (which embeds a video via raw HTML inside markdown)
+ * actually renders. rehype-raw turns the raw HTML into hast nodes;
+ * rehype-sanitize then filters the result with our extended
+ * allow-list so a malicious `<script>` / `<iframe>` from a
+ * compromised dataset can't run.
+ *
+ * Tag set extends the rehype-sanitize default to permit:
+ *   - <video src controls preload poster width height loop muted>
+ *   - <source src type media>
+ * Everything else (script, iframe, style, onclick handlers) is
+ * stripped per the default schema. The `https-only` URL filter
+ * inherited from default schema enforces safe srcs.
+ */
+const SAFE_MARKDOWN_SCHEMA = {
+  ...defaultSchema,
+  tagNames: [
+    ...(defaultSchema.tagNames ?? []),
+    'video',
+    'source',
+  ],
+  attributes: {
+    ...(defaultSchema.attributes ?? {}),
+    video: ['src', 'controls', 'preload', 'poster', 'width', 'height', 'loop', 'muted', 'autoplay'],
+    source: ['src', 'type', 'media'],
+  },
+  protocols: {
+    ...(defaultSchema.protocols ?? {}),
+    src: ['http', 'https'],
+  },
+}
+
+/**
  * Module-level LRU cache for the markdown render output — D20-C.
  *
  * Without this, each ShowItem instance has its own useMemo cache.
@@ -117,12 +162,18 @@ function renderMarkdownCached(source: string): ReactNode {
   const node: ReactNode = (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
+      // D21-A — rehypeRaw turns the source's raw HTML (e.g. M0001's
+      // `<video src=...>`) into hast nodes. rehypeSanitize then
+      // filters with SAFE_MARKDOWN_SCHEMA to keep `<video>`/`<img>`
+      // while stripping `<script>` / inline event handlers.
+      rehypePlugins={[rehypeRaw, [rehypeSanitize, SAFE_MARKDOWN_SCHEMA]]}
       urlTransform={(href) => {
         if (!href) return ''
         if (/^(javascript|vbscript|file):/i.test(href)) return ''
         return href
       }}
       components={{
+        // Constrain images to the layout.
         // eslint-disable-next-line @next/next/no-img-element, jsx-a11y/alt-text
         img: ({ node: _node, ...props }) => (
           // eslint-disable-next-line @next/next/no-img-element, jsx-a11y/alt-text
@@ -135,6 +186,21 @@ function renderMarkdownCached(source: string): ReactNode {
             }}
           />
         ),
+        // D21-A — route raw <video> tags through our hardened
+        // VideoPlayer so they inherit the onError + lazy-preload
+        // treatment. Children (e.g. <source>) flow through.
+        video: ({ node: _node, src, children, ...rest }) => {
+          if (typeof src === 'string' && src) {
+            return <VideoPlayer src={src} {...rest} />
+          }
+          // No src on the video tag — likely uses <source> children.
+          // Fall through to a plain element so the children render.
+          return (
+            <video {...rest} controls preload="metadata" style={{ maxWidth: '100%', borderRadius: 4 }}>
+              {children}
+            </video>
+          )
+        },
       }}
     >
       {source}
@@ -148,6 +214,108 @@ function renderMarkdownCached(source: string): ReactNode {
   MARKDOWN_CACHE.set(source, node)
   return node
 }
+
+/**
+ * VideoPlayer — Finals D21-A.
+ *
+ * Hardened wrapper around <video>:
+ *   - onError → swaps to a fallback panel with the raw URL as a
+ *     clickable link ("Couldn't load this video — open directly").
+ *     Covers 404 / CORS / network timeout / unsupported codec.
+ *   - lazy preload via IntersectionObserver: starts as
+ *     preload="none"; flips to "metadata" once the element is
+ *     within 200px of the viewport. A 50-video page no longer
+ *     spawns 50 simultaneous TCP connections on mount.
+ *   - URL allow-list (http/https only) via safeMediaUrl.
+ *
+ * Wrapped in memo so re-renders from sibling field updates don't
+ * thrash the IntersectionObserver setup.
+ */
+const VideoPlayer = memo(function VideoPlayerImpl({
+  src,
+  ...rest
+}: {
+  src: string
+  [k: string]: unknown
+}) {
+  const safe = safeMediaUrl(src)
+  const ref = useRef<HTMLVideoElement | null>(null)
+  const [errored, setErrored] = useState(false)
+  const [preload, setPreload] = useState<'none' | 'metadata'>('none')
+
+  // IntersectionObserver — start loading metadata only when the
+  // video element approaches the viewport. Disconnects after the
+  // first hit so we don't leak observers across re-renders.
+  useEffect(() => {
+    if (errored || preload !== 'none') return
+    if (typeof window === 'undefined') return
+    const el = ref.current
+    if (!el) return
+    if (typeof IntersectionObserver === 'undefined') {
+      // Browser too old — fall back to immediate metadata load.
+      setPreload('metadata')
+      return
+    }
+    const obs = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            setPreload('metadata')
+            obs.disconnect()
+            break
+          }
+        }
+      },
+      { rootMargin: '200px' },
+    )
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [errored, preload])
+
+  if (!safe) {
+    return (
+      <div
+        className="ts-12"
+        style={{ color: 'var(--mute2)' }}
+      >
+        (blocked video URL — http(s) only)
+      </div>
+    )
+  }
+  if (errored) {
+    return (
+      <div
+        className="rounded p-3 ts-12 flex flex-col gap-1"
+        style={{
+          background: 'var(--panel2)',
+          border: '1px solid var(--line)',
+          color: 'var(--mute)',
+        }}
+      >
+        <span>Couldn&apos;t load this video.</span>
+        <a
+          href={safe}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ color: 'var(--accent)', textDecoration: 'underline' }}
+        >
+          Open the URL directly →
+        </a>
+      </div>
+    )
+  }
+  return (
+    <video
+      ref={ref}
+      src={safe}
+      controls
+      preload={preload}
+      onError={() => setErrored(true)}
+      style={{ maxWidth: '100%', borderRadius: 4 }}
+      {...rest}
+    />
+  )
+})
 
 /**
  * Test-only: clear the markdown LRU cache between tests so the
@@ -191,25 +359,7 @@ export function ShowItemRuntime({
   }
 
   if (renderAs === 'video' && typeof value === 'string') {
-    const safe = safeMediaUrl(value)
-    if (!safe) {
-      return (
-        <div
-          className="ts-12"
-          style={{ color: 'var(--mute2)' }}
-        >
-          (blocked video URL — http(s) only)
-        </div>
-      )
-    }
-    return (
-      <video
-        src={safe}
-        controls
-        preload="metadata"
-        style={{ maxWidth: '100%', borderRadius: 4 }}
-      />
-    )
+    return <VideoPlayer src={value} />
   }
 
   if (renderAs === 'image' && typeof value === 'string') {

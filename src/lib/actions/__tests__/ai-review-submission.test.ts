@@ -27,6 +27,7 @@ import { getDb } from '@/lib/db/client'
 import { runReviewAgentWithRetry } from '@/lib/ai/review-agent'
 import { writeRevision } from '@/lib/quality/annotation-revisions'
 import { emitNotification } from '@/lib/notifications/emit'
+import { assertWithinDailyAIQuota } from '@/lib/ai/quota'
 
 /**
  * AI Review Agent scheduler tests — Finals P2 D7.
@@ -583,6 +584,89 @@ describe('notification emission (D13)', () => {
     mountDb(s)
     vi.mocked(runReviewAgentWithRetry).mockRejectedValueOnce(
       new Error('LLM exploded'),
+    )
+    await scheduleAIReviewIfMissing({ annotationId: ANNOTATION_ID })
+    expect(vi.mocked(emitNotification)).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * D21-A — Quota-exhaustion rollback. Pre-D21 the scheduler set
+ * verdict.status='failed' but RETURNED without rolling back the
+ * topic, leaving it stuck in 'ai_review' forever. The fix mirrors
+ * the LLM-failure path's rollback + adds a distinct event reason
+ * so audit timelines can show "AI quota exhausted" vs "AI crashed".
+ */
+describe('quota-exhaustion rollback (D21-A)', () => {
+  const TOPIC_ID = 'aaaa1111-1111-4111-8111-aaaaaaaaaaaa'
+  const WORKSPACE_ID = 'bbbb2222-2222-4222-8222-bbbbbbbbbbbb'
+  const SUBMITTER_ID = 'cccc3333-3333-4333-8333-cccccccccccc'
+
+  function customDesignerRow() {
+    return {
+      annotationId: ANNOTATION_ID,
+      annotationUserId: SUBMITTER_ID,
+      annotationPayload: { answer: 'submitted text' },
+      topicId: TOPIC_ID,
+      taskId: TASK_ID,
+      workspaceId: WORKSPACE_ID,
+      templateMode: 'custom-designer',
+      templateConfig: null,
+      topicItemData: { prompt: 'How many?' },
+    }
+  }
+
+  it('rolls topic back to submitted on quota error', async () => {
+    const s = makeDb({ selectQueue: [[customDesignerRow()]] })
+    mountDb(s)
+    vi.mocked(assertWithinDailyAIQuota).mockRejectedValueOnce(
+      new Error('Daily AI quota reached (100/100).'),
+    )
+    await scheduleAIReviewIfMissing({ annotationId: ANNOTATION_ID })
+    // Topic transitions: submitted→ai_review (first update at the top
+    // of the scheduler) then ai_review→submitted (rollback). Filter
+    // topic updates (they bump version; verdict updates don't).
+    const topicUpdates = s.updates.filter(
+      (u) => (u.values as { version?: unknown }).version !== undefined,
+    )
+    const statuses = topicUpdates.map(
+      (u) => (u.values as { status?: string }).status,
+    )
+    expect(statuses).toEqual(['ai_review', 'submitted'])
+  })
+
+  it('emits ai_review.failed with reason=quota_exhausted', async () => {
+    const s = makeDb({ selectQueue: [[customDesignerRow()]] })
+    mountDb(s)
+    vi.mocked(assertWithinDailyAIQuota).mockRejectedValueOnce(
+      new Error('Daily AI quota reached.'),
+    )
+    await scheduleAIReviewIfMissing({ annotationId: ANNOTATION_ID })
+    const failedEvent = s.inserts.find(
+      (i) => (i.values as { type?: string }).type === 'ai_review.failed',
+    )
+    expect(failedEvent).toBeDefined()
+    expect(
+      (failedEvent?.values as { payload?: { reason?: string } }).payload
+        ?.reason,
+    ).toBe('quota_exhausted')
+  })
+
+  it('agent runner is NOT invoked when quota is exhausted', async () => {
+    const s = makeDb({ selectQueue: [[customDesignerRow()]] })
+    mountDb(s)
+    vi.mocked(assertWithinDailyAIQuota).mockRejectedValueOnce(
+      new Error('Daily AI quota reached.'),
+    )
+    await scheduleAIReviewIfMissing({ annotationId: ANNOTATION_ID })
+    expect(vi.mocked(runReviewAgentWithRetry)).not.toHaveBeenCalled()
+  })
+
+  it('does NOT fire a labeler notification on quota exhaustion (matches D13 silence policy)', async () => {
+    const s = makeDb({ selectQueue: [[customDesignerRow()]] })
+    mountDb(s)
+    vi.mocked(assertWithinDailyAIQuota).mockRejectedValueOnce(
+      new Error('Daily AI quota reached.'),
     )
     await scheduleAIReviewIfMissing({ annotationId: ANNOTATION_ID })
     expect(vi.mocked(emitNotification)).not.toHaveBeenCalled()

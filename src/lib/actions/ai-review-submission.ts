@@ -207,15 +207,41 @@ export async function scheduleAIReviewIfMissing(input: {
     try {
       await assertWithinDailyAIQuota(row.annotationUserId)
     } catch (e) {
+      const errMsg =
+        e instanceof Error ? e.message : 'quota assertion failed'
       await db
         .update(aiSubmissionVerdicts)
         .set({
           status: 'failed',
-          errorText:
-            e instanceof Error ? e.message : 'quota assertion failed',
+          errorText: errMsg,
           finishedAt: new Date(),
         })
         .where(eq(aiSubmissionVerdicts.id, verdictRowId))
+      // D21-A — quota-exhaustion BUG fix: pre-D21 we'd return here
+      // and leave topic.status='ai_review' forever, blocking the
+      // labeler + reviewer from acting. Mirror the LLM-failure
+      // path's rollback so a quota'd submission still falls through
+      // to human review.
+      await db
+        .update(topics)
+        .set({
+          status: 'submitted',
+          version: sql`${topics.version} + 1`,
+        })
+        .where(
+          and(eq(topics.id, row.topicId), eq(topics.status, 'ai_review')),
+        )
+      await db.insert(events).values({
+        type: 'ai_review.failed',
+        workspaceId: row.workspaceId,
+        actorId: null,
+        payload: {
+          annotationId: parsed.annotationId,
+          verdictId: verdictRowId,
+          reason: 'quota_exhausted',
+          error: errMsg,
+        },
+      })
       return
     }
 
