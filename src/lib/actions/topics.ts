@@ -64,6 +64,16 @@ const createTopicsBatchSchema = z.object({
   taskId: uuidLike,
   /** Up to 100 items per call. Each is validated against template.itemSchema. */
   items: z.array(itemDataShape).min(1).max(100),
+  /**
+   * Finals D21-C — optional per-row assignment. Length MUST match
+   * items.length when present; each element is the user-id the
+   * matching topic should be assignedTo (null = unassigned / open
+   * queue). The import UI computes this via
+   * `src/lib/import/distribution.ts` after the parser yields rows.
+   */
+  assignments: z
+    .array(uuidLike.nullable())
+    .optional(),
   /** Same semantics as createTopicSchema.autoEstimateDifficulty, but
    *  applied to EVERY row in the batch. For large batches admins may
    *  want to skip and run estimation later via a separate action. */
@@ -253,8 +263,23 @@ export async function createTopicsBatch(
   const template = getTemplate(task.templateMode as TemplateMode)
   if (!template) throw new ValidationError('Template not registered.')
 
+  // D21-C — when assignments are present they must match items.
+  if (
+    parsed.assignments &&
+    parsed.assignments.length !== parsed.items.length
+  ) {
+    throw new ValidationError(
+      `assignments.length (${parsed.assignments.length}) must equal items.length (${parsed.items.length}).`,
+    )
+  }
+
   const failed: Array<{ index: number; error: string }> = []
-  const toInsert: Array<{ taskId: string; itemData: unknown; status: 'drafting' }> = []
+  const toInsert: Array<{
+    taskId: string
+    itemData: unknown
+    status: 'drafting'
+    assignedTo: string | null
+  }> = []
 
   for (let i = 0; i < parsed.items.length; i++) {
     const item = parsed.items[i]
@@ -264,6 +289,7 @@ export async function createTopicsBatch(
         taskId: parsed.taskId,
         itemData: validated,
         status: 'drafting',
+        assignedTo: parsed.assignments?.[i] ?? null,
       })
     } catch (e) {
       const msg =
