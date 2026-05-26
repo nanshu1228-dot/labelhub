@@ -5,6 +5,7 @@ import { getAdminDashboardData } from '@/lib/queries/admin-dashboard'
 import { DesignerShell } from '@/components/form-designer/designer-shell'
 import {
   createCustomFormSchema,
+  listWorkspaceTemplates,
   updateCustomFormSchema,
 } from '@/lib/form-designer/storage'
 import { OFFICIAL_TEMPLATES } from '@/lib/form-designer/templates'
@@ -39,16 +40,40 @@ export default async function NewFormPage() {
     name: c.name,
   }))
 
-  // D19-C — pass the curated official template list into the
-  // Designer so PMs can start from a pre-built schema instead of a
-  // blank canvas. We drop the AI-dimensions payload here; the
-  // dropdown only needs id/label/description/schema.
-  const templateOptions = OFFICIAL_TEMPLATES.map((t) => ({
-    id: t.id,
-    label: t.label,
-    description: t.description,
-    schema: t.schema,
-  }))
+  // D19-C — official starter templates.
+  // D21-B — also surface workspace-saved templates (flag
+  // `customFormSchemas.isTemplate=true`) so the PM can iterate on
+  // their own conventions across forms. Fetch in parallel across
+  // every workspace the user admins; tag each entry with `Workspace:`
+  // prefix so the dropdown distinguishes official from workspace.
+  const workspaceTemplateLists = await Promise.all(
+    dashboard.cards.map((c) =>
+      listWorkspaceTemplates({ workspaceId: c.workspaceId }).catch(
+        () => [],
+      ),
+    ),
+  )
+  const workspaceTemplateOptions = workspaceTemplateLists.flatMap(
+    (rows, idx) => {
+      const ws = dashboard.cards[idx]
+      return rows.map((r) => ({
+        id: `ws:${r.id}`,
+        label: `${ws.name} · ${r.label}`,
+        description: `Workspace template (v${r.version})`,
+        schema: r.schema,
+      }))
+    },
+  )
+
+  const templateOptions = [
+    ...OFFICIAL_TEMPLATES.map((t) => ({
+      id: t.id,
+      label: t.label,
+      description: t.description,
+      schema: t.schema,
+    })),
+    ...workspaceTemplateOptions,
+  ]
 
   return (
     <DesignerShell

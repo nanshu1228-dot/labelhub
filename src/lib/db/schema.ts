@@ -1763,12 +1763,36 @@ export const customFormSchemas = pgTable(
     label: text('label').notNull(),
     schema: jsonb('schema').notNull(),
     version: integer('version').notNull().default(1),
+    /**
+     * Finals D21-B — append-only schema chain. When the Designer
+     * "saves a new version" of a schema, we INSERT a new row with
+     * a fresh id + version+1 + previous_id pointing at the prior
+     * row. The prior row stays immutable so any task pinned to
+     * its id keeps rendering the same schema even after the owner
+     * edits. closes spec section 5 "schema 版本管理".
+     */
+    previousId: uuid('previous_id').references(
+      (): import('drizzle-orm/pg-core').AnyPgColumn => customFormSchemas.id,
+    ),
+    /**
+     * Finals D21-B — workspace template gallery. When true, the
+     * schema surfaces in the Designer's "Start from template"
+     * dropdown alongside OFFICIAL_TEMPLATES so the next form the
+     * PM builds can start from a workspace-curated baseline.
+     */
+    isTemplate: boolean('is_template').notNull().default(false),
     createdBy: uuid('created_by').references(() => users.id),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     archivedAt: timestamp('archived_at'),
   },
   (t) => ({
     wsIdx: index('custom_form_schemas_ws_idx').on(t.workspaceId, t.archivedAt),
+    workspaceTemplateIdx: index(
+      'custom_form_schemas_workspace_template_idx',
+    ).on(t.workspaceId, t.isTemplate),
+    previousIdIdx: index('custom_form_schemas_previous_id_idx').on(
+      t.previousId,
+    ),
   }),
 )
 

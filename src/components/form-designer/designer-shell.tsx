@@ -77,13 +77,22 @@ export interface DesignerStorageActions {
     label: string
     schema: import('@/lib/form-designer/schema').FormSchema
   }) => Promise<{ id: string }>
-  /** Overwrite an existing schema's content + label. */
+  /**
+   * Save a new version of an existing schema. Returns the NEW row's
+   * { id, version } — caller can re-route to /admin/forms/[newId]
+   * to keep editing the freshly-saved version.
+   *
+   * D21-B made this append-only: previously this mutated the row
+   * in place; now it inserts a new row + bumps version, leaving the
+   * prior id immutable so existing tasks keep rendering their
+   * frozen schema.
+   */
   update?: (input: {
     id: string
     workspaceId: string
     label: string
     schema: import('@/lib/form-designer/schema').FormSchema
-  }) => Promise<void>
+  }) => Promise<{ id: string; version: number }>
 }
 
 /**
@@ -255,13 +264,21 @@ export function DesignerShell({
     startSave(async () => {
       try {
         if (initialSchema && storage.update) {
-          await storage.update({
+          // D21-B — update is now append-only; it returns the NEW
+          // row's id. Navigate to /admin/forms/[newId] so the
+          // PM keeps editing the freshest version (the old row
+          // remains intact for any pinned tasks).
+          const next = await storage.update({
             id: initialSchema.id,
             workspaceId: workspaceId!,
             label,
             schema,
           })
-          router.refresh()
+          if (next.id !== initialSchema.id) {
+            router.push(`/admin/forms/${next.id}`)
+          } else {
+            router.refresh()
+          }
         } else {
           await storage.save({
             workspaceId: workspaceId!,

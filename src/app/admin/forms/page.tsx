@@ -3,7 +3,11 @@ import Link from 'next/link'
 import { notFound, redirect } from 'next/navigation'
 import { optionalUser } from '@/lib/auth/guards'
 import { getAdminDashboardData } from '@/lib/queries/admin-dashboard'
-import { listCustomFormSchemas } from '@/lib/form-designer/storage'
+import {
+  listCustomFormSchemas,
+  setWorkspaceTemplateFlag,
+} from '@/lib/form-designer/storage'
+import { revalidatePath } from 'next/cache'
 
 export const metadata: Metadata = {
   title: 'Forms · Designer — LabelHub',
@@ -100,24 +104,46 @@ export default async function FormsListPage() {
               <ul className="flex flex-col gap-2">
                 {schemas.map((s) => (
                   <li key={s.id}>
-                    <Link
-                      href={`/admin/forms/${s.id}`}
-                      className="ts-13 flex items-center justify-between px-3 py-2 rounded"
+                    <div
+                      className="ts-13 flex items-center gap-3 px-3 py-2 rounded"
                       style={{
                         background: 'var(--panel2)',
                         border: '1px solid var(--line)',
                         color: 'var(--text)',
-                        textDecoration: 'none',
                       }}
                     >
-                      <span>{s.label}</span>
+                      <Link
+                        href={`/admin/forms/${s.id}`}
+                        className="flex items-center gap-2 flex-1"
+                        style={{ color: 'var(--text)', textDecoration: 'none' }}
+                      >
+                        <span>{s.label}</span>
+                        {s.isTemplate ? (
+                          <span
+                            className="ts-11 mono px-2 py-0.5 rounded"
+                            style={{
+                              background: 'oklch(0.6 0.18 280 / 0.1)',
+                              color: 'var(--accent)',
+                              border: '1px solid oklch(0.6 0.18 280 / 0.3)',
+                            }}
+                            title="Surfaces in Start-from-template dropdown"
+                          >
+                            ★ Template
+                          </span>
+                        ) : null}
+                      </Link>
                       <span
                         className="ts-11 mono"
                         style={{ color: 'var(--mute2)' }}
                       >
                         v{s.version} · {s.createdAt.toISOString().slice(0, 10)}
                       </span>
-                    </Link>
+                      <ToggleTemplateForm
+                        schemaId={s.id}
+                        workspaceId={workspace.id}
+                        isTemplate={s.isTemplate}
+                      />
+                    </div>
                   </li>
                 ))}
               </ul>
@@ -126,5 +152,51 @@ export default async function FormsListPage() {
         ))}
       </div>
     </main>
+  )
+}
+
+/**
+ * Per-row form that flips the workspace-template flag. Server
+ * action runs requireWorkspaceAdmin inside `setWorkspaceTemplateFlag`
+ * so a non-admin POST is rejected even if the page leaked.
+ */
+function ToggleTemplateForm({
+  schemaId,
+  workspaceId,
+  isTemplate,
+}: {
+  schemaId: string
+  workspaceId: string
+  isTemplate: boolean
+}) {
+  async function action() {
+    'use server'
+    await setWorkspaceTemplateFlag({
+      id: schemaId,
+      workspaceId,
+      isTemplate: !isTemplate,
+    })
+    revalidatePath('/admin/forms')
+  }
+  return (
+    <form action={action}>
+      <button
+        type="submit"
+        className="ts-11 mono px-2 py-1 rounded"
+        style={{
+          background: 'transparent',
+          color: 'var(--mute)',
+          border: '1px solid var(--line)',
+          cursor: 'pointer',
+        }}
+        title={
+          isTemplate
+            ? 'Demote — remove from Start-from-template dropdown'
+            : 'Save as workspace template — surfaces in Start-from-template dropdown for new forms'
+        }
+      >
+        {isTemplate ? 'Demote' : 'Save as template'}
+      </button>
+    </form>
   )
 }

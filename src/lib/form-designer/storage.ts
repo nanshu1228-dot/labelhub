@@ -69,27 +69,119 @@ export async function createCustomFormSchema(input: {
  * Returns void; the Designer refetches via loadCustomFormSchema()
  * after save.
  */
+/**
+ * Finals D21-B — schema versioning rework.
+ *
+ * Pre-D21: this function MUTATED the existing row. Any task pinned
+ * to the schema's id silently switched to the new version, so a
+ * mid-flight prompt-tweak by the owner could shift labeler responses
+ * out from under in-progress submissions. Spec section 5 explicitly
+ * asks for "schema 版本管理（任务发布后模板变更如何兼容）".
+ *
+ * Post-D21: this function INSERTS a new row with a fresh id, the
+ * new version (parent.version+1), and `previousId` pointing at the
+ * prior row. The prior row stays immutable forever — every task
+ * referencing it keeps rendering its frozen schema. The returned
+ * `{ id, version }` is the NEW row's identity; callers wanting the
+ * new version pinned to a task should write
+ * `task.template_config.formSchemaId = newId`.
+ *
+ * Special-case: if neither label nor schema actually changes, we
+ * no-op (saves a wasted row + an irrelevant entry in the version
+ * chain).
+ */
 export async function updateCustomFormSchema(input: {
+  /** ID of the prior version (the row the user clicked "edit" on). */
   id: string
   workspaceId: string
   label?: string
   schema?: FormSchema
+}): Promise<{ id: string; version: number }> {
+  await requireWorkspaceAdmin(input.workspaceId)
+  if (input.label === undefined && input.schema === undefined) {
+    // No-op — return the existing row's identity.
+    const db = getDb()
+    const [existing] = await db
+      .select({
+        id: customFormSchemas.id,
+        version: customFormSchemas.version,
+      })
+      .from(customFormSchemas)
+      .where(
+        and(
+          eq(customFormSchemas.id, input.id),
+          eq(customFormSchemas.workspaceId, input.workspaceId),
+        ),
+      )
+      .limit(1)
+    if (!existing) {
+      throw new Error('Schema not found.')
+    }
+    return existing
+  }
+
+  const db = getDb()
+  // Fetch the prior row to derive label / schema / version when the
+  // caller didn't supply them (partial edits, e.g. label-only).
+  const [prior] = await db
+    .select()
+    .from(customFormSchemas)
+    .where(
+      and(
+        eq(customFormSchemas.id, input.id),
+        eq(customFormSchemas.workspaceId, input.workspaceId),
+      ),
+    )
+    .limit(1)
+  if (!prior) throw new Error('Schema not found.')
+
+  const nextLabel =
+    input.label !== undefined ? labelSchema.parse(input.label) : prior.label
+  const nextSchema =
+    input.schema !== undefined
+      ? formSchemaSchema.parse(input.schema)
+      : (prior.schema as FormSchema)
+  const nextVersion = prior.version + 1
+
+  const [inserted] = await db
+    .insert(customFormSchemas)
+    .values({
+      workspaceId: input.workspaceId,
+      label: nextLabel,
+      schema: nextSchema,
+      version: nextVersion,
+      previousId: prior.id,
+      isTemplate: prior.isTemplate,
+      createdBy: prior.createdBy,
+    })
+    .returning({
+      id: customFormSchemas.id,
+      version: customFormSchemas.version,
+    })
+  revalidatePath(`/workspaces/${input.workspaceId}/forms`)
+  return inserted
+}
+
+/**
+ * Toggle a schema's workspace-template flag — D21-B.
+ *
+ * Admins flip this from the Designer's "Save as workspace template"
+ * button. Promoted schemas surface in the "Start from template"
+ * dropdown for every subsequent form in the same workspace.
+ *
+ * Per-row toggle (no copy) — the same id remains valid for any
+ * existing task references.
+ */
+export async function setWorkspaceTemplateFlag(input: {
+  id: string
+  workspaceId: string
+  isTemplate: boolean
 }): Promise<void> {
   await requireWorkspaceAdmin(input.workspaceId)
-  const patch: Partial<typeof customFormSchemas.$inferInsert> = {}
-  if (input.label !== undefined) {
-    patch.label = labelSchema.parse(input.label)
-  }
-  if (input.schema !== undefined) {
-    const parsed = formSchemaSchema.parse(input.schema)
-    patch.schema = parsed
-    patch.version = parsed.version
-  }
-  if (Object.keys(patch).length === 0) return
   const db = getDb()
   await db
     .update(customFormSchemas)
-    .set(patch)
+    .set({ isTemplate: input.isTemplate })
     .where(
       and(
         eq(customFormSchemas.id, input.id),
@@ -177,6 +269,8 @@ export async function listCustomFormSchemas(input: {
     id: string
     label: string
     version: number
+    /** D21-B — workspace template flag. UI shows a ★ badge. */
+    isTemplate: boolean
     createdAt: Date
   }>
 > {
@@ -187,6 +281,7 @@ export async function listCustomFormSchemas(input: {
       id: customFormSchemas.id,
       label: customFormSchemas.label,
       version: customFormSchemas.version,
+      isTemplate: customFormSchemas.isTemplate,
       createdAt: customFormSchemas.createdAt,
     })
     .from(customFormSchemas)
@@ -198,4 +293,57 @@ export async function listCustomFormSchemas(input: {
     )
     .orderBy(asc(customFormSchemas.label))
   return rows
+}
+
+/**
+ * D21-B — list workspace-marked templates. Powers the Designer's
+ * "Start from template" dropdown alongside `OFFICIAL_TEMPLATES`.
+ *
+ * Open to ANY signed-in user (no admin gate): the Designer page
+ * itself is admin-only; this helper also gets reused by the
+ * task-create flow + seed scripts. Workspace isolation enforced
+ * via the workspaceId filter (caller passes the workspace they're
+ * authorized in).
+ */
+export async function listWorkspaceTemplates(input: {
+  workspaceId: string
+}): Promise<
+  Array<{
+    id: string
+    label: string
+    schema: FormSchema
+    version: number
+  }>
+> {
+  const db = getDb()
+  const rows = await db
+    .select({
+      id: customFormSchemas.id,
+      label: customFormSchemas.label,
+      schema: customFormSchemas.schema,
+      version: customFormSchemas.version,
+    })
+    .from(customFormSchemas)
+    .where(
+      and(
+        eq(customFormSchemas.workspaceId, input.workspaceId),
+        eq(customFormSchemas.isTemplate, true),
+        isNull(customFormSchemas.archivedAt),
+      ),
+    )
+    .orderBy(asc(customFormSchemas.label))
+  // Validate each schema on read — bad bytes shouldn't crash the
+  // Designer dropdown.
+  return rows
+    .map((r) => {
+      const parsed = formSchemaSchema.safeParse(r.schema)
+      if (!parsed.success) return null
+      return {
+        id: r.id,
+        label: r.label,
+        schema: parsed.data,
+        version: r.version,
+      }
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null)
 }
