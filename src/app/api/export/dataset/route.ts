@@ -1,10 +1,11 @@
-import { NextResponse, type NextRequest } from 'next/server'
+import { NextResponse, type NextRequest, after } from 'next/server'
+import { eq } from 'drizzle-orm'
 import { requireWorkspaceAdmin } from '@/lib/auth/guards'
 import { getDatasetVersionById } from '@/lib/queries/dataset-versions'
 import { AppError } from '@/lib/errors'
 import { extractRequestMeta, logApiRequest } from '@/lib/api/audit'
 import { getDb } from '@/lib/db/client'
-import { events } from '@/lib/db/schema'
+import { events, exportJobs } from '@/lib/db/schema'
 import {
   reshapeTeaching,
   type TeachingItem,
@@ -14,6 +15,11 @@ import {
   pickFormatterFor,
   type ExportFormat,
 } from '@/lib/export/formatters'
+import {
+  ASYNC_EXPORT_THRESHOLD_BYTES,
+  estimateExportBytes,
+  uploadExportArtifact,
+} from '@/lib/export/storage'
 
 /**
  * GET /api/export/dataset?versionId=...&format=raw|teaching&encoding=json|jsonl|csv|excel
@@ -110,17 +116,140 @@ export async function GET(request: NextRequest) {
         : version.manifest
     ) as Record<string, unknown>[]
 
-    // D15 — pick the encoding's formatter and buffer its bytes for
-    // logging + response. Excel must buffer (sheetjs doesn't stream);
-    // the others are streaming-shape async iterators but we still
-    // collect for the response body so the x-export-count header
-    // remains a single shot. Streaming directly to Response.body
-    // would need a chunked-aware Response; deferring that to D18.
     const formatter = pickFormatterFor(encoding)
 
     async function* rowIterator() {
       for (const entry of entries) yield entry
     }
+
+    // D21-D — async branch. Large exports (estimated > 5MB) enqueue
+    // an `export_jobs` row and return { jobId, statusUrl } so the
+    // /admin/exports page can poll for completion + download.
+    // Threshold uses estimateExportBytes (item count × avg row size);
+    // intentionally generous so Excel-heavy datasets fall back to
+    // async too (sheetjs buffers in memory regardless of streaming
+    // intent, so a 10k-row Excel synchronously is a memory hazard).
+    const estimatedBytes = estimateExportBytes({
+      itemCount: entries.length,
+      avgBytesPerRow: encoding === 'excel' ? 4_000 : 2_000,
+    })
+    const shouldGoAsync = estimatedBytes >= ASYNC_EXPORT_THRESHOLD_BYTES
+
+    if (shouldGoAsync) {
+      const db = getDb()
+      const [job] = await db
+        .insert(exportJobs)
+        .values({
+          workspaceId: version.workspaceId,
+          createdBy: user.id,
+          format: `${format}/${encoding}`,
+          config: {
+            versionId,
+            versionLabel: version.label,
+            format,
+            encoding,
+            estimatedBytes,
+          },
+          status: 'pending',
+          rowCount: entries.length,
+        })
+        .returning({ id: exportJobs.id })
+
+      // Background processing — runs in Vercel's after() window so
+      // the user gets the jobId response immediately. Failures land
+      // in `error_text` so /admin/exports can render them.
+      after(async () => {
+        const dbBg = getDb()
+        try {
+          await dbBg
+            .update(exportJobs)
+            .set({ status: 'running' })
+            .where(eq(exportJobs.id, job.id))
+          const chunks2: Uint8Array[] = []
+          let totalBytes2 = 0
+          for await (const chunk of formatter(rowIterator())) {
+            chunks2.push(chunk)
+            totalBytes2 += chunk.length
+          }
+          const buffer = new Uint8Array(totalBytes2)
+          let off = 0
+          for (const c of chunks2) {
+            buffer.set(c, off)
+            off += c.length
+          }
+          const upload = await uploadExportArtifact({
+            workspaceId: version.workspaceId,
+            jobId: job.id,
+            ext: formatter.meta.extension,
+            bytes: buffer,
+            contentType: formatter.meta.contentType,
+          })
+          await dbBg
+            .update(exportJobs)
+            .set({
+              status: 'completed',
+              byteSize: totalBytes2,
+              storagePath: upload.path,
+              finishedAt: new Date(),
+            })
+            .where(eq(exportJobs.id, job.id))
+        } catch (e) {
+          await dbBg
+            .update(exportJobs)
+            .set({
+              status: 'failed',
+              errorText: e instanceof Error ? e.message : 'unknown',
+              finishedAt: new Date(),
+            })
+            .where(eq(exportJobs.id, job.id))
+        }
+      })
+
+      response = NextResponse.json(
+        {
+          jobId: job.id,
+          status: 'pending',
+          statusUrl: `/api/export/jobs/${job.id}`,
+          estimatedBytes,
+          rowCount: entries.length,
+        },
+        { status: 202 },
+      )
+      // Audit event also goes out for async exports so the timeline
+      // shows when the request was made (separate from when it finished).
+      const dbEvt = getDb()
+      await dbEvt.insert(events).values({
+        type: 'dataset.version_exported',
+        workspaceId: version.workspaceId,
+        actorId: user.id,
+        payload: {
+          versionId: version.id,
+          label: version.label,
+          format,
+          encoding,
+          async: true,
+          jobId: job.id,
+          estimatedBytes,
+          itemCount: entries.length,
+        },
+      })
+      // Skip the sync streaming below.
+      logApiRequest({
+        workspaceId,
+        userId,
+        endpoint: 'GET /api/export/dataset',
+        method: 'GET',
+        status: 202,
+        errorCode: null,
+        durationMs: Date.now() - start,
+        remoteAddr,
+        userAgent,
+        responseBytes: 0,
+      })
+      return response
+    }
+
+    // Sync streaming path (small jobs).
     const chunks: Uint8Array[] = []
     let totalBytes = 0
     for await (const chunk of formatter(rowIterator())) {
