@@ -31,6 +31,7 @@ import 'server-only'
 import { createHash } from 'node:crypto'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import type { AttachmentRecord } from './attachment-extractor'
+import { getStorageDriver, uploadToLocalFs } from '@/lib/storage/local-fs'
 
 export const STORAGE_BUCKET = 'labelhub-media'
 
@@ -101,13 +102,49 @@ export async function uploadBytes(opts: {
   bytes: Buffer
   mediaType?: string
 }): Promise<UploadResult> {
+  const sha = createHash('sha256').update(opts.bytes).digest('hex')
+  const ext = extensionFor(opts.mediaType)
+  const path = `${opts.workspaceId}/${sha}.${ext}`
+
+  // D22 self-host — local FS driver. Content-addressed dedupe via
+  // sha256 → identical bytes reuse the same on-disk file (the second
+  // writeFile is a no-op overwrite with the same content). Reuse
+  // detection: stat before write.
+  if (getStorageDriver() === 'local') {
+    const { stat } = await import('node:fs/promises')
+    const path2 = await import('node:path')
+    const root = process.env.LOCAL_STORAGE_DIR || '/var/labelhub/storage'
+    const baseUrl = (
+      process.env.LOCAL_STORAGE_BASE_URL || '/storage'
+    ).replace(/\/+$/, '')
+    const fullPath = path2.join(root, STORAGE_BUCKET, path)
+    let reused = false
+    try {
+      await stat(fullPath)
+      reused = true
+    } catch {
+      // not present → upload
+    }
+    if (!reused) {
+      await uploadToLocalFs({
+        bucket: STORAGE_BUCKET,
+        key: path,
+        bytes: opts.bytes,
+        contentType: opts.mediaType,
+      })
+    }
+    return {
+      publicUrl: `${baseUrl}/${STORAGE_BUCKET}/${path}`,
+      path,
+      reused,
+    }
+  }
+
+  // Supabase Storage path (Vercel default).
   const client = getStorageClient()
   if (!client) {
     throw new Error('Supabase Storage not configured')
   }
-  const sha = createHash('sha256').update(opts.bytes).digest('hex')
-  const ext = extensionFor(opts.mediaType)
-  const path = `${opts.workspaceId}/${sha}.${ext}`
 
   const { error } = await client.storage.from(STORAGE_BUCKET).upload(
     path,

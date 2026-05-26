@@ -1,5 +1,6 @@
 import 'server-only'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { getStorageDriver, uploadToLocalFs } from '@/lib/storage/local-fs'
 
 /**
  * Export-artifact storage — Finals D21-D.
@@ -53,14 +54,29 @@ export async function uploadExportArtifact(opts: {
   bytes: Uint8Array
   contentType: string
 }): Promise<ExportUploadResult> {
+  const key = `${opts.workspaceId}/${opts.jobId}.${opts.ext}`
+
+  // D22 self-host — local FS driver. Writes to /var/labelhub/storage/
+  // and returns a URL nginx serves directly. Picked via env so the
+  // Vercel deploy (driver=supabase, default) keeps working.
+  if (getStorageDriver() === 'local') {
+    const { publicUrl, path: writtenKey } = await uploadToLocalFs({
+      bucket: EXPORT_STORAGE_BUCKET,
+      key,
+      bytes: opts.bytes,
+      contentType: opts.contentType,
+    })
+    return { publicUrl, path: writtenKey }
+  }
+
+  // Supabase Storage path (Vercel default).
   const client = getExportClient()
   if (!client) {
     throw new Error('Supabase Storage not configured (NEXT_PUBLIC_SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY)')
   }
-  const path = `${opts.workspaceId}/${opts.jobId}.${opts.ext}`
   const { error } = await client.storage
     .from(EXPORT_STORAGE_BUCKET)
-    .upload(path, opts.bytes, {
+    .upload(key, opts.bytes, {
       contentType: opts.contentType,
       upsert: true,
     })
@@ -69,8 +85,8 @@ export async function uploadExportArtifact(opts: {
   }
   const { data } = client.storage
     .from(EXPORT_STORAGE_BUCKET)
-    .getPublicUrl(path)
-  return { publicUrl: data.publicUrl, path }
+    .getPublicUrl(key)
+  return { publicUrl: data.publicUrl, path: key }
 }
 
 /**
