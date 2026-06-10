@@ -31,6 +31,7 @@ Drizzle ORM / Postgres · Supabase Auth.
 | 8 | **Demo video** | 5–10 min end-to-end walk-through across the three roles (Owner / Labeler / Reviewer) | [`./demo/SCRIPT.md`](./demo/SCRIPT.md) | 🎬 Shot-by-shot script + narration READY; recording is human-only |
 | 9 | **Screenshots** | Designer, AI-agent config, Renderer/answer view, review queue + detail, export | [`./screenshots/`](./screenshots/) (6 frames, captured 2026-06-10 against the live deploy) | ✅ Done (billing/earnings frames skipped — the billing loop is shown in the demo video instead) |
 | 10 | **Live demo environment** | The deployed platform, reachable now | **https://aipert.top** | ✅ Live |
+| 11 | **Demo-env access doc** | URL + ready-made judge/labeler credentials + a 10-minute tour path + caveats | [`./DEMO_ENV.md`](./DEMO_ENV.md) | ✅ Done |
 
 **Status legend:** ✅ Done · 🔧 Produced by another task in this bundle (this
 index only links it) · 📄 Present, see the file itself · 🎬 / 📸 Pending an
