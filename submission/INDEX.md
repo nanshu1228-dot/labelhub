@@ -29,7 +29,7 @@ Drizzle ORM / Postgres · Supabase Auth.
 | 6 | **API docs (prose)** | Human-readable companion to the OpenAPI spec — endpoints, auth, examples | [`./api/API.md`](./api/API.md) | 🔧 Produced by API task (link only) |
 | 7 | **AI-coding process record** | The real AI-assisted workflow log: spec audits, parallel fan-outs, key decisions | [`./AI_CODING_PROCESS.md`](./AI_CODING_PROCESS.md) | 📄 See file (authored separately) |
 | 8 | **Demo video** | 5–10 min end-to-end walk-through across the three roles (Owner / Labeler / Reviewer) | [`./demo/SCRIPT.md`](./demo/SCRIPT.md) | 🎬 Shot-by-shot script + narration READY; recording is human-only |
-| 9 | **Screenshots** | Designer, Renderer/answer view, AI review, export, billing | shot list in [`./demo/SCRIPT.md`](./demo/SCRIPT.md) → `./screenshots/` | 📸 Capture list READY (8 frames); capture is human-only |
+| 9 | **Screenshots** | Designer, AI-agent config, Renderer/answer view, review queue + detail, export | [`./screenshots/`](./screenshots/) (6 frames, captured 2026-06-10 against the live deploy) | ✅ Done (billing/earnings frames skipped — the billing loop is shown in the demo video instead) |
 | 10 | **Live demo environment** | The deployed platform, reachable now | **https://aipert.top** | ✅ Live |
 
 **Status legend:** ✅ Done · 🔧 Produced by another task in this bundle (this
