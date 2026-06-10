@@ -22,6 +22,8 @@ export interface TopBarProps {
   onSubmit?: () => void
   submitDisabled?: boolean
   submitLabel?: string
+  /** Inline error surfaced next to the Submit CTA when a submit fails. */
+  submitError?: string | null
 }
 
 /**
@@ -44,6 +46,7 @@ export function TopBar({
   onSubmit,
   submitDisabled,
   submitLabel,
+  submitError,
 }: TopBarProps) {
   return (
     <header
@@ -124,14 +127,26 @@ export function TopBar({
           </button>
 
           {onSubmit && (
-            <button
-              type="button"
-              className="lh-btn lh-btn-accent lh-btn-sm"
-              onClick={onSubmit}
-              disabled={submitDisabled}
-            >
-              {submitLabel ?? 'Submit'}
-            </button>
+            <>
+              {submitError && (
+                <span
+                  className="ts-11 mono"
+                  style={{ color: 'var(--danger)' }}
+                  role="alert"
+                  title={submitError}
+                >
+                  {submitError}
+                </span>
+              )}
+              <button
+                type="button"
+                className="lh-btn lh-btn-accent lh-btn-sm"
+                onClick={onSubmit}
+                disabled={submitDisabled}
+              >
+                {submitLabel ?? 'Submit'}
+              </button>
+            </>
           )}
         </div>
       </div>

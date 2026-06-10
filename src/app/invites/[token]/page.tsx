@@ -96,6 +96,10 @@ export default async function AcceptInvitePage(
     )
   }
 
+  // Server Component: Date.now() is evaluated once per request render and
+  // is deterministic within it — the React-purity rule targets client
+  // re-render nondeterminism, which doesn't apply to this expiry check.
+  // eslint-disable-next-line react-hooks/purity
   if (row.expiresAt && row.expiresAt.getTime() < Date.now()) {
     return (
       <InviteShell>

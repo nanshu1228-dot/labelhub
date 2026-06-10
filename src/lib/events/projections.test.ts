@@ -35,10 +35,12 @@ describe('TaskProjection', () => {
     expect(state.taskName).toBe('My Task')
   })
 
-  it('full lifecycle: created → published → topics → approvals → archived', () => {
+  it('full lifecycle: created → published → paused → resumed → topics → approvals → closed', () => {
     const events = [
       evt({ type: 'task.created', payload: { taskId: 't1', name: 'T' } }),
       evt({ type: 'task.published', payload: { taskId: 't1' } }),
+      evt({ type: 'task.paused', payload: { taskId: 't1' } }),
+      evt({ type: 'task.resumed', payload: { taskId: 't1' } }),
       evt({
         type: 'topic.created',
         payload: { taskId: 't1', topicId: 'top1' },
@@ -55,13 +57,29 @@ describe('TaskProjection', () => {
         type: 'annotation.approved',
         payload: { taskId: 't1', topicId: 'top1' },
       }),
+      evt({ type: 'task.closed', payload: { taskId: 't1' } }),
+    ]
+    const state = fold(events, createTaskProjection('t1'))
+    expect(state.status).toBe('closed')
+    expect(state.pausedAt).toBeInstanceOf(Date)
+    expect(state.closedAt).toBeInstanceOf(Date)
+    expect(state.topicCounts.drafting).toBe(1) // top2
+    expect(state.topicCounts.approved).toBe(1) // top1
+    expect(state.topicCounts.submitted).toBe(0)
+  })
+
+  it('archives after closure without losing closed timestamp', () => {
+    const closedAt = new Date('2026-01-02T00:00:00Z')
+    const events = [
+      evt({ type: 'task.created', payload: { taskId: 't1', name: 'T' } }),
+      evt({ type: 'task.published', payload: { taskId: 't1' } }),
+      evt({ type: 'task.closed', ts: closedAt, payload: { taskId: 't1' } }),
       evt({ type: 'task.archived', payload: { taskId: 't1' } }),
     ]
     const state = fold(events, createTaskProjection('t1'))
     expect(state.status).toBe('archived')
-    expect(state.topicCounts.drafting).toBe(1) // top2
-    expect(state.topicCounts.approved).toBe(1) // top1
-    expect(state.topicCounts.submitted).toBe(0)
+    expect(state.closedAt).toEqual(closedAt)
+    expect(state.archivedAt).toBeInstanceOf(Date)
   })
 
   it('ignores events for other tasks', () => {

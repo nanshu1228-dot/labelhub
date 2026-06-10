@@ -14,6 +14,7 @@ import {
   commitStepMark,
   commitTrajectoryMark,
 } from '@/lib/actions/annotate-marks'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 
 /**
  * Autosave coordinator.
@@ -110,8 +111,7 @@ export function useAutosaveMark(opts: {
             })
           })
           .catch((err: unknown) => {
-            const message =
-              err instanceof Error ? err.message : 'Save failed'
+            const message = getErrorMessage(err, 'Save failed')
             store.set(stepPersistStatusAtomFamily(key), {
               state: 'error',
               message,
@@ -159,8 +159,7 @@ export function useAutosaveMark(opts: {
             })
           })
           .catch((err: unknown) => {
-            const message =
-              err instanceof Error ? err.message : 'Save failed'
+            const message = getErrorMessage(err, 'Save failed')
             store.set(trajectoryPersistStatusAtomFamily(rubricId), {
               state: 'error',
               message,

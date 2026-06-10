@@ -1,6 +1,7 @@
 'use client'
 import { useState, useTransition } from 'react'
 import { addConnectionDemo } from '@/lib/actions/connections'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 
 interface ProviderOpt {
   kind: string
@@ -53,7 +54,7 @@ export function ConnectionFormClient({
         setBaseUrl('')
         setRateLimitRpm('')
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Failed to add connection.')
+        setError(getErrorMessage(e, 'Failed to add connection.'))
       }
     })
   }

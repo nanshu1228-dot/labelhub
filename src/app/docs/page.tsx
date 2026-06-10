@@ -96,7 +96,7 @@ export default function DocsPage() {
         </p>
         <CodeBlock
           lang="bash"
-          code={`curl -sS -X POST https://labelhub-gamma.vercel.app/api/proxy/doubao/chat/completions \\
+          code={`curl -sS -X POST https://aipert.top/api/proxy/doubao/chat/completions \\
   -H 'Authorization: Bearer lh_ws_YOUR_KEY' \\
   -H 'Content-Type: application/json' \\
   -d '{
@@ -221,7 +221,7 @@ export default function DocsPage() {
           code={`# This call goes through but the model refuses because it's
 # out-of-scope for the workspace's task. No extra latency.
 
-curl -sS -X POST https://labelhub-gamma.vercel.app/api/proxy/doubao/chat/completions \\
+curl -sS -X POST https://aipert.top/api/proxy/doubao/chat/completions \\
   -H 'Authorization: Bearer lh_ws_YOUR_KEY' \\
   -H 'Content-Type: application/json' \\
   -d '{
@@ -257,7 +257,7 @@ import { trace } from '@labelhub/trace'  // or copy the file
 const t = trace({
   apiKey: process.env.LABELHUB_KEY!,
   agentName: 'travel-bot',
-  endpoint: 'https://labelhub-gamma.vercel.app',
+  endpoint: 'https://aipert.top',
 })
 
 t.start({ rootPrompt: userQuery })
@@ -340,15 +340,15 @@ await t.flush()  // POSTs the canonical trajectory to /api/ingest/trajectories`}
         <CodeBlock
           lang="bash"
           code={`# Recent annotations across the workspace
-curl -sS 'https://labelhub-gamma.vercel.app/api/annotations?limit=10' \\
+curl -sS 'https://aipert.top/api/annotations?limit=10' \\
   -H 'Authorization: Bearer lh_ws_YOUR_KEY'
 
 # Filter to one trajectory
-curl -sS 'https://labelhub-gamma.vercel.app/api/annotations?trajectory_id=<uuid>' \\
+curl -sS 'https://aipert.top/api/annotations?trajectory_id=<uuid>' \\
   -H 'Authorization: Bearer lh_ws_YOUR_KEY'
 
 # Only fully-reviewed ones since a checkpoint
-curl -sS 'https://labelhub-gamma.vercel.app/api/annotations?status=approved&since=2026-05-01T00:00:00Z' \\
+curl -sS 'https://aipert.top/api/annotations?status=approved&since=2026-05-01T00:00:00Z' \\
   -H 'Authorization: Bearer lh_ws_YOUR_KEY'`}
         />
         <p className="docs-body">
@@ -400,7 +400,7 @@ curl -sS 'https://labelhub-gamma.vercel.app/api/annotations?status=approved&sinc
         </p>
         <CodeBlock
           lang="bash"
-          code={`curl -sS 'https://labelhub-gamma.vercel.app/api/quality/summary' \\
+          code={`curl -sS 'https://aipert.top/api/quality/summary' \\
   -H 'Authorization: Bearer lh_ws_YOUR_KEY'`}
         />
         <CodeBlock
@@ -435,7 +435,7 @@ curl -sS 'https://labelhub-gamma.vercel.app/api/annotations?status=approved&sinc
         <CodeBlock
           lang="bash"
           code={`# Register a hook
-curl -sS -X POST https://labelhub-gamma.vercel.app/api/webhooks \\
+curl -sS -X POST https://aipert.top/api/webhooks \\
   -H 'Authorization: Bearer lh_ws_YOUR_KEY' \\
   -H 'Content-Type: application/json' \\
   -d '{
@@ -445,11 +445,11 @@ curl -sS -X POST https://labelhub-gamma.vercel.app/api/webhooks \\
 # → { "webhook": { "id": "...", "secret": "<save this>", ... } }
 
 # List your hooks
-curl -sS https://labelhub-gamma.vercel.app/api/webhooks \\
+curl -sS https://aipert.top/api/webhooks \\
   -H 'Authorization: Bearer lh_ws_YOUR_KEY'
 
 # Revoke
-curl -sS -X DELETE https://labelhub-gamma.vercel.app/api/webhooks/<id> \\
+curl -sS -X DELETE https://aipert.top/api/webhooks/<id> \\
   -H 'Authorization: Bearer lh_ws_YOUR_KEY'`}
         />
         <p className="docs-body">

@@ -29,7 +29,7 @@ async function main() {
       SELECT admin_id FROM workspaces WHERE id = ${DEMO_WORKSPACE_ID}
     `
     if (!admin) {
-      // eslint-disable-next-line no-console
+       
       console.error('[seed-versions] demo workspace missing')
       process.exit(1)
     }
@@ -41,7 +41,7 @@ async function main() {
 
     for (const label of ['v1', 'v2']) {
       if (labels.has(label)) {
-        // eslint-disable-next-line no-console
+         
         console.log(`[seed-versions] ${label} already exists, skipping`)
         continue
       }
@@ -73,7 +73,7 @@ async function main() {
         ORDER BY a.submitted_at ASC NULLS LAST
       `
       if (rows.length === 0) {
-        // eslint-disable-next-line no-console
+         
         console.log('[seed-versions] no approved annotations to freeze')
         continue
       }
@@ -106,7 +106,7 @@ async function main() {
            ${manifest.length}, ${sql.json(manifest as never)}, ${byteSize},
            ${admin.admin_id})
       `
-      // eslint-disable-next-line no-console
+       
       console.log(
         `[seed-versions] ✓ froze ${label} (${manifest.length} items, ${(byteSize / 1024).toFixed(1)} KB)`,
       )
@@ -117,7 +117,7 @@ async function main() {
 }
 
 main().catch((e) => {
-  // eslint-disable-next-line no-console
+   
   console.error('[seed-versions] failed:', e)
   process.exit(1)
 })

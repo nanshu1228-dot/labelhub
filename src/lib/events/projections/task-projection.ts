@@ -12,9 +12,11 @@ import type { WorkflowStage } from '@/lib/templates/types'
 export interface TaskProjectionState {
   taskId: string
   taskName: string | null
-  status: 'unknown' | 'draft' | 'open' | 'archived'
+  status: 'unknown' | 'draft' | 'open' | 'paused' | 'closed' | 'archived'
   createdAt: Date | null
   publishedAt: Date | null
+  pausedAt: Date | null
+  closedAt: Date | null
   archivedAt: Date | null
   /** Per-topic latest stage (used to compute transitions correctly) */
   topicStates: Record<string, WorkflowStage>
@@ -27,6 +29,7 @@ function emptyCounts(): Record<WorkflowStage, number> {
     drafting: 0,
     revising: 0,
     submitted: 0,
+    ai_review: 0,
     reviewing: 0,
     awaiting_acceptance: 0,
     approved: 0,
@@ -60,6 +63,8 @@ export function createTaskProjection(
       status: 'unknown',
       createdAt: null,
       publishedAt: null,
+      pausedAt: null,
+      closedAt: null,
       archivedAt: null,
       topicStates: {},
       topicCounts: emptyCounts(),
@@ -88,6 +93,15 @@ export function createTaskProjection(
         case 'task.published':
           return { ...state, status: 'open', publishedAt: event.ts }
 
+        case 'task.paused':
+          return { ...state, status: 'paused', pausedAt: event.ts }
+
+        case 'task.resumed':
+          return { ...state, status: 'open' }
+
+        case 'task.closed':
+          return { ...state, status: 'closed', closedAt: event.ts }
+
         case 'task.archived':
           return { ...state, status: 'archived', archivedAt: event.ts }
 
@@ -97,7 +111,8 @@ export function createTaskProjection(
 
         case 'topic.claimed':
         case 'topic.released':
-          // Ownership changes but stage doesn't.
+        case 'topic.batch_updated':
+          // Ownership/data edits do not change workflow stage.
           return state
 
         case 'annotation.drafted':

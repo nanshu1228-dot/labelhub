@@ -7,9 +7,9 @@ import {
 } from '@/lib/auth/guards'
 import { getWorkspaceById } from '@/lib/queries/workspaces'
 import {
-  getRaterDrilldown,
-  type RaterAxisRow,
-  type RaterSpeedStats,
+  getAnnotatorDrilldown,
+  type AnnotatorAxisRow,
+  type AnnotatorSpeedStats,
 } from '@/lib/queries/rater-drilldown'
 import { formatElapsed } from '@/lib/queries/annotation-time'
 import { readTrustStatus } from '@/lib/actions/trust-status'
@@ -57,7 +57,7 @@ export default async function RaterDrilldownPage(props: {
   if (!workspace) notFound()
 
   const [drill, trustStatus] = await Promise.all([
-    getRaterDrilldown({ userId, workspaceId }),
+    getAnnotatorDrilldown({ userId, workspaceId }),
     readTrustStatus({ userId, workspaceId }),
   ])
   if (!drill) notFound()
@@ -285,7 +285,7 @@ function StatusChip({ status }: { status: 'active' | 'probation' | 'suspended' }
   )
 }
 
-function SpeedSection({ speed }: { speed: RaterSpeedStats }) {
+function SpeedSection({ speed }: { speed: AnnotatorSpeedStats }) {
   if (speed.measuredCount === 0) {
     return (
       <section className="mb-8">
@@ -358,7 +358,7 @@ function SpeedSection({ speed }: { speed: RaterSpeedStats }) {
   )
 }
 
-function AxisTable({ rows }: { rows: RaterAxisRow[] }) {
+function AxisTable({ rows }: { rows: AnnotatorAxisRow[] }) {
   return (
     <div
       className="rounded-md overflow-hidden"

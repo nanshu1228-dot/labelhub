@@ -212,8 +212,8 @@ export interface RevisionRow {
 
 export interface TopicRevisionList {
   annotationId: string
-  raterDisplayName: string | null
-  raterEmail: string | null
+  annotatorDisplayName: string | null
+  annotatorEmail: string | null
   revisions: RevisionRow[]
 }
 
@@ -244,13 +244,13 @@ export async function listRevisionsForTopic(
   if (!task) throw new NotFoundError('Task')
   await requireWorkspaceAdmin(task.workspaceId)
 
-  // Pull annotations on this topic + the rater names.
+  // Pull annotations on this topic + the annotator names.
   const anns = await db
     .select({
       id: annotations.id,
       userId: annotations.userId,
-      raterDisplayName: users.displayName,
-      raterEmail: users.email,
+      annotatorDisplayName: users.displayName,
+      annotatorEmail: users.email,
     })
     .from(annotations)
     .innerJoin(users, eq(users.id, annotations.userId))
@@ -301,8 +301,8 @@ export async function listRevisionsForTopic(
   return {
     annotations: anns.map((a) => ({
       annotationId: a.id,
-      raterDisplayName: a.raterDisplayName,
-      raterEmail: a.raterEmail,
+      annotatorDisplayName: a.annotatorDisplayName,
+      annotatorEmail: a.annotatorEmail,
       revisions: byAnn.get(a.id) ?? [],
     })),
   }

@@ -243,7 +243,7 @@ export async function deleteConnection(opts: {
   try {
     await deleteProviderSecret(conn.vaultRef)
   } catch (e) {
-    // eslint-disable-next-line no-console
+     
     console.warn('vault delete failed for', conn.vaultRef, e)
   }
   await db

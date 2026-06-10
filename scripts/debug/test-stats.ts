@@ -14,7 +14,7 @@ async function main() {
     const [w] = await sql`SELECT count(*)::int AS n FROM workspaces`
     const [tc] =
       await sql`SELECT count(*)::int AS n FROM trajectory_steps WHERE kind = 'tool_call'`
-    // eslint-disable-next-line no-console
+     
     console.log({
       trajectories: t.n,
       teaching: a.n,
@@ -26,7 +26,7 @@ async function main() {
   }
 }
 main().catch((e) => {
-  // eslint-disable-next-line no-console
+   
   console.error(e)
   process.exit(1)
 })

@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createTopic } from '@/lib/actions/topics'
 import type { TemplateMode } from '@/lib/templates/types'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 
 /**
  * Admin "add topic" form for pair-rubric / arena-gsb tasks.
@@ -17,7 +18,6 @@ import type { TemplateMode } from '@/lib/templates/types'
  * captured trajectories via the inbox machinery.
  */
 export function AddTopicForm({
-  workspaceId,
   taskId,
   templateMode,
 }: {
@@ -91,7 +91,7 @@ export function AddTopicForm({
         reset()
         router.refresh()
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Create topic failed.')
+        setError(getErrorMessage(e, 'Create topic failed.'))
       }
     })
   }

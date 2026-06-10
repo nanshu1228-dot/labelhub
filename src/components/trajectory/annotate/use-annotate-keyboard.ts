@@ -140,6 +140,10 @@ export function useAnnotateKeyboard(args: KeyboardHandlerArgs): void {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
+    // Each consumed `args.*` field is listed explicitly rather than the
+    // whole `args` object: `args` is a fresh object every render, so
+    // depending on it would re-bind the keydown listener on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     args.mode,
     args.deepDive,

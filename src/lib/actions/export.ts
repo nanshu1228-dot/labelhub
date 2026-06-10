@@ -11,6 +11,7 @@ import {
   trajectorySteps,
 } from '@/lib/db/schema'
 import { requireWorkspaceAdmin } from '@/lib/auth/guards'
+import { validateRowsForFormat } from '@/lib/export/validate-rows'
 
 /**
  * Bulk export of trajectories + annotations as JSONL.
@@ -160,7 +161,7 @@ export async function generateJsonlExport(
     stepAnnsByAnn.set(sa.annotationId, arr)
   }
 
-  const lines: string[] = []
+  const bundles: Record<string, unknown>[] = []
   for (const traj of trajRows) {
     const trajSteps = stepsByTraj.get(traj.id) ?? []
     const trajProviderIds = Array.from(
@@ -180,17 +181,22 @@ export async function generateJsonlExport(
       (a) => stepAnnsByAnn.get(a.id) ?? [],
     )
 
-    lines.push(
-      JSON.stringify({
-        trajectory: traj,
-        steps: trajSteps,
-        tool_providers: trajProviders,
-        topic,
-        annotations: trajAnns,
-        step_annotations: trajStepAnns,
-      }),
-    )
+    bundles.push({
+      trajectory: traj,
+      steps: trajSteps,
+      tool_providers: trajProviders,
+      topic,
+      annotations: trajAnns,
+      step_annotations: trajStepAnns,
+    })
   }
+
+  // M1 — fail fast on a malformed bundle (e.g. an un-serializable
+  // payload) before joining, rather than emitting a corrupt JSONL
+  // body. Each bundle is one JSONL line, so validate against `jsonl`.
+  validateRowsForFormat(bundles, 'jsonl')
+
+  const lines = bundles.map((b) => JSON.stringify(b))
 
   return { jsonl: lines.join('\n'), count: trajRows.length }
 }

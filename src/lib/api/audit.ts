@@ -56,7 +56,7 @@ export function logApiRequest(entry: AuditEntry): void {
     })
     .catch((err) => {
       // Don't crash the response over a log write failure.
-      // eslint-disable-next-line no-console
+       
       console.warn('audit log failed:', err instanceof Error ? err.message : err)
     })
 }

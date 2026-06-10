@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { askWorkspaceAnalyst } from '@/lib/actions/analyze'
 import type { AnalyzeAggregates } from '@/lib/queries/analyze'
 import type { BatchAnalystResponse } from '@/lib/ai/batch-analyst'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 
 /**
  * /analyze page client — owns the filter input, the aggregate display,
@@ -525,7 +526,7 @@ function BatchAnalystChat({
           setError(r.error)
         }
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Analyst call failed.')
+        setError(getErrorMessage(e, 'Analyst call failed.'))
       }
     })
   }

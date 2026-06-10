@@ -4,8 +4,6 @@ import { getDb } from '@/lib/db/client'
 import {
   annotations,
   stepAnnotations,
-  topics,
-  tasks,
   trajectories,
   trajectorySteps,
   users,
@@ -37,7 +35,7 @@ import { IAA_TOLERANCE, isDispute, ratingSpread } from './iaa-math'
  * group-by. We don't materialize this — recompute on read.
  */
 
-export interface RaterMark {
+export interface AnnotatorMark {
   userId: string
   displayName: string | null
   rating: number | null
@@ -49,7 +47,7 @@ export interface StepIAA {
   trajectoryStepId: string
   trajectoryId: string
   /** All raters with marks on this step (any kind). */
-  raters: RaterMark[]
+  raters: AnnotatorMark[]
   /** True when raters disagree by more than ±1 rating point on `step_quality`. */
   disputed: boolean
   /** Severity: 0 (full agreement) … 4 (extreme: 5 vs 1). */
@@ -85,7 +83,7 @@ export async function getTrajectoryIAA(
     .where(eq(trajectorySteps.trajectoryId, trajectoryId))
 
   // Group by step.
-  const byStep = new Map<string, RaterMark[]>()
+  const byStep = new Map<string, AnnotatorMark[]>()
   for (const m of marks) {
     const arr = byStep.get(m.trajectoryStepId) ?? []
     arr.push({
@@ -243,7 +241,7 @@ export async function listTopDisputes(opts: {
     trajectoryId: string
     trajectoryStepId: string
     spread: number
-    raters: RaterMark[]
+    raters: AnnotatorMark[]
   }>
 > {
   const db = getDb()
@@ -280,7 +278,7 @@ export async function listTopDisputes(opts: {
     )
 
   // Bucket per step + score spread.
-  type Bucket = { trajectoryId: string; raters: RaterMark[] }
+  type Bucket = { trajectoryId: string; raters: AnnotatorMark[] }
   const byStep = new Map<string, Bucket>()
   for (const r of rows) {
     const b =
@@ -300,7 +298,7 @@ export async function listTopDisputes(opts: {
     trajectoryId: string
     trajectoryStepId: string
     spread: number
-    raters: RaterMark[]
+    raters: AnnotatorMark[]
   }> = []
   for (const [stepId, b] of byStep) {
     if (b.raters.length < 2) continue

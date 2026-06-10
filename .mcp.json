@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "labelhub-debug": {
-      "command": "npx",
-      "args": ["-y", "tsx", "mcp/server.ts"],
-      "env": {}
-    }
-  }
-}

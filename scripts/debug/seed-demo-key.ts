@@ -31,7 +31,7 @@ const DEMO_KEY_NAME = 'Public demo key (rate-limited)'
 
 const DATABASE_URL = process.env.DATABASE_URL
 if (!DATABASE_URL) {
-  // eslint-disable-next-line no-console
+   
   console.error('DATABASE_URL is not set.')
   process.exit(1)
 }
@@ -56,7 +56,7 @@ async function main() {
       SELECT id, settings FROM workspaces WHERE id = ${DEMO_WORKSPACE_ID}
     `
     if (!ws) {
-      // eslint-disable-next-line no-console
+       
       console.error(
         `[seed-demo-key] demo workspace ${DEMO_WORKSPACE_ID} not found — run scripts/seed-demo.ts first`,
       )
@@ -71,7 +71,7 @@ async function main() {
         AND prefix LIKE 'lh_demo_%'
         AND revoked_at IS NULL
     `
-    // eslint-disable-next-line no-console
+     
     console.log(`[seed-demo-key] revoked ${revoked.count ?? 0} prior demo key(s)`)
 
     // 3. Find any user from the workspace to act as `created_by`. The
@@ -81,7 +81,7 @@ async function main() {
       SELECT admin_id FROM workspaces WHERE id = ${DEMO_WORKSPACE_ID}
     `
     if (!admin?.admin_id) {
-      // eslint-disable-next-line no-console
+       
       console.error('[seed-demo-key] demo workspace has no admin')
       process.exit(1)
     }
@@ -112,7 +112,7 @@ async function main() {
     void ws // keep the existence-check earlier; ws.settings no longer
     // read here since the merge happens server-side
 
-    // eslint-disable-next-line no-console
+     
     console.log('[seed-demo-key] ✓ minted', {
       workspaceId: DEMO_WORKSPACE_ID,
       prefix,
@@ -125,7 +125,7 @@ async function main() {
 }
 
 main().catch((e) => {
-  // eslint-disable-next-line no-console
+   
   console.error('[seed-demo-key] failed:', e)
   process.exit(1)
 })

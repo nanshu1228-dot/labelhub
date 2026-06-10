@@ -123,6 +123,9 @@ export function calculatePayoutLineItem(
   const trust = clamp(input.trustScore, 0, 1)
   const bonus = Math.max(0, Math.floor(input.bonusAmountMinor ?? 0))
   const penalty = Math.max(0, Math.floor(input.penaltyAmountMinor ?? 0))
+  const baseAmountMinor =
+    economy.baseAmountMinor ??
+    (typeof economy.amount === 'number' ? Math.round(economy.amount) : undefined)
 
   // Volunteer / rating-elo: no cash flows. Surface as a zero-amount line
   // so we still emit a record for audit / "X items contributed" stats.
@@ -156,7 +159,7 @@ export function calculatePayoutLineItem(
   }
 
   // cash-per-item / cash-per-hour / token: all need base amount.
-  if (economy.baseAmountMinor == null || economy.baseAmountMinor <= 0) {
+  if (baseAmountMinor == null || baseAmountMinor <= 0) {
     return {
       economyType: economy.type,
       currency: economy.currency ?? 'UNKNOWN',
@@ -177,7 +180,7 @@ export function calculatePayoutLineItem(
     return {
       economyType: economy.type,
       currency: 'UNKNOWN',
-      baseAmountMinor: economy.baseAmountMinor,
+      baseAmountMinor,
       qualityMultiplierBp: 100,
       difficultyMultiplierBp: 100,
       bonusAmountMinor: 0,
@@ -204,7 +207,7 @@ export function calculatePayoutLineItem(
   // Two-stage rounding (each Math.floor introduces ≤ 1bp of drift, which
   // is < 0.0001 cents — well below any payout precision we care about).
   const afterQuality = Math.floor(
-    (economy.baseAmountMinor * multiplierBp) / 100,
+    (baseAmountMinor * multiplierBp) / 100,
   )
   const adjustedBase = Math.floor((afterQuality * difficultyBp) / 100)
   const total = Math.max(0, adjustedBase + bonus - penalty)
@@ -212,7 +215,7 @@ export function calculatePayoutLineItem(
   return {
     economyType: economy.type,
     currency,
-    baseAmountMinor: economy.baseAmountMinor,
+    baseAmountMinor,
     qualityMultiplierBp: multiplierBp,
     difficultyMultiplierBp: difficultyBp,
     bonusAmountMinor: bonus,

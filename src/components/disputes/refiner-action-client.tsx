@@ -1,6 +1,7 @@
 'use client'
 import { useState, useTransition } from 'react'
 import { refineGuidelinesDemo } from '@/lib/actions/guideline-refiner'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 
 /**
  * Big purple "Refine with Claude" button that fires the AI Guideline
@@ -31,9 +32,7 @@ export function RefinerActionClient({ workspaceId }: { workspaceId: string }) {
         })
       } catch (e) {
         setError(
-          e instanceof Error
-            ? e.message
-            : 'Failed to propose a patch. Check server logs.',
+          getErrorMessage(e, 'Failed to propose a patch. Check server logs.'),
         )
       }
     })

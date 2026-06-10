@@ -4,6 +4,7 @@ import {
   acceptPatchDemo,
   rejectPatchDemo,
 } from '@/lib/actions/guideline-refiner'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 
 /**
  * Accept / Reject buttons on pending patches. On accept we bump the
@@ -28,7 +29,7 @@ export function PatchActionsClient({
         const { newVersion } = await acceptPatchDemo({ workspaceId, patchId })
         setDone(`merged → guideline v${newVersion}`)
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Failed to merge.')
+        setError(getErrorMessage(e, 'Failed to merge.'))
       }
     })
   }
@@ -40,7 +41,7 @@ export function PatchActionsClient({
         await rejectPatchDemo({ workspaceId, patchId })
         setDone('rejected')
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Failed to reject.')
+        setError(getErrorMessage(e, 'Failed to reject.'))
       }
     })
   }

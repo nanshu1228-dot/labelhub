@@ -21,7 +21,7 @@ import postgres from 'postgres'
 
 const DATABASE_URL = process.env.DATABASE_URL
 if (!DATABASE_URL) {
-  // eslint-disable-next-line no-console
+   
   console.error('DATABASE_URL not set')
   process.exit(1)
 }
@@ -33,7 +33,7 @@ async function main() {
       `ALTER TABLE "workspace_webhooks"
        ADD COLUMN IF NOT EXISTS "next_retry_at" timestamp;`,
     )
-    // eslint-disable-next-line no-console
+     
     console.log('[apply] workspace_webhooks.next_retry_at ✓')
   } finally {
     await sql.end({ timeout: 5 })
@@ -41,7 +41,7 @@ async function main() {
 }
 
 main().catch((e) => {
-  // eslint-disable-next-line no-console
+   
   console.error('[apply] failed:', e)
   process.exit(1)
 })

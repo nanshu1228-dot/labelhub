@@ -1,17 +1,23 @@
+import type { CSSProperties, ReactNode } from 'react'
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
+import {
+  ArrowLeft,
+  ArrowRight,
+  Inbox as InboxIcon,
+  RotateCcw,
+  Zap,
+} from 'lucide-react'
 import { optionalUser } from '@/lib/auth/guards'
 import {
   listMyQueueForUser,
   getMyQueueStats,
 } from '@/lib/queries/annotator-queue'
 import { listMyAnnotatableWorkspaces } from '@/lib/actions/queue'
-import {
-  listMyTopicQueueForUser,
-  type TopicQueueItem,
-} from '@/lib/queries/topic-queue'
+import { listMyTopicQueueForUser } from '@/lib/queries/topic-queue'
 import { countUnreadNotifications } from '@/lib/queries/notifications'
+import { QueueTopicList } from '@/components/labeler/queue-topic-list'
 
 export const metadata: Metadata = {
   title: 'My Queue — LabelHub',
@@ -30,22 +36,31 @@ export const dynamic = 'force-dynamic'
  * Server-only auth gate; renders for any signed-in user (the queue itself
  * will be empty if they're not in any annotatable workspace).
  *
- * **UI status**: this page is currently a structured placeholder. The
- * styled version comes from the Claude Design output and replaces the
- * <QueueClient> stub below. The query layer + filter logic + Server
- * Actions are all wired and ready.
+ * The primary labeler entry is `/my/tasks`; this flat queue remains a
+ * power-user view for people who want to browse all claimable work
+ * across tasks and workspaces.
  */
 export default async function MyQueuePage(props: {
-  searchParams?: Promise<{ workspaceId?: string }>
+  searchParams?: Promise<{
+    workspaceId?: string
+    templateMode?: string
+  }>
 }) {
   const search = (await props.searchParams) ?? {}
   const workspaceFilter =
     typeof search.workspaceId === 'string' ? search.workspaceId : undefined
+  // D19-B — templateMode filter chip-row. Filter applied in-memory
+  // after the existing queries (capped 50 rows; cost negligible) so
+  // we don't need to thread a new param through the query layer.
+  const templateModeFilter =
+    typeof search.templateMode === 'string' && search.templateMode
+      ? search.templateMode
+      : undefined
 
   const me = await optionalUser()
   if (!me) redirect('/signin?next=/my/queue')
 
-  const [workspaces, queue, stats, topicQueue, unreadCount] = await Promise.all([
+  const [workspaces, queueRaw, stats, topicQueueRaw, unreadCount] = await Promise.all([
     listMyAnnotatableWorkspaces({ userId: me.id }),
     listMyQueueForUser({
       userId: me.id,
@@ -64,12 +79,34 @@ export default async function MyQueuePage(props: {
     countUnreadNotifications(me.id).catch(() => 0),
   ])
 
+  // Apply templateMode filter post-query. The trajectory queue is
+  // always `agent-trace-eval`; the topic queue carries an explicit
+  // `templateMode`. When the filter is set:
+  //   - filter topicQueue by templateMode
+  //   - keep trajectory queue iff filter is 'agent-trace-eval' (or null)
+  // The chip-row below derives its options from whatever modes
+  // actually surfaced in the results so labelers don't see ghost
+  // chips for paradigms they're not in.
+  const queue =
+    templateModeFilter && templateModeFilter !== 'agent-trace-eval'
+      ? []
+      : queueRaw
+  const topicQueue = templateModeFilter
+    ? topicQueueRaw.filter((r) => r.templateMode === templateModeFilter)
+    : topicQueueRaw
+  const availableTemplateModes = Array.from(
+    new Set<string>([
+      ...(queueRaw.length > 0 ? ['agent-trace-eval'] : []),
+      ...topicQueueRaw.map((r) => r.templateMode),
+    ]),
+  ).sort()
+
   return (
     <main className="app-light min-h-screen px-6 py-8" style={{ background: 'var(--bg)' }}>
       <div className="mx-auto max-w-[960px]">
         <div className="mb-6 flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <div className="lbl mb-2">§ FLAT QUEUE</div>
+            <div className="lbl mb-2">FLAT QUEUE</div>
             <h1 className="ts-32" style={{ color: 'var(--hi)' }}>
               All topics across every task
             </h1>
@@ -77,23 +114,21 @@ export default async function MyQueuePage(props: {
               className="ts-13 mt-1"
               style={{ color: 'var(--mute)', maxWidth: 640 }}
             >
-              Power-user view — every claimable topic across every
-              workspace, mixed together. Most labelers use{' '}
+              Cross-task queue for claimable rows across every workspace. Use{' '}
               <Link
                 href="/my/tasks"
                 style={{ color: 'var(--accent)', textDecoration: 'none' }}
               >
                 /my/tasks
               </Link>{' '}
-              to pick a campaign first, then drill in. This view is
-              here when you want to browse without picking a task.
+              when you want to work campaign by campaign.
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <InboxLink unread={unreadCount} />
             <Link
               href="/my/tasks"
-              className="ts-12 mono"
+              className="ts-12 mono inline-flex items-center gap-1.5"
               style={{
                 background: 'var(--accent-soft)',
                 color: 'var(--accent)',
@@ -103,11 +138,12 @@ export default async function MyQueuePage(props: {
                 textDecoration: 'none',
               }}
             >
-              ← my tasks
+              <ArrowLeft size={14} />
+              my tasks
             </Link>
             <Link
               href="/my/submissions"
-              className="ts-12 mono"
+              className="ts-12 mono inline-flex items-center gap-1.5"
               style={{
                 background: 'var(--panel)',
                 color: 'var(--mute)',
@@ -117,7 +153,8 @@ export default async function MyQueuePage(props: {
                 textDecoration: 'none',
               }}
             >
-              history →
+              history
+              <ArrowRight size={14} />
             </Link>
           </div>
         </div>
@@ -131,16 +168,22 @@ export default async function MyQueuePage(props: {
           activeWorkspaceId={workspaceFilter ?? null}
         />
 
+        <TemplateModeFilter
+          modes={availableTemplateModes}
+          activeMode={templateModeFilter ?? null}
+          workspaceId={workspaceFilter ?? null}
+        />
+
         {topicQueue.length > 0 && (
           <section className="mb-6">
-            <div className="lbl mb-2">§ TOPICS · PAIR-RUBRIC / ARENA-GSB</div>
-            <TopicQueueList items={topicQueue} />
+            <div className="lbl mb-2">TOPICS · LABELING TASKS</div>
+            <QueueTopicList items={topicQueue} />
           </section>
         )}
 
         <section>
           {topicQueue.length > 0 && (
-            <div className="lbl mb-2">§ TRAJECTORIES</div>
+            <div className="lbl mb-2">TRAJECTORIES</div>
           )}
           <QueueList items={queue} />
         </section>
@@ -169,6 +212,7 @@ function InboxLink({ unread }: { unread: number }) {
         textDecoration: 'none',
       }}
     >
+      <InboxIcon size={14} />
       <span>inbox</span>
       {hasUnread && (
         <span
@@ -214,154 +258,27 @@ function InboxBanner({ unread }: { unread: number }) {
             className="lbl"
             style={{ color: 'var(--accent)', letterSpacing: '0.05em' }}
           >
-            § INBOX
+            INBOX
           </div>
           <div
             className="ts-13 mt-0.5"
             style={{ color: 'var(--hi)', fontWeight: 500 }}
           >
             You have {unread} unread notification{unread === 1 ? '' : 's'} —
-            review verdicts, replies, and 打回 messages.
+            review verdicts, replies, and send-back messages.
           </div>
         </div>
         <span
-          className="ts-13 mono"
+          className="ts-13 mono inline-flex items-center gap-1"
           style={{ color: 'var(--accent)' }}
           aria-hidden
         >
-          open →
+          open <ArrowRight size={13} />
         </span>
       </div>
     </Link>
   )
 }
-
-function TopicQueueList({ items }: { items: TopicQueueItem[] }) {
-  return (
-    <ul className="flex flex-col gap-3">
-      {items.map((item) => {
-        const accent =
-          item.state === 'mine'
-            ? 'oklch(0.7 0.14 75 / 0.4)'
-            : item.state === 'submitted'
-              ? 'oklch(0.55 0 0 / 0.4)'
-              : 'var(--line)'
-        const stateLabel =
-          item.state === 'mine'
-            ? 'resume'
-            : item.state === 'submitted'
-              ? 'submitted'
-              : 'claim'
-        const stateColor =
-          item.state === 'mine'
-            ? 'oklch(0.7 0.14 75)'
-            : item.state === 'submitted'
-              ? 'var(--mute2)'
-              : 'oklch(0.65 0.18 200)'
-        return (
-          <li key={item.topicId}>
-            <Link
-              href={`/workspaces/${item.workspaceId}/topics/${item.topicId}/annotate`}
-              className="block rounded-xl p-4"
-              style={{
-                background: 'var(--panel)',
-                border: `1px solid ${accent}`,
-                textDecoration: 'none',
-                transition: 'border-color 120ms',
-              }}
-            >
-              <div className="flex items-baseline justify-between gap-3 mb-2">
-                <div className="ts-12 mono" style={{ color: 'var(--mute2)' }}>
-                  {item.workspaceName} · {item.taskName}
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  {item.difficulty != null && (
-                    <DifficultyChip
-                      difficulty={item.difficulty}
-                      reason={item.difficultyReason}
-                    />
-                  )}
-                  <span
-                    className="mono ts-11 px-2 py-0.5 rounded"
-                    style={{
-                      background: 'oklch(0.6 0.18 280 / 0.1)',
-                      color: 'var(--accent)',
-                      border: '1px solid oklch(0.6 0.18 280 / 0.25)',
-                    }}
-                  >
-                    {item.templateMode.toUpperCase()}
-                  </span>
-                  <span
-                    className="mono ts-11"
-                    style={{ color: stateColor, fontWeight: 600 }}
-                  >
-                    {stateLabel}
-                  </span>
-                </div>
-              </div>
-              <p
-                className="ts-13"
-                style={{ color: 'var(--text)', lineHeight: 1.5 }}
-              >
-                {item.promptPreview}
-              </p>
-              <div
-                className="ts-11 mono mt-2"
-                style={{ color: 'var(--mute2)' }}
-              >
-                status {item.topicStatus} · {item.createdAt.toISOString().slice(0, 10)}
-              </div>
-            </Link>
-          </li>
-        )
-      })}
-    </ul>
-  )
-}
-
-/**
- * Difficulty chip surfaced on each queue card — gives the annotator a
- * heads-up about how hard the AI thinks the topic is so they can plan
- * their session. Color ramp tracks the payout multiplier:
- *   1-2 (cheap)  → muted gray
- *   3   (normal) → neutral
- *   4   (harder) → warm yellow
- *   5   (expert) → red, "this one pays"
- */
-function DifficultyChip({
-  difficulty,
-  reason,
-}: {
-  difficulty: number
-  reason: string | null
-}) {
-  const palette: Record<number, { bg: string; fg: string; label: string }> = {
-    1: { bg: 'oklch(0.5 0 0 / 0.1)', fg: 'oklch(0.6 0 0)', label: 'easy' },
-    2: { bg: 'oklch(0.5 0 0 / 0.12)', fg: 'oklch(0.5 0 0)', label: 'light' },
-    3: { bg: 'oklch(0.55 0 0 / 0.14)', fg: 'oklch(0.45 0 0)', label: 'standard' },
-    4: { bg: 'oklch(0.7 0.14 75 / 0.15)', fg: 'oklch(0.55 0.14 75)', label: 'hard' },
-    5: { bg: 'oklch(0.55 0.2 25 / 0.15)', fg: 'var(--danger)', label: 'expert' },
-  }
-  const p = palette[Math.max(1, Math.min(5, difficulty))]
-  return (
-    <span
-      className="mono ts-11 px-2 py-0.5 rounded inline-flex items-center gap-1"
-      style={{
-        background: p.bg,
-        color: p.fg,
-        border: `1px solid ${p.fg}33`,
-      }}
-      title={reason ?? `AI rated this topic difficulty ${difficulty}/5`}
-    >
-      <span aria-hidden>🔥</span>
-      <span>
-        {p.label} · {difficulty}/5
-      </span>
-    </span>
-  )
-}
-
-// ─── Placeholder UI — replace with Claude Design output ──────────────────
 
 function StatsRow({
   stats,
@@ -422,6 +339,76 @@ function Stat({
   )
 }
 
+/**
+ * Template-mode chip-row — Finals D19-B.
+ *
+ * Lets the Labeler narrow the queue to one annotation paradigm
+ * (`custom-designer`, `pair-rubric`, `arena-gsb`, `agent-trace-eval`).
+ * Hidden when there's only one mode present so the UI stays calm
+ * for single-mode workspaces.
+ */
+/**
+ * Pure href builder for the template-mode chip-row. Exported so the
+ * unit tests can pin its output without spinning up React.
+ */
+export function templateModeFilterHref(opts: {
+  mode: string | null
+  workspaceId: string | null
+}): string {
+  const params = new URLSearchParams()
+  if (opts.workspaceId) params.set('workspaceId', opts.workspaceId)
+  if (opts.mode) params.set('templateMode', opts.mode)
+  const qs = params.toString()
+  return qs ? `/my/queue?${qs}` : '/my/queue'
+}
+
+function TemplateModeFilter({
+  modes,
+  activeMode,
+  workspaceId,
+}: {
+  modes: string[]
+  activeMode: string | null
+  workspaceId: string | null
+}) {
+  if (modes.length <= 1) return null
+  function href(mode: string | null): string {
+    return templateModeFilterHref({ mode, workspaceId })
+  }
+  const chipStyle = (active: boolean): CSSProperties => ({
+    background: active ? 'var(--accent)' : 'var(--panel2)',
+    color: active ? 'white' : 'var(--text)',
+    border: '1px solid var(--line)',
+    borderRadius: 6,
+    padding: '0 12px',
+    minHeight: 36,
+    fontSize: 12,
+    textDecoration: 'none',
+    display: 'inline-flex',
+    alignItems: 'center',
+  })
+  return (
+    <div className="flex items-center gap-2 flex-wrap mb-6">
+      <span className="lbl" style={{ color: 'var(--mute2)' }}>
+        mode:
+      </span>
+      <Link href={href(null)} className="mono" style={chipStyle(activeMode === null)}>
+        all
+      </Link>
+      {modes.map((m) => (
+        <Link
+          key={m}
+          href={href(m)}
+          className="mono"
+          style={chipStyle(activeMode === m)}
+        >
+          {m}
+        </Link>
+      ))}
+    </div>
+  )
+}
+
 function WorkspaceFilter({
   workspaces,
   activeWorkspaceId,
@@ -430,6 +417,22 @@ function WorkspaceFilter({
   activeWorkspaceId: string | null
 }) {
   if (workspaces.length <= 1) return null
+  const chipStyle = (
+    active: boolean,
+    extra?: CSSProperties,
+  ): CSSProperties => ({
+    background: active ? 'var(--accent)' : 'var(--panel2)',
+    color: active ? 'white' : 'var(--text)',
+    border: '1px solid var(--line)',
+    borderRadius: 6,
+    padding: '0 12px',
+    minHeight: 36,
+    fontSize: 12,
+    textDecoration: 'none',
+    display: 'inline-flex',
+    alignItems: 'center',
+    ...extra,
+  })
   return (
     <div className="flex items-center gap-2 flex-wrap mb-6">
       <span className="lbl" style={{ color: 'var(--mute2)' }}>
@@ -438,16 +441,7 @@ function WorkspaceFilter({
       <Link
         href="/my/queue"
         className="mono"
-        style={{
-          background:
-            activeWorkspaceId === null ? 'var(--accent)' : 'var(--panel2)',
-          color: activeWorkspaceId === null ? 'white' : 'var(--text)',
-          border: '1px solid var(--line)',
-          borderRadius: 4,
-          padding: '2px 10px',
-          fontSize: 11,
-          textDecoration: 'none',
-        }}
+        style={chipStyle(activeWorkspaceId === null)}
       >
         all
       </Link>
@@ -456,20 +450,9 @@ function WorkspaceFilter({
           key={w.workspaceId}
           href={`/my/queue?workspaceId=${w.workspaceId}`}
           className="mono trunc-1"
-          style={{
-            background:
-              activeWorkspaceId === w.workspaceId
-                ? 'var(--accent)'
-                : 'var(--panel2)',
-            color:
-              activeWorkspaceId === w.workspaceId ? 'white' : 'var(--text)',
-            border: '1px solid var(--line)',
-            borderRadius: 4,
-            padding: '2px 10px',
-            fontSize: 11,
-            textDecoration: 'none',
+          style={chipStyle(activeWorkspaceId === w.workspaceId, {
             maxWidth: 180,
-          }}
+          })}
         >
           {w.workspaceName}
         </Link>
@@ -501,7 +484,7 @@ function QueueList({
         >
           Nothing from agent-trace-eval workspaces awaiting your annotation.
           If you&apos;re in a pair-rubric or arena-gsb workspace, topics show
-          up in the section above instead. Otherwise — refresh after a new
+          up in the section above instead. Refresh after a new
           capture lands.
         </p>
       </div>
@@ -548,10 +531,10 @@ function QueueList({
                 </span>
               </div>
               <span
-                className="ts-12 mono"
+                className="ts-12 mono inline-flex items-center gap-1"
                 style={{ color: 'var(--accent)' }}
               >
-                start →
+                start <ArrowRight size={13} />
               </span>
             </div>
             <p
@@ -579,34 +562,47 @@ function PriorityBadge({
       bg: 'var(--danger-soft)',
       fg: 'var(--danger)',
       bord: 'oklch(0.55 0.2 25 / 0.4)',
+      icon: <Zap size={12} aria-hidden />,
       label:
         disputeCount === 1
-          ? '⚡ 1 dispute'
-          : `⚡ ${disputeCount} disputes`,
+          ? '1 dispute'
+          : `${disputeCount} disputes`,
     },
     resume: {
       bg: 'oklch(0.7 0.14 75 / 0.08)',
       fg: 'var(--warn)',
       bord: 'oklch(0.7 0.14 75 / 0.4)',
-      label: '↻ resume',
+      icon: <RotateCcw size={12} aria-hidden />,
+      label: 'resume',
     },
     peer: {
       bg: 'var(--accent-soft)',
       fg: 'var(--accent)',
       bord: 'var(--accent-line)',
+      icon: null,
       label: 'peer-rated',
     },
     fresh: {
       bg: 'var(--panel2)',
       fg: 'var(--mute)',
       bord: 'var(--line)',
+      icon: null,
       label: 'fresh',
     },
-  }
+  } satisfies Record<
+    typeof priority,
+    {
+      bg: string
+      fg: string
+      bord: string
+      icon: ReactNode | null
+      label: string
+    }
+  >
   const p = palette[priority]
   return (
     <span
-      className="mono shrink-0"
+      className="mono inline-flex shrink-0 items-center gap-1"
       style={{
         background: p.bg,
         color: p.fg,
@@ -619,6 +615,7 @@ function PriorityBadge({
         whiteSpace: 'nowrap',
       }}
     >
+      {p.icon}
       {p.label}
     </span>
   )

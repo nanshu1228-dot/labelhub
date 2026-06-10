@@ -2,6 +2,7 @@ import 'server-only'
 import { and, eq, isNotNull, ne } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { annotations, tasks, topics } from '@/lib/db/schema'
+import { majorityBoolean, median, ratingSpread } from './iaa-math'
 
 /**
  * Per-topic peer consensus — used in review mode to show "what did the
@@ -44,12 +45,6 @@ export interface TopicPeerData {
   pair: Record<string, PairPeerCell>
   /** Per-dim peer cells, keyed by `${dimId}|${side}`. */
   arena: Record<string, ArenaPeerCell>
-}
-
-function median(arr: number[]): number {
-  const s = [...arr].sort((a, b) => a - b)
-  const mid = Math.floor(s.length / 2)
-  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2
 }
 
 export async function getTopicPeerConsensus(opts: {
@@ -129,7 +124,7 @@ export async function getTopicPeerConsensus(opts: {
     const pair: Record<string, PairPeerCell> = {}
     for (const [key, c] of counts) {
       pair[key] = {
-        majority: c.t === c.f ? null : c.t > c.f,
+        majority: majorityBoolean(c.t, c.f),
         trueVotes: c.t,
         falseVotes: c.f,
       }
@@ -167,7 +162,9 @@ export async function getTopicPeerConsensus(opts: {
   for (const [key, arr] of scores) {
     arena[key] = {
       median: arr.length === 0 ? null : median(arr),
-      spread: arr.length === 0 ? 0 : Math.max(...arr) - Math.min(...arr),
+      // `ratingSpread` already collapses 0/1-element lists to 0, matching the
+      // old `max - min` guard — and uses the SAME spread primitive as IAA.
+      spread: ratingSpread(arr),
       raters: arr.length,
     }
   }

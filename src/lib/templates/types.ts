@@ -34,6 +34,29 @@ export const TEMPLATE_MODES = [
   /** FLAGSHIP: evaluate full agent trajectories — tool calls, reasoning,
    *  path choice. Per-step + per-trajectory rubric. */
   'agent-trace-eval',
+  /**
+   * Finals D1 — PM-defined visual form schema. The Designer (P1) drops
+   * widgets onto a canvas; the Renderer hydrates submitted task topic
+   * data into the schema-driven form for the Labeler to fill. The
+   * shape of itemData and responseSchema both come from the saved
+   * `custom_form_schemas` row referenced by templateConfig.formSchemaId.
+   *
+   * Unlike the three baked-in modes, validation here is delegated to
+   * the saved schema rather than a per-mode Zod object.
+   */
+  'custom-designer',
+  /**
+   * Rubric-authoring + judgement meta-review. A SINGLE model response is
+   * pre-generated; the expert annotator AUTHORS a pass/fail rubric for it
+   * and records a pass/fail verdict (per-criterion + overall). The AI
+   * checker then audits the labeler's WORK in two passes: (1) the quality
+   * of the rubric they wrote, and (2) whether their judgement is correct —
+   * by independently applying their own rubric to the response and
+   * comparing. Distinct from `pair-rubric`: one response judged pass/fail,
+   * not a pairwise A/B comparison. Pairs with AI review taskKind
+   * 'rubric_judgment'.
+   */
+  'rubric-judgment',
 ] as const
 
 export type TemplateMode = (typeof TEMPLATE_MODES)[number]
@@ -60,6 +83,21 @@ export const workflowStageSchema = z.enum([
   'drafting',
   'revising',
   'submitted',
+  /**
+   * Finals P2 D9 — AI Review Agent verdict is in flight. Slots between
+   * `submitted` and `reviewing`. The after-hook scheduler
+   * (src/lib/actions/ai-review-submission.ts) advances topics here
+   * when an `ai_submission_verdicts` row is `pending`, and forward to
+   * one of:
+   *   pass         → 'reviewing'
+   *   send_back    → 'drafting' (with reason in annotation_revisions)
+   *   human_review → 'reviewing' with priority flag in
+   *                  templateConfig.aiAgent priorityFlag
+   * The DB enum was extended in the D1 migration; this Zod side
+   * catches up here so the state-machine work in D11/D12 can match
+   * on it.
+   */
+  'ai_review',
   'reviewing',
   'awaiting_acceptance',
   'approved',
@@ -88,6 +126,8 @@ export const economyConfigSchema = z.object({
    * Required for `cash-per-item` and `token`; optional otherwise.
    */
   baseAmountMinor: z.number().int().nonnegative().optional(),
+  /** Legacy task rows created before the Owner form was aligned with billing. */
+  amount: z.number().nonnegative().optional(),
   qualityMultiplierMin: z.number().positive().optional(),
   qualityMultiplierMax: z.number().positive().optional(),
   /**

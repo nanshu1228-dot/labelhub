@@ -1,8 +1,10 @@
 'use client'
 import { useState, useTransition } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createWorkspace } from '@/lib/actions/workspaces'
 import type { TemplateMode } from '@/lib/templates/types'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 
 export type PickerTemplate = {
   mode: TemplateMode
@@ -23,6 +25,7 @@ const SHIPPED_MODES = new Set<TemplateMode>([
   'agent-trace-eval',
   'pair-rubric',
   'arena-gsb',
+  'rubric-judgment',
 ])
 
 export function TemplatePicker({ templates }: { templates: PickerTemplate[] }) {
@@ -42,7 +45,7 @@ export function TemplatePicker({ templates }: { templates: PickerTemplate[] }) {
         const ws = await createWorkspace({ name: name.trim(), templateMode: selected })
         router.push(`/workspaces/${ws.id}`)
       } catch (e: unknown) {
-        setError(e instanceof Error ? e.message : 'Unknown error')
+        setError(getErrorMessage(e, 'Unknown error'))
       }
     })
   }
@@ -52,13 +55,13 @@ export function TemplatePicker({ templates }: { templates: PickerTemplate[] }) {
       {/* minimal header */}
       <header
         style={{
-          background: 'oklch(0.13 0 0 / 0.78)',
+          background: 'var(--panel)',
           backdropFilter: 'blur(8px)',
-          borderBottom: '1px solid oklch(0.22 0 0)',
+          borderBottom: '1px solid var(--line)',
         }}
       >
         <div className="max-w-[1280px] mx-auto px-6 h-14 flex items-center justify-between">
-          <a href="/" className="flex items-center gap-2">
+          <Link href="/" className="flex items-center gap-2">
             <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden>
               <rect x="0.5" y="0.5" width="17" height="17" rx="4" stroke="oklch(0.6 0.18 280)" />
               <path
@@ -70,12 +73,12 @@ export function TemplatePicker({ templates }: { templates: PickerTemplate[] }) {
             </svg>
             <span
               className="lh-body font-medium"
-              style={{ color: 'oklch(0.92 0 0)', letterSpacing: '-0.01em' }}
+              style={{ color: 'var(--hi)', letterSpacing: '-0.01em' }}
             >
               LabelHub
             </span>
-          </a>
-          <a href="/" className="nav-link">Cancel</a>
+          </Link>
+          <Link href="/" className="nav-link">Cancel</Link>
         </div>
       </header>
 
@@ -86,12 +89,12 @@ export function TemplatePicker({ templates }: { templates: PickerTemplate[] }) {
         >
           §  01    GET STARTED
         </div>
-        <h1 className="lh-h1" style={{ color: 'oklch(0.95 0 0)' }}>
+        <h1 className="lh-h1" style={{ color: 'var(--hi)' }}>
           Start a workspace.
         </h1>
         <p
           className="lh-body-lg mt-4 max-w-[560px]"
-          style={{ color: 'oklch(0.62 0 0)' }}
+          style={{ color: 'var(--mute2)' }}
         >
           Pick the shape of the teaching. One engine, many modes — you can spin up more workspaces with different templates anytime.
         </p>
@@ -111,10 +114,10 @@ export function TemplatePicker({ templates }: { templates: PickerTemplate[] }) {
                   borderRadius: 12,
                   border: active
                     ? '1px solid oklch(0.6 0.18 280)'
-                    : '1px solid oklch(0.22 0 0)',
+                    : '1px solid var(--line)',
                   background: active
                     ? 'oklch(0.6 0.18 280 / 0.06)'
-                    : 'oklch(0.13 0 0)',
+                    : 'var(--panel)',
                   cursor: shipped ? 'pointer' : 'not-allowed',
                   opacity: shipped ? 1 : 0.45,
                 }}
@@ -132,8 +135,8 @@ export function TemplatePicker({ templates }: { templates: PickerTemplate[] }) {
                         borderRadius: '50%',
                         border: active
                           ? '4px solid oklch(0.6 0.18 280)'
-                          : '1px solid oklch(0.27 0 0)',
-                        background: active ? 'oklch(0.13 0 0)' : 'transparent',
+                          : '1px solid var(--line2)',
+                        background: active ? 'var(--panel)' : 'transparent',
                         transition: 'all 150ms',
                       }}
                     />
@@ -141,9 +144,9 @@ export function TemplatePicker({ templates }: { templates: PickerTemplate[] }) {
                     <span
                       className="lh-mono lh-caption"
                       style={{
-                        color: 'oklch(0.62 0 0)',
-                        background: 'oklch(0.22 0 0)',
-                        border: '1px solid oklch(0.27 0 0)',
+                        color: 'var(--mute2)',
+                        background: 'var(--line)',
+                        border: '1px solid var(--line2)',
                         padding: '2px 8px',
                         borderRadius: 4,
                         letterSpacing: '0.04em',
@@ -154,10 +157,10 @@ export function TemplatePicker({ templates }: { templates: PickerTemplate[] }) {
                     </span>
                   )}
                 </div>
-                <h3 className="lh-h4 mb-2" style={{ color: 'oklch(0.92 0 0)' }}>
+                <h3 className="lh-h4 mb-2" style={{ color: 'var(--hi)' }}>
                   {tpl.name}
                 </h3>
-                <p className="lh-body-sm" style={{ color: 'oklch(0.62 0 0)' }}>
+                <p className="lh-body-sm" style={{ color: 'var(--mute2)' }}>
                   {tpl.description}
                 </p>
               </button>
@@ -170,9 +173,9 @@ export function TemplatePicker({ templates }: { templates: PickerTemplate[] }) {
       <div
         className="sticky bottom-0"
         style={{
-          background: 'oklch(0.13 0 0 / 0.95)',
+          background: 'var(--panel)',
           backdropFilter: 'blur(12px)',
-          borderTop: '1px solid oklch(0.22 0 0)',
+          borderTop: '1px solid var(--line)',
         }}
       >
         <div className="max-w-[1280px] mx-auto px-6 py-4">
@@ -180,7 +183,7 @@ export function TemplatePicker({ templates }: { templates: PickerTemplate[] }) {
             <div
               className="lh-body-sm mb-3 px-3 py-2 rounded"
               style={{
-                color: 'oklch(0.85 0 0)',
+                color: 'var(--hi)',
                 background: 'oklch(0.6 0.2 25 / 0.12)',
                 border: '1px solid oklch(0.6 0.2 25 / 0.4)',
               }}
@@ -192,7 +195,7 @@ export function TemplatePicker({ templates }: { templates: PickerTemplate[] }) {
             <label
               htmlFor="workspace-name"
               className="lh-mono lh-caption"
-              style={{ color: 'oklch(0.42 0 0)', letterSpacing: '0.06em' }}
+              style={{ color: 'var(--mute2)', letterSpacing: '0.06em' }}
             >
               WORKSPACE NAME
             </label>
@@ -205,10 +208,10 @@ export function TemplatePicker({ templates }: { templates: PickerTemplate[] }) {
               maxLength={100}
               className="flex-1 min-w-[200px] px-3 py-2 outline-none"
               style={{
-                background: 'oklch(0.155 0 0)',
-                border: '1px solid oklch(0.22 0 0)',
+                background: 'var(--bg)',
+                border: '1px solid var(--line)',
                 borderRadius: 8,
-                color: 'oklch(0.92 0 0)',
+                color: 'var(--hi)',
                 fontSize: 14,
               }}
             />
@@ -235,10 +238,10 @@ export function TemplatePicker({ templates }: { templates: PickerTemplate[] }) {
               )}
             </button>
           </div>
-          <div className="mt-2 lh-caption" style={{ color: 'oklch(0.42 0 0)' }}>
+          <div className="mt-2 lh-caption" style={{ color: 'var(--mute2)' }}>
             {selected ? (
               <>
-                Mode: <span className="lh-mono" style={{ color: 'oklch(0.78 0 0)' }}>{selected}</span> · You can switch modes per task later.
+                Mode: <span className="lh-mono" style={{ color: 'var(--text)' }}>{selected}</span> · You can switch modes per task later.
               </>
             ) : (
               'Pick a template above to continue.'

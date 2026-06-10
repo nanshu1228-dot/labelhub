@@ -1,6 +1,7 @@
 import 'server-only'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
+import { normalizeSupabaseCookieOptions } from './cookie-options'
 
 /**
  * Supabase client for Server Components, Server Actions, and Route Handlers.
@@ -19,6 +20,13 @@ export async function getSupabaseServerClient() {
   }
 
   const cookieStore = await cookies()
+  // Opt-in HTTP fallback for finals self-host demo: when the deploy URL is
+  // plain HTTP (overseas IP, no TLS terminator in front), modern browsers
+  // refuse Set-Cookie with Secure=true. Setting INSECURE_COOKIES=true in
+  // env forces secure=false so the demo's password login actually works.
+  // Production HTTPS deploys leave this unset → @supabase/ssr default
+  // (secure=true in production) applies.
+  const insecureCookies = process.env.INSECURE_COOKIES === 'true'
 
   return createServerClient(url, key, {
     cookies: {
@@ -28,18 +36,11 @@ export async function getSupabaseServerClient() {
       setAll(cookiesToSet) {
         try {
           cookiesToSet.forEach(({ name, value, options }) => {
-            // Floor session-only cookies at 30 days so closing the tab
-            // doesn't sign the user out. Supabase SSR's defaults already
-            // do this; explicit ceiling here in case a future SDK
-            // regression sends maxAge=undefined.
-            const safeOptions = {
-              ...options,
-              maxAge:
-                options?.maxAge && options.maxAge > 0
-                  ? options.maxAge
-                  : 60 * 60 * 24 * 30,
-            }
-            cookieStore.set(name, value, safeOptions)
+            cookieStore.set(
+              name,
+              value,
+              normalizeSupabaseCookieOptions(options, insecureCookies),
+            )
           })
         } catch {
           // Called from a Server Component where cookies are read-only.

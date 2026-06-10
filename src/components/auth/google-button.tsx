@@ -3,6 +3,8 @@
 import { useState, useTransition } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { getSupabaseBrowserClient } from '@/lib/supabase/client'
+import { buildOAuthRedirectTo } from './oauth-redirect'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 
 /**
  * "Continue with Google" — kicks off the Supabase OAuth flow.
@@ -36,7 +38,7 @@ export function GoogleSignInButton({ label }: { label?: string }) {
         const { error } = await supabase.auth.signInWithOAuth({
           provider: 'google',
           options: {
-            redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`,
+            redirectTo: buildOAuthRedirectTo(window.location.origin, next),
             queryParams: {
               // Always show the account picker — annoying but means users with
               // multiple Google accounts don't accidentally sign in to the
@@ -48,7 +50,7 @@ export function GoogleSignInButton({ label }: { label?: string }) {
         if (error) setError(error.message)
         // Success path: browser is mid-redirect to Google — nothing more to do.
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'OAuth start failed.')
+        setError(getErrorMessage(e, 'OAuth start failed.'))
       }
     })
   }

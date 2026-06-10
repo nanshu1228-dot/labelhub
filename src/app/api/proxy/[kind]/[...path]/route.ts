@@ -15,7 +15,10 @@ import {
 import { OpenAIStreamAccumulator } from '@/lib/proxy/openai-stream-adapter'
 import { AnthropicStreamAccumulator } from '@/lib/proxy/anthropic-stream-adapter'
 import { teeWithAccumulator } from '@/lib/proxy/sse-tee'
-import { persistWithStorage } from '@/lib/proxy/persist-with-storage'
+import {
+  persistWithStorage,
+  CAPTURE_FAILED_EMITTED,
+} from '@/lib/proxy/persist-with-storage'
 import {
   resolveConnection,
   touchConnection,
@@ -28,6 +31,8 @@ import {
 import { recordCallAndCheckRpm, getApiKeyRpm } from '@/lib/proxy/rate-limit'
 import { injectScopeForFamily } from '@/lib/proxy/inject-scope'
 import { resolveTopicScope } from '@/lib/queries/topic-scope'
+import { getDb } from '@/lib/db/client'
+import { events } from '@/lib/db/schema'
 
 /**
  * Default per-connection rate limit when none is configured. Set to 60
@@ -224,7 +229,7 @@ export async function POST(
     } catch (e) {
       // Don't let a topic-scope read failure block the request — the
       // proxy's job is to forward. Log and pass through with the raw body.
-      // eslint-disable-next-line no-console
+       
       console.warn(
         `${providerDef.kind} proxy: topic-scope read failed, passing through:`,
         e instanceof Error ? e.message : e,
@@ -415,11 +420,12 @@ async function handleNonStream(
             trajectory,
           })
         } catch (e) {
-          // eslint-disable-next-line no-console
+           
           console.warn(
             `${ctx.providerDef.kind} proxy: capture failed (passthrough still succeeded):`,
             e instanceof Error ? e.message : e,
           )
+          await emitCaptureFailed(ctx, e)
         }
       })
     }
@@ -456,17 +462,66 @@ async function handleNonStream(
         trajectory,
       })
     } catch (e) {
-      // eslint-disable-next-line no-console
+       
       console.warn(
         `${ctx.providerDef.kind} proxy: capture failed (passthrough still succeeded):`,
         e instanceof Error ? e.message : e,
       )
+      await emitCaptureFailed(ctx, e)
     }
   })
   return new NextResponse(upstreamText, {
     status: 200,
     headers: { 'content-type': 'application/json' },
   })
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Shared: record a capture failure as an append-only `events` row so a
+// silent persist failure is observable in the UI (and audit) — today a
+// 200 passthrough with NO persisted trajectory leaves no trace.
+//
+// Best-effort + non-blocking: this runs inside the proxy's after()-window
+// catch blocks. It must NEVER throw back into the response path, so the
+// whole emit is wrapped in its own try/catch. If even the event insert
+// fails, we fall back to the existing console.warn.
+// ────────────────────────────────────────────────────────────────────
+
+async function emitCaptureFailed(
+  ctx: ProxyContext,
+  error: unknown,
+): Promise<void> {
+  // persistWithStorage already records its own DB/persist failures and
+  // tags the error — skip here so a single failure isn't double-counted.
+  // This catch still covers adapter/validation errors thrown BEFORE
+  // persist runs (which carry no tag).
+  if (
+    error &&
+    typeof error === 'object' &&
+    (error as Record<string, unknown>)[CAPTURE_FAILED_EMITTED] === true
+  ) {
+    return
+  }
+  try {
+    const db = getDb()
+    await db.insert(events).values({
+      type: 'trajectory.capture_failed',
+      workspaceId: ctx.workspaceId,
+      actorId: null,
+      payload: {
+        message: error instanceof Error ? error.message : String(error),
+        kind: ctx.providerDef.kind,
+        path: ctx.upstreamUrl,
+      },
+    })
+  } catch (e) {
+    // The observability emit itself failed — last-resort log only.
+     
+    console.warn(
+      `${ctx.providerDef.kind} proxy: failed to record capture_failed event:`,
+      e instanceof Error ? e.message : e,
+    )
+  }
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -510,11 +565,12 @@ function scheduleCapture<T extends AnthropicMessagesResponse | OpenAIChatRespons
         trajectory,
       })
     } catch (e) {
-      // eslint-disable-next-line no-console
+       
       console.warn(
         `${ctx.providerDef.kind} proxy stream: capture failed (passthrough still succeeded):`,
         e instanceof Error ? e.message : e,
       )
+      await emitCaptureFailed(ctx, e)
     }
   })
 }

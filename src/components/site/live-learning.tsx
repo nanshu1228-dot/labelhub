@@ -11,29 +11,29 @@ export function LiveLearning() {
             <div className="lh-mono lh-caption mb-3" style={{ color: 'oklch(0.6 0.18 280)' }}>
               {t('live_section')}
             </div>
-            <h2 className="lh-h2" style={{ color: 'oklch(0.92 0 0)' }}>{t('live_h')}</h2>
+            <h2 className="lh-h2" style={{ color: 'var(--hi)' }}>{t('live_h')}</h2>
           </div>
           <div className="col-span-12 md:col-span-5 md:pl-6">
-            <p className="lh-body-lg" style={{ color: 'oklch(0.62 0 0)' }}>{t('live_sub')}</p>
+            <p className="lh-body-lg" style={{ color: 'var(--mute2)' }}>{t('live_sub')}</p>
           </div>
         </div>
 
         {/* chart card */}
         <div
           style={{
-            border: '1px solid oklch(0.22 0 0)',
+            border: '1px solid var(--line)',
             borderRadius: 14,
-            background: 'oklch(0.13 0 0)',
+            background: 'var(--panel)',
             overflow: 'hidden',
           }}
         >
           {/* header row */}
           <div
             className="grid grid-cols-2 md:grid-cols-4 px-6 py-5"
-            style={{ borderBottom: '1px solid oklch(0.22 0 0)' }}
+            style={{ borderBottom: '1px solid var(--line)' }}
           >
             <div>
-              <div className="lh-mono lh-caption mb-1.5" style={{ color: 'oklch(0.42 0 0)' }}>
+              <div className="lh-mono lh-caption mb-1.5" style={{ color: 'var(--mute2)' }}>
                 claude-4.7 · sft-medical-qa-v7
               </div>
               <div className="flex items-baseline gap-2">
@@ -42,7 +42,7 @@ export function LiveLearning() {
                   style={{
                     fontSize: 32,
                     lineHeight: 1,
-                    color: 'oklch(0.95 0 0)',
+                    color: 'var(--hi)',
                     letterSpacing: '-0.02em',
                   }}
                 >
@@ -52,7 +52,7 @@ export function LiveLearning() {
                   ▲ +2.9
                 </span>
               </div>
-              <div className="lh-mono lh-caption mt-1" style={{ color: 'oklch(0.42 0 0)' }}>
+              <div className="lh-mono lh-caption mt-1" style={{ color: 'var(--mute2)' }}>
                 <span>{t('live_acc')}</span> · 7d
               </div>
             </div>
@@ -183,19 +183,19 @@ export function LiveLearning() {
           </div>
 
           {/* impact feed */}
-          <div style={{ borderTop: '1px solid oklch(0.22 0 0)' }}>
+          <div style={{ borderTop: '1px solid var(--line)' }}>
             <div className="px-6 py-4 flex items-center justify-between">
               <div
                 className="lh-mono lh-caption"
-                style={{ color: 'oklch(0.42 0 0)', letterSpacing: '0.04em' }}
+                style={{ color: 'var(--mute2)', letterSpacing: '0.04em' }}
               >
                 {t('live_feed_h')}
               </div>
-              <div className="lh-mono lh-caption" style={{ color: 'oklch(0.55 0 0)' }}>
+              <div className="lh-mono lh-caption" style={{ color: 'var(--mute)' }}>
                 live · 7d
               </div>
             </div>
-            <div style={{ borderTop: '1px solid oklch(0.22 0 0)' }}>
+            <div style={{ borderTop: '1px solid var(--line)' }}>
               <FeedRow ts="14:22" html={t('live_feed_1')} delta="+3.1%" />
               <FeedRow ts="13:58" html={t('live_feed_2')} delta="+2.1%" />
               <FeedRow ts="13:31" html={t('live_feed_3')} delta="rule" mutedDelta />
@@ -221,11 +221,11 @@ function MetricStat({
 }) {
   return (
     <div>
-      <div className="lh-mono lh-caption mb-1.5" style={{ color: 'oklch(0.42 0 0)' }}>{label}</div>
-      <div className="lh-mono" style={{ fontSize: 20, color: 'oklch(0.92 0 0)' }}>{value}</div>
+      <div className="lh-mono lh-caption mb-1.5" style={{ color: 'var(--mute2)' }}>{label}</div>
+      <div className="lh-mono" style={{ fontSize: 20, color: 'var(--hi)' }}>{value}</div>
       <div
         className="lh-mono lh-caption mt-1"
-        style={{ color: muted ? 'oklch(0.55 0 0)' : 'oklch(0.6 0.18 280)' }}
+        style={{ color: muted ? 'var(--mute)' : 'oklch(0.6 0.18 280)' }}
       >
         {delta}
       </div>
@@ -248,19 +248,19 @@ function FeedRow({
 }) {
   return (
     <div
-      className="px-6 py-3 grid grid-cols-12 gap-4 items-center"
-      style={{ borderBottom: last ? undefined : '1px solid oklch(0.22 0 0)' }}
+      className="px-4 md:px-6 py-3 grid grid-cols-12 gap-2 md:gap-4 items-center"
+      style={{ borderBottom: last ? undefined : '1px solid var(--line)' }}
     >
-      <span className="lh-mono lh-caption col-span-2" style={{ color: 'oklch(0.42 0 0)' }}>{ts}</span>
+      <span className="lh-mono lh-caption col-span-2" style={{ color: 'var(--mute2)' }}>{ts}</span>
       <span
         className="lh-body-sm col-span-8"
-        style={{ color: 'oklch(0.78 0 0)' }}
+        style={{ color: 'var(--text)' }}
       >
         {renderFeedSpans(html)}
       </span>
       <span
         className="lh-mono lh-caption col-span-2 text-right"
-        style={{ color: mutedDelta ? 'oklch(0.55 0 0)' : 'oklch(0.6 0.18 280)' }}
+        style={{ color: mutedDelta ? 'var(--mute)' : 'oklch(0.6 0.18 280)' }}
       >
         {delta}
       </span>

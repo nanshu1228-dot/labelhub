@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import {
   addPaymentMethod,
@@ -11,6 +10,7 @@ import {
 import { requestWithdraw } from '@/lib/actions/billing/withdraw'
 import { formatMoneyMinor } from '@/lib/billing/calculate-payout'
 import type { MyContribution } from '@/lib/queries/trust-consensus'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 
 /**
  * Annotator earnings dashboard.
@@ -85,13 +85,28 @@ interface DashboardData {
   }>
 }
 
+interface MyWithdrawal {
+  id: string
+  workspaceId: string
+  amountMinor: number
+  currency: string
+  status: string
+  decisionMemo: string | null
+  externalRef: string | null
+  reviewedAt: Date | null
+  createdAt: Date
+}
+
 export function EarningsDashboard({
   data,
+  withdrawals = [],
   userId: _userId,
   contribution,
   inviteRewardsSlot,
 }: {
   data: DashboardData
+  /** The user's own withdrawal requests (any status), newest first. */
+  withdrawals?: MyWithdrawal[]
   userId: string
   /** Cold counts — submitted / approved / rejected / pending review. NO score. */
   contribution: MyContribution
@@ -101,11 +116,13 @@ export function EarningsDashboard({
   inviteRewardsSlot?: React.ReactNode
 }) {
   return (
-    <div className="app-light min-h-screen" style={{ background: 'var(--bg)' }}>
-      <Header />
-      <main className="mx-auto max-w-[1200px] px-6 py-8 space-y-8">
-        <ContributionSection contribution={contribution} />
+    // The /my layout already provides the `.app-light` shell + AppHeader,
+    // so this dashboard stays a plain <main> — rendering its own header
+    // here previously produced two stacked nav bars.
+    <main className="mx-auto max-w-[1200px] px-6 py-8 space-y-8">
+      <ContributionSection contribution={contribution} />
         <WalletsSection wallets={data.wallets} methods={data.methods} />
+        <WithdrawalRequestsSection withdrawals={withdrawals} />
         <PendingSection
           pendingByCurrency={data.pendingByCurrency}
           pendingItems={data.pendingItems}
@@ -114,8 +131,150 @@ export function EarningsDashboard({
         <PayoutHistorySection recentPayouts={data.recentPayouts} />
         <LedgerSection recentTxns={data.recentTxns} />
         <PaymentMethodsSection methods={data.methods} />
-      </main>
-    </div>
+    </main>
+  )
+}
+
+function WithdrawalRequestsSection({
+  withdrawals,
+}: {
+  withdrawals: MyWithdrawal[]
+}) {
+  if (withdrawals.length === 0) return null
+  return (
+    <section>
+      <SectionHeading label="WITHDRAWALS" title="Your withdrawal requests" />
+      <div
+        className="rounded-xl overflow-hidden"
+        style={{ background: 'var(--panel)', border: '1px solid var(--line)' }}
+      >
+        <div className="overflow-x-auto">
+        <table className="w-full ts-12 mono min-w-[560px]">
+          <thead
+            style={{ color: 'var(--mute2)', borderBottom: '1px solid var(--line)' }}
+          >
+            <tr>
+              <th className="text-left p-2">requested</th>
+              <th className="text-right p-2">amount</th>
+              <th className="text-left p-2">status</th>
+              <th className="text-left p-2">reviewed</th>
+              <th className="text-left p-2">note</th>
+            </tr>
+          </thead>
+          <tbody>
+            {withdrawals.map((w) => {
+              // A request is "decided" once an admin has acted on it. We treat
+              // anything that's no longer the initial open state as decided so
+              // we can surface the decision memo / rejection reason + the time
+              // it was reviewed.
+              const decided =
+                w.status !== 'requested' && w.status !== 'pending'
+              // On a rejected row the decisionMemo is the rejection reason; on
+              // approved/paid rows it's the reviewer's memo (if any). externalRef
+              // is the synthetic receipt on a paid row.
+              const note =
+                w.decisionMemo ?? (decided ? w.externalRef : null) ?? '—'
+              return (
+                <tr key={w.id} style={{ borderTop: '1px solid var(--line)' }}>
+                  <td className="p-2" style={{ color: 'var(--mute2)' }}>
+                    {w.createdAt.toISOString().slice(0, 16).replace('T', ' ')}
+                  </td>
+                  <td className="p-2 text-right" style={{ color: 'var(--hi)' }}>
+                    {formatMoneyMinor(w.amountMinor, w.currency)}
+                  </td>
+                  <td className="p-2">
+                    <WithdrawalStatusChip status={w.status} />
+                  </td>
+                  <td className="p-2" style={{ color: 'var(--mute2)' }}>
+                    {decided && w.reviewedAt
+                      ? w.reviewedAt
+                          .toISOString()
+                          .slice(0, 16)
+                          .replace('T', ' ')
+                      : '—'}
+                  </td>
+                  <td
+                    className="p-2"
+                    style={{
+                      color:
+                        w.status === 'rejected'
+                          ? 'var(--danger)'
+                          : 'var(--mute)',
+                      maxWidth: 320,
+                    }}
+                  >
+                    {note}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+        </div>
+      </div>
+      <p className="ts-11 mt-2" style={{ color: 'var(--mute2)' }}>
+        A request holds nothing until an admin approves it — your balance only
+        drops when an approved withdrawal is committed to the ledger. Once an
+        admin decides, the reviewed time and any note (a rejection reason or a
+        payout receipt) appear above.
+      </p>
+    </section>
+  )
+}
+
+/**
+ * Status chip for a withdrawal request lifecycle (requested → approved → paid,
+ * or → rejected / cancelled). Mirrors the tone map used elsewhere but renders
+ * a filled chip so a decided row reads at a glance.
+ */
+function WithdrawalStatusChip({ status }: { status: string }) {
+  const variants: Record<string, { bg: string; fg: string; border: string }> = {
+    requested: {
+      bg: 'var(--warn-soft)',
+      fg: 'var(--warn)',
+      border: 'oklch(0.6 0.14 75 / 0.4)',
+    },
+    pending: {
+      bg: 'var(--warn-soft)',
+      fg: 'var(--warn)',
+      border: 'oklch(0.6 0.14 75 / 0.4)',
+    },
+    approved: {
+      bg: 'var(--accent-soft)',
+      fg: 'var(--accent)',
+      border: 'var(--accent-line)',
+    },
+    paid: {
+      bg: 'var(--success-soft)',
+      fg: 'var(--success)',
+      border: 'oklch(0.5 0.13 150 / 0.35)',
+    },
+    rejected: {
+      bg: 'var(--danger-soft)',
+      fg: 'var(--danger)',
+      border: 'oklch(0.55 0.2 25 / 0.35)',
+    },
+    cancelled: {
+      bg: 'var(--panel2)',
+      fg: 'var(--mute)',
+      border: 'var(--line)',
+    },
+  }
+  const v = variants[status] ?? variants.requested
+  return (
+    <span
+      className="mono ts-11"
+      style={{
+        background: v.bg,
+        color: v.fg,
+        border: `1px solid ${v.border}`,
+        padding: '1px 6px',
+        borderRadius: 4,
+        fontWeight: 500,
+      }}
+    >
+      {status}
+    </span>
   )
 }
 
@@ -221,28 +380,6 @@ function CountTile({
   )
 }
 
-function Header() {
-  return (
-    <header
-      className="hairline-b sticky top-0 z-10"
-      style={{ background: 'var(--panel)' }}
-    >
-      <div className="mx-auto max-w-[1200px] flex items-center justify-between px-6 py-3">
-        <nav className="ts-12 mono flex items-center gap-1.5" style={{ color: 'var(--mute2)' }}>
-          <Link href="/" className="hover:underline" style={{ color: 'var(--text)' }}>
-            home
-          </Link>
-          <span>/</span>
-          <span style={{ color: 'var(--hi)' }}>my earnings</span>
-        </nav>
-        <Link href="/" className="ts-13 mono" style={{ color: 'var(--hi)' }}>
-          <span style={{ color: 'var(--accent)' }}>§</span> labelhub
-        </Link>
-      </div>
-    </header>
-  )
-}
-
 function WalletsSection({
   wallets,
   methods,
@@ -297,9 +434,12 @@ function WalletCard({
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
 
-  const verified = methods.filter((m) => m.verifiedAt != null)
+  // Any saved method can receive a payout in the demo loop (verification is
+  // not required), and a withdrawal can be requested with no method at all —
+  // the admin approves it regardless.
+  const payoutMethods = methods
   const [pmId, setPmId] = useState(
-    verified.find((m) => m.isDefault)?.id ?? verified[0]?.id ?? '',
+    payoutMethods.find((m) => m.isDefault)?.id ?? payoutMethods[0]?.id ?? '',
   )
 
   function submit() {
@@ -314,27 +454,23 @@ function WalletCard({
       setError('Wallet has no workspace context.')
       return
     }
-    if (!pmId) {
-      setError('Add a verified payment method first.')
-      return
-    }
     const amountMinor = Math.floor(major * 100)
     startTransition(async () => {
       try {
         const r = await requestWithdraw({
           workspaceId: wallet.workspaceId!,
-          paymentMethodId: pmId,
+          paymentMethodId: pmId || undefined,
           amountMinor,
           currency: wallet.currency,
         })
         setSuccess(
-          `Queued withdraw ${r.withdrawRef}. New balance: ${formatMoneyMinor(r.newBalanceMinor, wallet.currency)}.`,
+          `Withdrawal requested — ${formatMoneyMinor(r.amountMinor, r.currency)} pending admin approval.`,
         )
         setShowWithdraw(false)
         setAmount('')
         router.refresh()
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Withdraw failed.')
+        setError(getErrorMessage(e, 'Withdraw failed.'))
       }
     })
   }
@@ -361,82 +497,78 @@ function WalletCard({
 
       {showWithdraw ? (
         <div className="mt-4 space-y-2">
-          {verified.length > 0 ? (
-            <>
-              <select
-                value={pmId}
-                onChange={(e) => setPmId(e.target.value)}
-                className="w-full px-2 py-1.5 ts-12 mono rounded"
-                style={{
-                  background: 'var(--bg)',
-                  border: '1px solid var(--line)',
-                  color: 'var(--text)',
-                }}
-              >
-                {verified.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.type}:{m.destination.slice(0, 20)}…
-                    {m.isDefault ? ' (default)' : ''}
-                  </option>
-                ))}
-              </select>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
-                placeholder={`amount in ${wallet.currency}`}
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                className="w-full px-2 py-1.5 ts-13 mono rounded"
-                style={{
-                  background: 'var(--bg)',
-                  border: '1px solid var(--line)',
-                  color: 'var(--text)',
-                }}
-              />
-              {error && (
-                <div className="ts-12" style={{ color: 'var(--danger)' }}>
-                  {error}
-                </div>
-              )}
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={submit}
-                  disabled={isPending}
-                  className="lh-btn lh-btn-accent lh-btn-sm"
-                  style={{
-                    background: 'var(--accent)',
-                    color: 'white',
-                    border: '1px solid var(--accent)',
-                    borderRadius: 6,
-                    padding: '6px 12px',
-                    fontSize: 12,
-                  }}
-                >
-                  {isPending ? 'submitting…' : 'submit withdraw'}
-                </button>
-                <button
-                  onClick={() => setShowWithdraw(false)}
-                  className="ts-12 mono"
-                  style={{
-                    background: 'transparent',
-                    border: 0,
-                    cursor: 'pointer',
-                    color: 'var(--mute)',
-                  }}
-                >
-                  cancel
-                </button>
-              </div>
-            </>
-          ) : (
-            <div
-              className="ts-12"
-              style={{ color: 'var(--mute)' }}
+          {payoutMethods.length > 0 && (
+            <select
+              value={pmId}
+              onChange={(e) => setPmId(e.target.value)}
+              className="w-full px-2 py-1.5 ts-12 mono rounded"
+              style={{
+                background: 'var(--bg)',
+                border: '1px solid var(--line)',
+                color: 'var(--text)',
+              }}
             >
-              Add and verify a payment method below to withdraw.
+              <option value="">— no payout method (request only) —</option>
+              {payoutMethods.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.type}:{m.destination.slice(0, 20)}…
+                  {m.isDefault ? ' (default)' : ''}
+                </option>
+              ))}
+            </select>
+          )}
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            placeholder={`amount in ${wallet.currency}`}
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            className="w-full px-2 py-1.5 ts-13 mono rounded"
+            style={{
+              background: 'var(--bg)',
+              border: '1px solid var(--line)',
+              color: 'var(--text)',
+            }}
+          />
+          {error && (
+            <div className="ts-12" style={{ color: 'var(--danger)' }}>
+              {error}
             </div>
           )}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={submit}
+              disabled={isPending}
+              className="lh-btn lh-btn-accent lh-btn-sm"
+              style={{
+                background: 'var(--accent)',
+                color: 'white',
+                border: '1px solid var(--accent)',
+                borderRadius: 6,
+                padding: '6px 12px',
+                fontSize: 12,
+              }}
+            >
+              {isPending ? 'submitting…' : 'request withdraw'}
+            </button>
+            <button
+              onClick={() => setShowWithdraw(false)}
+              className="ts-12 mono"
+              style={{
+                background: 'transparent',
+                border: 0,
+                cursor: 'pointer',
+                color: 'var(--mute)',
+              }}
+            >
+              cancel
+            </button>
+          </div>
+          <p className="ts-11" style={{ color: 'var(--mute2)' }}>
+            Sends a request to the workspace admin for approval — your balance
+            doesn&apos;t change until it&apos;s approved.
+          </p>
         </div>
       ) : (
         <button
@@ -531,7 +663,8 @@ function PendingSection({
         >
           show {pendingItems.length} line items
         </summary>
-        <table className="mt-2 w-full">
+        <div className="overflow-x-auto">
+        <table className="mt-2 w-full min-w-[420px]">
           <thead>
             <tr style={{ color: 'var(--mute2)' }}>
               <th className="text-left p-1">annotation</th>
@@ -564,6 +697,7 @@ function PendingSection({
             ))}
           </tbody>
         </table>
+        </div>
       </details>
     </section>
   )
@@ -587,7 +721,8 @@ function PayoutHistorySection({
           className="rounded-xl overflow-hidden"
           style={{ background: 'var(--panel)', border: '1px solid var(--line)' }}
         >
-          <table className="w-full ts-12 mono">
+          <div className="overflow-x-auto">
+          <table className="w-full ts-12 mono min-w-[520px]">
             <thead
               style={{
                 color: 'var(--mute2)',
@@ -632,6 +767,7 @@ function PayoutHistorySection({
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </section>
@@ -651,7 +787,8 @@ function LedgerSection({
         className="rounded-xl overflow-hidden"
         style={{ background: 'var(--panel)', border: '1px solid var(--line)' }}
       >
-        <table className="w-full ts-12 mono">
+        <div className="overflow-x-auto">
+        <table className="w-full ts-12 mono min-w-[480px]">
           <thead
             style={{
               color: 'var(--mute2)',
@@ -694,6 +831,7 @@ function LedgerSection({
             ))}
           </tbody>
         </table>
+        </div>
       </div>
     </section>
   )
@@ -724,7 +862,7 @@ function PaymentMethodsSection({
         setLabel('')
         router.refresh()
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Add failed.')
+        setError(getErrorMessage(e, 'Add failed.'))
       }
     })
   }
@@ -735,7 +873,7 @@ function PaymentMethodsSection({
         await removePaymentMethod({ paymentMethodId: id })
         router.refresh()
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Remove failed.')
+        setError(getErrorMessage(e, 'Remove failed.'))
       }
     })
   }
@@ -746,7 +884,7 @@ function PaymentMethodsSection({
         await setDefaultPaymentMethod({ paymentMethodId: id })
         router.refresh()
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Set default failed.')
+        setError(getErrorMessage(e, 'Set default failed.'))
       }
     })
   }

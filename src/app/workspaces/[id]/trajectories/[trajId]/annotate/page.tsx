@@ -140,7 +140,7 @@ export default async function TrajectoryAnnotatePage(
       try {
         await scheduleHintsIfMissing({ trajectoryId: trajId })
       } catch (e) {
-        // eslint-disable-next-line no-console
+         
         console.warn(
           `Claude-hint background fill failed for ${trajId}:`,
           e instanceof Error ? e.message : e,
@@ -205,6 +205,7 @@ export default async function TrajectoryAnnotatePage(
       rubric={template.rubric}
       initialStepMarks={marks.stepMarks}
       initialTrajectoryMarks={marks.trajectoryMarks}
+      initialSubmittedAt={marks.submittedAt}
       peerMarksByStep={peerMarksByStep}
       claudeHintsByStep={claudeHintsByStep}
       candidateTrajectories={candidateTrajectories}

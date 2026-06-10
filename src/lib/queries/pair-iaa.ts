@@ -1,5 +1,5 @@
 import 'server-only'
-import { and, eq, isNotNull, sql } from 'drizzle-orm'
+import { and, eq, isNotNull } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { annotations, tasks, topics } from '@/lib/db/schema'
 import { dimensionGsb } from '@/lib/templates/modes/arena-gsb'

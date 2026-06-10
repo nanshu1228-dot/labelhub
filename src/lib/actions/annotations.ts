@@ -13,9 +13,20 @@ import {
 import { fanoutWebhook } from '@/lib/webhooks/fanout'
 import { emitNotification } from '@/lib/notifications/emit'
 import { recomputeAndPersistTrust } from '@/lib/quality/trust-recompute'
-import { scanInviteRewardOnApproval } from '@/lib/billing/invite-rewards'
+import { dispatchDomainEvent } from '@/lib/events/dispatch'
+import { assertWithinClaimQuota } from '@/lib/tasks/quota'
+import { scheduleAIReviewIfMissing } from '@/lib/actions/ai-review-submission'
 import { readTrustStatus } from '@/lib/actions/trust-status'
 import { writeRevision } from '@/lib/quality/annotation-revisions'
+import {
+  applyTransition,
+  PolicyViolationError,
+} from '@/lib/quality/state-machine'
+import { readTaskOperationalSettings } from '@/lib/tasks/settings'
+import {
+  assertRevisionFeedback,
+  normalizeReviewFeedback,
+} from '@/lib/quality/review-feedback'
 import { uuidLike } from '@/lib/validators/uuid'
 import {
   ConflictError,
@@ -25,7 +36,9 @@ import {
 } from '@/lib/errors'
 import { getTemplate } from '@/lib/templates/registry'
 import '@/lib/templates/init'
-import type { TemplateMode } from '@/lib/templates/types'
+import type { TemplateMode, WorkflowStage } from '@/lib/templates/types'
+import { loadCustomFormSchema } from '@/lib/form-designer/storage'
+import { validateFormValues } from '@/lib/form-designer/validation'
 
 /**
  * Annotation Server Actions — the heart of the work loop.
@@ -116,6 +129,20 @@ export async function saveDraftAnnotation(
   // affected-row count: if zero, someone won the race and we fall
   // through to the "claimed by another" branch.
   if (topic.assignedTo === null) {
+    // Task-status gate (spec 4.1): a NEW claim is only allowed while the
+    // task is 'open'. draft/paused/closed/archived tasks accept no new work.
+    // Mirrors the explicit claimTopic gate in topics.ts. Already-owned
+    // drafts are intentionally NOT gated here — pausing a task must not
+    // destroy a labeler's in-flight work.
+    if (task.status !== 'open') {
+      throw new ConflictError(
+        `Task is ${task.status} — topics cannot be claimed.`,
+      )
+    }
+    // Quota-pool distribution (spec §4.1): apply the same per-annotator cap
+    // claimTopic enforces, so the quota can't be bypassed by auto-claiming
+    // straight from a topic's annotate page.
+    await assertWithinClaimQuota(task.id, task.templateConfig, user.id)
     const claimResult = await db
       .update(topics)
       .set({ assignedTo: user.id, version: topic.version + 1 })
@@ -297,13 +324,37 @@ export async function submitAnnotation(input: z.infer<typeof submitSchema>) {
 
   // Auto-claim: same model as saveDraftAnnotation. A user who jumps
   // straight to submit (no prior save) on an unclaimed topic still
-  // becomes the claimant.
+  // becomes the claimant — but with the SAME guards as the save path:
+  // the task must be 'open' (spec 4.1), and the claim is a version-CAS
+  // write so two tabs racing straight-to-submit can't both win.
   if (topic.assignedTo === null) {
-    await db
+    if (task.status !== 'open') {
+      throw new ConflictError(
+        `Task is ${task.status} — topics cannot be claimed.`,
+      )
+    }
+    // Quota-pool distribution (spec §4.1): same per-annotator cap as the
+    // claimTopic + save-draft paths, applied to straight-to-submit auto-claim.
+    await assertWithinClaimQuota(task.id, task.templateConfig, user.id)
+    const claimResult = await db
       .update(topics)
-      .set({ assignedTo: user.id })
-      .where(eq(topics.id, topic.id))
-    topic.assignedTo = user.id
+      .set({ assignedTo: user.id, version: topic.version + 1 })
+      .where(
+        and(
+          eq(topics.id, topic.id),
+          eq(topics.version, topic.version),
+          isNull(topics.assignedTo),
+        ),
+      )
+      .returning({ id: topics.id })
+    if (claimResult.length > 0) {
+      topic.assignedTo = user.id
+      topic.version = topic.version + 1
+    } else {
+      throw new ForbiddenError(
+        'This topic was just claimed by another annotator.',
+      )
+    }
   } else if (topic.assignedTo !== user.id) {
     throw new ForbiddenError(
       'This topic is claimed by another annotator.',
@@ -330,6 +381,13 @@ export async function submitAnnotation(input: z.infer<typeof submitSchema>) {
     throw e
   }
 
+  if (task.templateMode === 'custom-designer') {
+    validatedPayload = await validateCustomDesignerPayload({
+      task,
+      payload: validatedPayload,
+    })
+  }
+
   const [existing] = await db
     .select()
     .from(annotations)
@@ -342,73 +400,91 @@ export async function submitAnnotation(input: z.infer<typeof submitSchema>) {
     .limit(1)
 
   const now = new Date()
-  let annotation: typeof annotations.$inferSelect
-  if (existing) {
-    // Preserve the existing startedAt if any; otherwise anchor now
-    // (the user jumped straight to submit without saving a draft).
-    // durationSec is derived once at submit time and persisted —
-    // /quality reads it directly without recomputing.
-    const startedAt = existing.startedAt ?? now
-    const [updated] = await db
-      .update(annotations)
-      .set({
-        payload: validatedPayload,
-        claudeProposal: parsed.claudeProposal ?? existing.claudeProposal,
-        deltaSummary: parsed.deltaSummary ?? existing.deltaSummary,
-        reasoningText: parsed.reasoningText ?? existing.reasoningText,
-        submittedAt: now,
-        startedAt,
-        durationSec: deriveDurationSec(startedAt, now),
-        version: existing.version + 1,
-      })
-      .where(eq(annotations.id, existing.id))
+  // Canonicalize the submit through the state machine: drafting→submit and
+  // revising→resubmit both land in 'submitted' (the AI scheduler later promotes
+  // to ai_review via ai_start when the agent is on). The source-state guard
+  // above guarantees a legal from-state, so this never throws.
+  const submitAction = topic.status === 'revising' ? 'resubmit' : 'submit'
+  const { to: submittedStage } = applyTransition({
+    from: topic.status,
+    action: submitAction,
+    role: 'annotator',
+  })
+  // Annotation upsert + topic transition + audit event, atomically — a submit
+  // either fully lands (work saved, topic advanced to 'submitted', event
+  // logged) or not at all. The version CAS on the topic still guards
+  // concurrency; a 0-row transition rolls the whole tx back.
+  const annotation = await db.transaction(async (tx) => {
+    let annotation: typeof annotations.$inferSelect
+    if (existing) {
+      // Preserve the existing startedAt if any; otherwise anchor now
+      // (the user jumped straight to submit without saving a draft).
+      // durationSec is derived once at submit time and persisted —
+      // /quality reads it directly without recomputing.
+      const startedAt = existing.startedAt ?? now
+      const [updated] = await tx
+        .update(annotations)
+        .set({
+          payload: validatedPayload,
+          claudeProposal: parsed.claudeProposal ?? existing.claudeProposal,
+          deltaSummary: parsed.deltaSummary ?? existing.deltaSummary,
+          reasoningText: parsed.reasoningText ?? existing.reasoningText,
+          submittedAt: now,
+          startedAt,
+          durationSec: deriveDurationSec(startedAt, now),
+          version: existing.version + 1,
+        })
+        .where(eq(annotations.id, existing.id))
+        .returning()
+      annotation = updated
+    } else {
+      // No prior draft — the user clicked Submit on a fresh form.
+      // We anchor startedAt = now so duration is 0; admins will spot
+      // these as "no time spent" in quality drilldown, which is
+      // accurate signal.
+      const [created] = await tx
+        .insert(annotations)
+        .values({
+          topicId: parsed.topicId,
+          userId: user.id,
+          payload: validatedPayload,
+          claudeProposal: parsed.claudeProposal ?? null,
+          deltaSummary: parsed.deltaSummary ?? null,
+          reasoningText: parsed.reasoningText ?? null,
+          submittedAt: now,
+          startedAt: now,
+          durationSec: 0,
+        })
+        .returning()
+      annotation = created
+    }
+
+    // Transition topic with optimistic lock — refuses if version changed mid-flight.
+    const topicUpdate = await tx
+      .update(topics)
+      .set({ status: submittedStage, version: topic.version + 1 })
+      .where(and(eq(topics.id, topic.id), eq(topics.version, topic.version)))
       .returning()
-    annotation = updated
-  } else {
-    // No prior draft — the user clicked Submit on a fresh form.
-    // We anchor startedAt = now so duration is 0; admins will spot
-    // these as "no time spent" in quality drilldown, which is
-    // accurate signal.
-    const [created] = await db
-      .insert(annotations)
-      .values({
-        topicId: parsed.topicId,
-        userId: user.id,
-        payload: validatedPayload,
-        claudeProposal: parsed.claudeProposal ?? null,
-        deltaSummary: parsed.deltaSummary ?? null,
-        reasoningText: parsed.reasoningText ?? null,
-        submittedAt: now,
-        startedAt: now,
-        durationSec: 0,
-      })
-      .returning()
-    annotation = created
-  }
 
-  // Transition topic with optimistic lock — refuses if version changed mid-flight.
-  const topicUpdate = await db
-    .update(topics)
-    .set({ status: 'submitted', version: topic.version + 1 })
-    .where(and(eq(topics.id, topic.id), eq(topics.version, topic.version)))
-    .returning()
+    if (topicUpdate.length === 0) {
+      throw new ConflictError(
+        'Topic was modified concurrently — refresh and try again.',
+      )
+    }
 
-  if (topicUpdate.length === 0) {
-    throw new ConflictError(
-      'Topic was modified concurrently — refresh and try again.',
-    )
-  }
+    await tx.insert(events).values({
+      type: 'annotation.submitted',
+      workspaceId: task.workspaceId,
+      actorId: user.id,
+      payload: {
+        topicId: topic.id,
+        annotationId: annotation.id,
+        /** Mark whether this carries pair-annotation teaching signal */
+        hasPairData: parsed.claudeProposal !== undefined,
+      },
+    })
 
-  await db.insert(events).values({
-    type: 'annotation.submitted',
-    workspaceId: task.workspaceId,
-    actorId: user.id,
-    payload: {
-      topicId: topic.id,
-      annotationId: annotation.id,
-      /** Mark whether this carries pair-annotation teaching signal */
-      hasPairData: parsed.claudeProposal !== undefined,
-    },
+    return annotation
   })
 
   // Phase-10: submit revision is NEVER pruned — it's the canonical
@@ -422,7 +498,77 @@ export async function submitAnnotation(input: z.infer<typeof submitSchema>) {
     kind: 'submit',
   })
 
+  // Finals P2 D7: schedule the AI Review Agent in Vercel's after()
+  // window so the submit response stays snappy. The scheduler is
+  // idempotent (UNIQUE on idempotency_key) so re-submits don't
+  // re-spend quota; D8 wires the actual Claude call against the
+  // pending row created here. Mirror of the trajectory-hints
+  // pattern (src/lib/actions/trajectory-hints.ts:248-272).
+  after(() =>
+    scheduleAIReviewIfMissing({ annotationId: annotation.id }).catch((e) => {
+      console.warn('[ai-review] schedule failed', e)
+    }),
+  )
+
   return annotation
+}
+
+async function validateCustomDesignerPayload({
+  task,
+  payload,
+}: {
+  task: typeof tasks.$inferSelect
+  payload: unknown
+}): Promise<Record<string, unknown>> {
+  const formSchemaId = readFormSchemaId(task.templateConfig)
+  if (!formSchemaId) {
+    throw new ValidationError(
+      'Custom Designer task is missing its form schema.',
+    )
+  }
+
+  const form = await loadCustomFormSchema({
+    id: formSchemaId,
+    includeArchived: true,
+  })
+  if (!form || form.workspaceId !== task.workspaceId) {
+    throw new ValidationError(
+      'Custom Designer form schema was not found for this task.',
+    )
+  }
+
+  const values =
+    payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>)
+      : {}
+  const validation = validateFormValues(form.schema.fields, values)
+  if (!validation.success) {
+    const details = validation.issues
+      .slice(0, 6)
+      .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+      .join('; ')
+    const suffix =
+      validation.issues.length > 6
+        ? `; +${validation.issues.length - 6} more`
+        : ''
+    throw new ValidationError(
+      `Custom Designer validation failed: ${details}${suffix}`,
+    )
+  }
+
+  return values
+}
+
+function readFormSchemaId(templateConfig: unknown): string | null {
+  if (
+    !templateConfig ||
+    typeof templateConfig !== 'object' ||
+    Array.isArray(templateConfig)
+  ) {
+    return null
+  }
+  const value = (templateConfig as Record<string, unknown>).formSchemaId
+  return typeof value === 'string' ? value : null
 }
 
 const reviewSchema = z.object({
@@ -448,6 +594,8 @@ const reviewSchema = z.object({
  */
 export async function reviewAnnotation(input: z.infer<typeof reviewSchema>) {
   const parsed = reviewSchema.parse(input)
+  assertRevisionFeedback(parsed.decision, parsed.feedback)
+  const feedback = normalizeReviewFeedback(parsed.feedback)
   const db = getDb()
 
   const [annotation] = await db
@@ -483,45 +631,81 @@ export async function reviewAnnotation(input: z.infer<typeof reviewSchema>) {
     )
   }
 
-  const transition: Record<typeof parsed.decision, {
-    next: 'approved' | 'rejected' | 'revising'
-    event: string
-  }> = {
-    approve: { next: 'approved', event: 'annotation.approved' },
-    reject: { next: 'rejected', event: 'annotation.rejected' },
-    request_revision: { next: 'revising', event: 'annotation.revised' },
+  // Canonicalize the verdict through the state machine (the same
+  // applyTransition qc-review.ts uses) — defense-in-depth role + edge
+  // validation on top of the source-state guard above. That guard already
+  // excluded terminal states, so this only ever sees submitted / reviewing /
+  // awaiting_acceptance → a normal (non-noop) edge to approved / rejected /
+  // revising. The event string stays a local map since the machine models
+  // stages, not audit-event names.
+  const decisionToAction = {
+    approve: 'admin_accept',
+    reject: 'admin_reject',
+    request_revision: 'qc_request_revision',
+  } as const
+  const decisionToEvent = {
+    approve: 'annotation.approved',
+    reject: 'annotation.rejected',
+    request_revision: 'annotation.revised',
+  } as const
+  // Spec 9.3 two-stage gate: when this task requires 初审→终审, an admin
+  // accept may only fire from awaiting_acceptance (post-QC), not straight
+  // from submitted/reviewing. Reject / 打回 are unaffected.
+  const reviewPolicy = {
+    twoStage: readTaskOperationalSettings(task.templateConfig).twoStageReview,
   }
-  const { next, event } = transition[parsed.decision]
-
-  const updated = await db
-    .update(topics)
-    .set({ status: next, version: topic.version + 1 })
-    .where(and(eq(topics.id, topic.id), eq(topics.version, topic.version)))
-    .returning()
-
-  if (updated.length === 0) {
-    throw new ConflictError(
-      'Topic was modified concurrently — refresh and try again.',
-    )
+  let next: WorkflowStage
+  try {
+    ;({ to: next } = applyTransition({
+      from: topic.status,
+      action: decisionToAction[parsed.decision],
+      role: 'admin',
+      policy: reviewPolicy,
+    }))
+  } catch (e) {
+    if (e instanceof PolicyViolationError) {
+      throw new ConflictError(
+        '该任务已开启两段审核:需先由质检完成初审,才能终审入库。',
+      )
+    }
+    throw e
   }
+  const event = decisionToEvent[parsed.decision]
 
-  await db.insert(events).values({
-    type: event,
-    workspaceId: task.workspaceId,
-    actorId: user.id,
-    payload: {
-      topicId: topic.id,
-      annotationId: annotation.id,
-      /** Denormalized so TrustProjection can fold without DB joins. */
-      submitterUserId: annotation.userId,
-      decision: parsed.decision,
-      feedback: parsed.feedback ?? null,
-      /** Denormalized for downstream projections (Live Learning curve, IAA, etc.) */
-      taskId: task.id,
-      templateMode: task.templateMode,
-      /** Snapshot of the annotation payload at review time — enables time-travel replays. */
-      annotationPayload: annotation.payload,
-    },
+  // Verdict state-change + its audit event, atomically — no status flip
+  // without the trail, and no trail without the flip. The version CAS still
+  // guards concurrent edits; a 0-row update rolls the whole tx back.
+  await db.transaction(async (tx) => {
+    const updated = await tx
+      .update(topics)
+      .set({ status: next, version: topic.version + 1 })
+      .where(and(eq(topics.id, topic.id), eq(topics.version, topic.version)))
+      .returning()
+
+    if (updated.length === 0) {
+      throw new ConflictError(
+        'Topic was modified concurrently — refresh and try again.',
+      )
+    }
+
+    await tx.insert(events).values({
+      type: event,
+      workspaceId: task.workspaceId,
+      actorId: user.id,
+      payload: {
+        topicId: topic.id,
+        annotationId: annotation.id,
+        /** Denormalized so TrustProjection can fold without DB joins. */
+        submitterUserId: annotation.userId,
+        decision: parsed.decision,
+        feedback: feedback ?? null,
+        /** Denormalized for downstream projections (Live Learning curve, IAA, etc.) */
+        taskId: task.id,
+        templateMode: task.templateMode,
+        /** Snapshot of the annotation payload at review time — enables time-travel replays. */
+        annotationPayload: annotation.payload,
+      },
+    })
   })
 
   // Notify the submitter their work was reviewed. Skip the self-case
@@ -531,7 +715,7 @@ export async function reviewAnnotation(input: z.infer<typeof reviewSchema>) {
   if (annotation.userId !== user.id) {
     const { title, body, type: notifType } = verdictNotificationCopy(
       parsed.decision,
-      parsed.feedback,
+      feedback,
     )
     await emitNotification({
       userId: annotation.userId,
@@ -563,10 +747,9 @@ export async function reviewAnnotation(input: z.infer<typeof reviewSchema>) {
         taskId: task.id,
         submitterUserId: annotation.userId,
         decision: parsed.decision,
-        feedback: parsed.feedback ?? null,
+        feedback: feedback ?? null,
       },
     }).catch((e) => {
-      // eslint-disable-next-line no-console
       console.warn('webhook fanout failed', e)
     }),
   )
@@ -581,25 +764,28 @@ export async function reviewAnnotation(input: z.infer<typeof reviewSchema>) {
       workspaceId: task.workspaceId,
       taskType: task.templateMode,
     }).catch((e) => {
-      // eslint-disable-next-line no-console
       console.warn('[trust] recompute failed', e)
     }),
   )
 
-  // Phase-13: invite-reward scan. Only triggers when (a) the verdict
-  // is approve, (b) the submitter was invited by someone, and (c) the
-  // submitter's approval count just crossed the threshold. The helper
-  // is idempotent (unique index) so even if this fires for a non-
-  // qualifying approval the no-op is cheap.
+  // Phase-13 invite-reward scan + payout accrual — INVERTED through the core
+  // event bus (ARCHITECTURE.md §11.3): core dispatches `annotation.approved`
+  // and the billing gateway reacts (idempotent invite-reward scan + payout
+  // line-item accrual that funds the open period — close-period → mark-paid
+  // later settles it into wallets). Subscribers are wired at boot by the
+  // composition root (src/instrumentation.ts → @/lib/billing/init), so this
+  // action stays ignorant of billing. Dispatched after the response (verdict
+  // latency unchanged); subscriber failures are swallowed + logged (the admin
+  // can re-approve to retry). Skipped for reject / request_revision (no money
+  // for un-accepted work).
   if (parsed.decision === 'approve') {
     after(() =>
-      scanInviteRewardOnApproval({
-        inviteeUserId: annotation.userId,
+      dispatchDomainEvent('annotation.approved', {
+        annotationId: annotation.id,
+        submitterUserId: annotation.userId,
         workspaceId: task.workspaceId,
-        triggerAnnotationId: annotation.id,
       }).catch((e) => {
-        // eslint-disable-next-line no-console
-        console.warn('[invite] reward scan failed', e)
+        console.warn('[events] annotation.approved dispatch failed', e)
       }),
     )
   }
@@ -766,7 +952,6 @@ export async function respondToReview(
       })
     }
   } catch (e) {
-    // eslint-disable-next-line no-console
     console.warn(
       '[respondToReview] reviewer-notification skipped:',
       e instanceof Error ? e.message : e,

@@ -242,6 +242,100 @@ describe('openai-compat request shape', () => {
     fetchSpy.mockRestore()
   })
 
+  it('maps ChatTool to tools:[{type:function}] and forces tool_choice', async () => {
+    const { chat } = await import('./client')
+    const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    function: {
+                      name: 'submit_verdict',
+                      arguments: '{"verdict":"pass","score":80}',
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
+        }),
+        { status: 200 },
+      ),
+    )
+    const out = await chat({
+      system: 'hi',
+      messages: [{ role: 'user', content: 'x' }],
+      maxTokens: 50,
+      tools: [
+        {
+          name: 'submit_verdict',
+          description: 'verdict',
+          inputSchema: { type: 'object', properties: { verdict: { type: 'string' } } },
+        },
+      ],
+      toolChoice: { type: 'tool', name: 'submit_verdict' },
+    })
+    const body = JSON.parse(String(fetchSpy.mock.calls[0]![1]!.body))
+    expect(body.tools[0]).toEqual({
+      type: 'function',
+      function: {
+        name: 'submit_verdict',
+        description: 'verdict',
+        parameters: { type: 'object', properties: { verdict: { type: 'string' } } },
+      },
+    })
+    expect(body.tool_choice).toEqual({ type: 'function', function: { name: 'submit_verdict' } })
+    // The tool_calls arguments are decoded into the portable toolUse shape.
+    expect(out.toolUse).toEqual({ name: 'submit_verdict', input: { verdict: 'pass', score: 80 } })
+    fetchSpy.mockRestore()
+  })
+
+  it('forwards temperature + seed to the request body for determinism', async () => {
+    const { chat } = await import('./client')
+    const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: 'ok' } }],
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
+        }),
+        { status: 200 },
+      ),
+    )
+    await chat({
+      system: 'hi',
+      messages: [{ role: 'user', content: 'x' }],
+      maxTokens: 50,
+      temperature: 0,
+      seed: 42,
+    })
+    const body = JSON.parse(String(fetchSpy.mock.calls[0]![1]!.body))
+    expect(body.temperature).toBe(0)
+    expect(body.seed).toBe(42)
+    fetchSpy.mockRestore()
+  })
+
+  it('omits temperature when not requested (provider default preserved)', async () => {
+    const { chat } = await import('./client')
+    const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: 'ok' } }],
+          usage: { prompt_tokens: 1, completion_tokens: 1 },
+        }),
+        { status: 200 },
+      ),
+    )
+    await chat({ system: 'hi', messages: [{ role: 'user', content: 'x' }], maxTokens: 50 })
+    const body = JSON.parse(String(fetchSpy.mock.calls[0]![1]!.body))
+    expect('temperature' in body).toBe(false)
+    fetchSpy.mockRestore()
+  })
+
   it('reports usage from prompt_tokens / completion_tokens', async () => {
     const { chat } = await import('./client')
     vi.spyOn(global, 'fetch').mockResolvedValueOnce(

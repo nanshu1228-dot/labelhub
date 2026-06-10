@@ -28,7 +28,7 @@ export interface TeachingItem {
     annotationId: string
     topicId: string
     taskId: string
-    raterUserId: string
+    annotatorUserId: string
     submittedAt: string | null
     itemData: unknown
   }
@@ -83,7 +83,7 @@ export function reshapeTeaching(item: unknown): TeachingItem | null {
       annotationId: r.annotationId,
       topicId: r.topicId,
       taskId: r.taskId,
-      raterUserId: r.userId,
+      annotatorUserId: r.userId,
       submittedAt: r.submittedAt,
       itemData: r.itemData ?? null,
     },

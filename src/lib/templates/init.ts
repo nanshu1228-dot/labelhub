@@ -11,5 +11,7 @@
 import './modes/pair-rubric'
 import './modes/arena-gsb'
 import './modes/agent-trace-eval' // flagship
+import './modes/custom-designer' // finals P1 — PM-defined schema
+import './modes/rubric-judgment' // rubric-authoring + judgement meta-review
 
 export {}

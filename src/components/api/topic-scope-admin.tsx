@@ -7,6 +7,7 @@ import {
   editWorkspaceScopeManually,
 } from '@/lib/actions/topic-scope'
 import type { ResolvedTopicScope } from '@/lib/queries/topic-scope'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 
 /**
  * Topic-scope admin card.
@@ -52,7 +53,7 @@ export function TopicScopeAdmin({
         setInfo('Regenerated from primary task description.')
         router.refresh()
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Regenerate failed.')
+        setError(getErrorMessage(e, 'Regenerate failed.'))
       }
     })
   }
@@ -95,7 +96,7 @@ export function TopicScopeAdmin({
         setInfo('Manual edit saved.')
         router.refresh()
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Save failed.')
+        setError(getErrorMessage(e, 'Save failed.'))
       }
     })
   }

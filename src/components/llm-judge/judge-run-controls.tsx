@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { runJudgeAction } from '@/lib/actions/llm-judges'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 
 /**
  * "Run this judge on N samples" form. Sample size + run button + error
@@ -30,7 +31,7 @@ export function JudgeRunControls({
           `/workspaces/${workspaceId}/judges/${judgeId}/runs/${r.runId}`,
         )
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Run failed.')
+        setError(getErrorMessage(e, 'Run failed.'))
       }
     })
   }

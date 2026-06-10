@@ -59,7 +59,7 @@ describe('runDawidSkene — degenerate inputs', () => {
   it('returns empty result when there are no cells', () => {
     const r = runDawidSkene({ K: 2, cells: [] })
     expect(r.cells).toEqual([])
-    expect(r.raters).toEqual([])
+    expect(r.annotators).toEqual([])
     expect(r.converged).toBe(true)
     expect(r.iterations).toBe(0)
   })
@@ -137,14 +137,14 @@ describe('runDawidSkene — recovers ground truth on noisy binary data', () => {
     })
 
     const r = runDawidSkene({ K: 2, cells })
-    const adversarial = r.raters.find((x) => x.raterId === 'adversarial')!
+    const adversarial = r.annotators.find((x) => x.raterId === 'adversarial')!
     // adversarial confusion[0][1] = P(observed=1 | truth=0) should be HIGH
     // (≈0.95). adversarial confusion[1][0] = P(observed=0 | truth=1)
     // should also be HIGH (≈0.95). I.e. low accuracy.
     expect(adversarial.accuracy).toBeLessThan(0.2)
     expect(adversarial.biasSummary).not.toBeNull()
 
-    const honest = r.raters.find((x) => x.raterId === 'honest1')!
+    const honest = r.annotators.find((x) => x.raterId === 'honest1')!
     expect(honest.accuracy).toBeGreaterThan(0.8)
 
     // Inference still ≥85% correct on this small set.
@@ -177,7 +177,7 @@ describe('runDawidSkene — recovers ground truth on noisy binary data', () => {
     // toward observed=1) and truth=1 (uniform 0.5 fallback since he
     // never saw a truth=1 cell), so ≈ 0.29. Still well below the 0.5
     // uniform baseline.
-    const charlie = r.raters.find((x) => x.raterId === 'charlie')!
+    const charlie = r.annotators.find((x) => x.raterId === 'charlie')!
     expect(charlie.nObservations).toBe(5)
     expect(charlie.accuracy).toBeLessThan(0.4)
     // Bias signal should fire — charlie says 1 on truth=0 → false-pos.
@@ -245,7 +245,7 @@ describe('runDawidSkene — output shape invariants', () => {
       ]),
     }))
     const r = runDawidSkene({ K: 2, cells })
-    for (const rater of r.raters) {
+    for (const rater of r.annotators) {
       for (const row of rater.confusion) {
         const sum = row.reduce((a, b) => a + b, 0)
         expect(Math.abs(sum - 1)).toBeLessThan(1e-6)
@@ -282,7 +282,7 @@ describe('runDawidSkene — bias summary', () => {
     })
 
     const r = runDawidSkene({ K: 2, cells })
-    const perm = r.raters.find((x) => x.raterId === 'permissive')!
+    const perm = r.annotators.find((x) => x.raterId === 'permissive')!
     expect(perm.biasSummary).toMatch(/false-pos/)
   })
 
@@ -298,6 +298,6 @@ describe('runDawidSkene — bias summary', () => {
       return { key: `c${i}`, votes }
     })
     const r = runDawidSkene({ K: 2, cells })
-    expect(r.raters[0].biasSummary).toBeNull()
+    expect(r.annotators[0].biasSummary).toBeNull()
   })
 })

@@ -1,4 +1,4 @@
-import { z } from 'zod'
+import { z } from "zod";
 
 /**
  * Rubric specification — Pillar 4's data-driven UI layer.
@@ -31,16 +31,16 @@ import { z } from 'zod'
  * otherwise rubric.appliesTo can't target it.
  */
 export const TRAJECTORY_STEP_KINDS = [
-  'thinking',
-  'tool_call',
-  'tool_result',
-  'sub_agent_call',
-  'sub_agent_response',
-  'final_response',
-  'error',
-] as const
+  "thinking",
+  "tool_call",
+  "tool_result",
+  "sub_agent_call",
+  "sub_agent_response",
+  "final_response",
+  "error",
+] as const;
 
-export type TrajectoryStepKind = (typeof TRAJECTORY_STEP_KINDS)[number]
+export type TrajectoryStepKind = (typeof TRAJECTORY_STEP_KINDS)[number];
 
 /**
  * Step-kind matcher used by per-step rubric items.
@@ -51,9 +51,7 @@ export type TrajectoryStepKind = (typeof TRAJECTORY_STEP_KINDS)[number]
  *
  * Empty array is rejected (use ['*'] to mean "always" instead).
  */
-export type StepKindMatcher =
-  | readonly ['*']
-  | readonly TrajectoryStepKind[]
+export type StepKindMatcher = readonly ["*"] | readonly TrajectoryStepKind[];
 
 /**
  * The four scales supported by the annotation UI.
@@ -67,7 +65,7 @@ export type StepKindMatcher =
  *   text   — free-form notes. Autosaves on blur (NEVER on keystroke — that's
  *            a hard perf rule, see AGENTS.md).
  */
-export type RubricScale = 'likert' | 'bool' | 'enum' | 'text'
+export type RubricScale = "likert" | "bool" | "enum" | "text";
 
 /**
  * Severity ladder borrowed from Xpert's "雷区 / 一级误区 / 重要 / 必要 / 附加"
@@ -85,85 +83,94 @@ export type RubricScale = 'likert' | 'bool' | 'enum' | 'text'
  * in `src/lib/quality/calibrate.ts`; the UI's job is to make severity
  * visible so annotators don't blow past a critical flag by accident.
  */
-export type RubricSeverity = 'critical' | 'major' | 'minor'
+export type RubricSeverity = "critical" | "major" | "minor";
 
 export interface RubricItem {
   /** Stable machine ID — used as the storage key in `step_annotations.payload`
    *  and as the IAA aggregation key. Never rename without a migration. */
-  id: string
+  id: string;
   /** Human label shown next to the input. */
-  name: string
+  name: string;
   /** Optional one-liner shown below the label or in a tooltip. */
-  description?: string
-  scale: RubricScale
+  description?: string;
+  scale: RubricScale;
   /** Required when `scale === 'enum'`. Choices in display order. */
-  options?: readonly string[]
+  options?: readonly string[];
   /** Required when `scale === 'likert'` — only used by per-step items.
    *  Per-trajectory rubric items don't have an `appliesTo` (they always apply). */
-  appliesTo?: StepKindMatcher
+  appliesTo?: StepKindMatcher;
   /** When true, the UI marks the reason field amber if a rating is recorded
    *  but the reason is empty ("Deep Dive" mode in the design). */
-  requiresReason?: boolean
+  requiresReason?: boolean;
   /**
    * Quality-impact tier. Defaults to 'minor' when omitted. See `RubricSeverity`.
    * Critical rubrics are visually flagged in the annotator and can veto
    * the trajectory's overall quality score on aggregation.
    */
-  severity?: RubricSeverity
+  severity?: RubricSeverity;
 }
 
 export interface RubricSpec {
   /** Per-step questions — one set of inputs PER step that matches `appliesTo`. */
-  perStep: readonly RubricItem[]
+  perStep: readonly RubricItem[];
   /** Per-trajectory questions — one set of inputs for the whole trajectory. */
-  perTrajectory: readonly RubricItem[]
+  perTrajectory: readonly RubricItem[];
 }
 
 // ─── Zod runtime validation (for safety when loading rubrics from JSON/DB) ───
 
-const stepKindEnum = z.enum(TRAJECTORY_STEP_KINDS)
+const stepKindEnum = z.enum(TRAJECTORY_STEP_KINDS);
 
 const stepKindMatcherSchema = z.union([
-  z.tuple([z.literal('*')]).readonly(),
+  z.tuple([z.literal("*")]).readonly(),
   z.array(stepKindEnum).min(1).readonly(),
-])
+]);
 
-const rubricScaleSchema = z.enum(['likert', 'bool', 'enum', 'text'])
-const rubricSeveritySchema = z.enum(['critical', 'major', 'minor'])
+const rubricScaleSchema = z.enum(["likert", "bool", "enum", "text"]);
+const rubricSeveritySchema = z.enum(["critical", "major", "minor"]);
 
 export const rubricItemSchema = z
   .object({
-    id: z.string().min(1).max(64).regex(/^[a-z][a-z0-9_]*$/, {
-      message:
-        'Rubric id must be lowercase snake_case (matches /^[a-z][a-z0-9_]*$/). Used as a storage key.',
-    }),
+    id: z
+      .string()
+      .min(1)
+      .max(64)
+      .regex(/^[a-z][a-z0-9_]*$/, {
+        message:
+          "Rubric id must be lowercase snake_case (matches /^[a-z][a-z0-9_]*$/). Used as a storage key.",
+      }),
     name: z.string().min(1).max(80),
     description: z.string().max(280).optional(),
     scale: rubricScaleSchema,
-    options: z.array(z.string().min(1).max(40)).min(2).max(8).optional(),
+    options: z
+      .array(z.string().min(1).max(40))
+      .min(2)
+      .max(8)
+      .readonly()
+      .optional(),
     appliesTo: stepKindMatcherSchema.optional(),
     requiresReason: z.boolean().optional(),
     severity: rubricSeveritySchema.optional(),
   })
   .superRefine((item, ctx) => {
-    if (item.scale === 'enum' && !item.options?.length) {
+    if (item.scale === "enum" && !item.options?.length) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: `Rubric item "${item.id}" uses scale=enum but has no options.`,
-      })
+      });
     }
-    if (item.scale !== 'enum' && item.options?.length) {
+    if (item.scale !== "enum" && item.options?.length) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: `Rubric item "${item.id}" has options but scale is "${item.scale}", not "enum".`,
-      })
+      });
     }
-  })
+  });
 
 export const rubricSpecSchema = z.object({
   perStep: z.array(rubricItemSchema).readonly(),
   perTrajectory: z.array(rubricItemSchema).readonly(),
-})
+});
 
 // ─── Helpers used by the annotation UI ─────────────────────────────────────
 
@@ -180,10 +187,10 @@ export function rubricsForStepKind(
   kind: TrajectoryStepKind,
 ): readonly RubricItem[] {
   return spec.perStep.filter((item) => {
-    if (!item.appliesTo) return true
-    if (item.appliesTo[0] === '*') return true
-    return (item.appliesTo as readonly TrajectoryStepKind[]).includes(kind)
-  })
+    if (!item.appliesTo) return true;
+    if (item.appliesTo[0] === "*") return true;
+    return (item.appliesTo as readonly TrajectoryStepKind[]).includes(kind);
+  });
 }
 
 /**
@@ -192,16 +199,16 @@ export function rubricsForStepKind(
  * payload's `perTrajectory[rubricId]`. Each rubric item produces one Mark.
  */
 export type Mark =
-  | { scale: 'likert'; value: 1 | 3 | 5; reason?: string }
-  | { scale: 'bool'; value: boolean; reason?: string }
-  | { scale: 'enum'; value: string; reason?: string }
-  | { scale: 'text'; value: string }
+  | { scale: "likert"; value: 1 | 3 | 5; reason?: string }
+  | { scale: "bool"; value: boolean; reason?: string }
+  | { scale: "enum"; value: string; reason?: string }
+  | { scale: "text"; value: string };
 
 /** True if the mark records a real answer (vs. an empty placeholder). */
 export function isMarkPopulated(mark: Mark | undefined | null): boolean {
-  if (!mark) return false
-  if (mark.scale === 'text') return mark.value.trim().length > 0
-  return mark.value !== null && mark.value !== undefined
+  if (!mark) return false;
+  if (mark.scale === "text") return mark.value.trim().length > 0;
+  return mark.value !== null && mark.value !== undefined;
 }
 
 /**
@@ -212,9 +219,9 @@ export function isMarkMissingReason(
   item: RubricItem,
   mark: Mark | undefined | null,
 ): boolean {
-  if (!mark || !isMarkPopulated(mark)) return false
-  if (item.scale === 'text') return false
-  if (mark.scale === 'text') return false
-  if (!item.requiresReason) return false
-  return !mark.reason || mark.reason.trim().length === 0
+  if (!mark || !isMarkPopulated(mark)) return false;
+  if (item.scale === "text") return false;
+  if (mark.scale === "text") return false;
+  if (!item.requiresReason) return false;
+  return !mark.reason || mark.reason.trim().length === 0;
 }

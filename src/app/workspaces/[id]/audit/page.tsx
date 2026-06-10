@@ -5,7 +5,7 @@ import { optionalUser, requireWorkspaceAdmin } from '@/lib/auth/guards'
 import { getWorkspaceById } from '@/lib/queries/workspaces'
 import {
   AUDIT_EVENT_GROUPS,
-  searchAuditLog,
+  searchAuditLogPaged,
   type AuditGroup,
   type AuditRow,
 } from '@/lib/queries/audit-log'
@@ -30,16 +30,22 @@ export const dynamic = 'force-dynamic'
  *   ?user=<uuid>   → exact subject filter (used by drilldown links)
  *   ?group=verdict|restore|trust|inbox|judge|consensus|invite|dataset|
  *           apikey|workspace|task|payout|gold
+ *   ?page=<n>       → 1-based page (size 50)
  *
  * Multiple groups can stack via repeated query params, but for v1 we
  * keep it single-select since one tab usually answers one question.
+ * Filtering AND paging happen in SQL (see searchAuditLogPaged), so a
+ * workspace with thousands of events no longer silently drops older matches.
  */
+const PAGE_SIZE = 50
+
 export default async function AuditPage(props: {
   params: Promise<{ id: string }>
   searchParams?: Promise<{
     q?: string
     user?: string
     group?: string
+    page?: string
   }>
 }) {
   const { id: workspaceId } = await props.params
@@ -68,12 +74,18 @@ export default async function AuditPage(props: {
     ? (AUDIT_EVENT_GROUPS[groupParam] as readonly string[])
     : undefined
 
-  const rows = await searchAuditLog({
+  const pageParam =
+    typeof search.page === 'string' ? Number.parseInt(search.page, 10) : 1
+  const page = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1
+  const offset = (page - 1) * PAGE_SIZE
+
+  const { rows, total } = await searchAuditLogPaged({
     workspaceId,
     subjectUserId,
     userQuery: q.length > 0 ? q : undefined,
     types,
-    limit: 200,
+    limit: PAGE_SIZE,
+    offset,
   })
 
   return (
@@ -228,14 +240,139 @@ export default async function AuditPage(props: {
           <AuditTable workspaceId={workspaceId} rows={rows} />
         )}
 
-        <p
-          className="ts-11 mono mt-3"
-          style={{ color: 'var(--mute2)' }}
-        >
-          showing {rows.length} most-recent events · last 90 days
-        </p>
+        {total > 0 ? (
+          <Pagination
+            workspaceId={workspaceId}
+            q={q}
+            user={subjectUserId}
+            group={groupParam}
+            page={page}
+            pageSize={PAGE_SIZE}
+            total={total}
+            shownOnPage={rows.length}
+          />
+        ) : (
+          <p
+            className="ts-11 mono mt-3"
+            style={{ color: 'var(--mute2)' }}
+          >
+            no events · last 90 days
+          </p>
+        )}
       </div>
     </main>
+  )
+}
+
+function Pagination({
+  workspaceId,
+  q,
+  user,
+  group,
+  page,
+  pageSize,
+  total,
+  shownOnPage,
+}: {
+  workspaceId: string
+  q: string
+  user: string | undefined
+  group: AuditGroup | null
+  page: number
+  pageSize: number
+  total: number
+  shownOnPage: number
+}) {
+  const buildPageHref = (nextPage: number) => {
+    const u = new URLSearchParams()
+    if (q) u.set('q', q)
+    if (user) u.set('user', user)
+    if (group) u.set('group', group)
+    if (nextPage > 1) u.set('page', String(nextPage))
+    const qs = u.toString()
+    return `/workspaces/${workspaceId}/audit${qs ? `?${qs}` : ''}`
+  }
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const hasPrev = page > 1
+  const hasNext = page < totalPages
+  // Inclusive 1-based range of rows shown on this page.
+  const firstRow = shownOnPage > 0 ? (page - 1) * pageSize + 1 : 0
+  const lastRow = (page - 1) * pageSize + shownOnPage
+
+  const linkStyle = {
+    border: '1px solid var(--line)',
+    borderRadius: 6,
+    padding: '0 12px',
+    height: 28,
+    display: 'inline-flex',
+    alignItems: 'center',
+    textDecoration: 'none',
+  } as const
+
+  return (
+    <div className="mt-4 flex items-center justify-between gap-4">
+      <div className="ts-11 mono" style={{ color: 'var(--mute2)' }}>
+        {shownOnPage > 0 ? (
+          <>
+            showing {firstRow}–{lastRow} of {total} · last 90 days
+          </>
+        ) : (
+          <>0 of {total} · last 90 days</>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        {hasPrev ? (
+          <Link
+            href={buildPageHref(page - 1)}
+            className="ts-12 mono"
+            style={{ ...linkStyle, color: 'var(--text)' }}
+            rel="prev"
+          >
+            ← Prev
+          </Link>
+        ) : (
+          <span
+            className="ts-12 mono"
+            style={{
+              ...linkStyle,
+              color: 'var(--mute2)',
+              opacity: 0.4,
+              pointerEvents: 'none',
+            }}
+            aria-disabled="true"
+          >
+            ← Prev
+          </span>
+        )}
+        <span className="ts-12 mono" style={{ color: 'var(--mute2)' }}>
+          page {page} / {totalPages}
+        </span>
+        {hasNext ? (
+          <Link
+            href={buildPageHref(page + 1)}
+            className="ts-12 mono"
+            style={{ ...linkStyle, color: 'var(--text)' }}
+            rel="next"
+          >
+            Next →
+          </Link>
+        ) : (
+          <span
+            className="ts-12 mono"
+            style={{
+              ...linkStyle,
+              color: 'var(--mute2)',
+              opacity: 0.4,
+              pointerEvents: 'none',
+            }}
+            aria-disabled="true"
+          >
+            Next →
+          </span>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -245,6 +382,7 @@ const GROUP_LABEL: Record<AuditGroup, string> = {
   trust: 'trust status',
   inbox: 'inbox',
   judge: 'llm-judge',
+  ai_review: 'AI pre-review',
   consensus: 'consensus (DS)',
   invite: 'invite rewards',
   dataset: 'datasets + exports',
@@ -332,6 +470,7 @@ function AuditRowCard({
     trust: 'oklch(0.55 0.14 75)',
     inbox: 'var(--mute)',
     judge: 'oklch(0.5 0.13 150)',
+    ai_review: 'oklch(0.58 0.2 295)',
     consensus: 'oklch(0.55 0.18 320)',
     invite: 'oklch(0.62 0.16 30)',
     dataset: 'oklch(0.55 0.15 230)',
@@ -434,6 +573,18 @@ function verbForEvent(
       return 'completed an LLM judge run'
     case 'llm_judge.run_failed':
       return 'failed an LLM judge run'
+    // AI pre-review pipeline (actor is null → renders as "system AI …").
+    case 'ai_review.started':
+      return 'AI ran pre-review on an annotation by'
+    case 'ai_review.completed':
+      // verdict drives the phrasing: pass vs. escalation to a human.
+      return payload.verdict === 'human_review'
+        ? 'AI escalated to human review an annotation by'
+        : 'AI passed an annotation by'
+    case 'ai_review.sent_back':
+      return 'AI sent back an annotation by'
+    case 'ai_review.failed':
+      return 'AI review failed on an annotation by'
     case 'ds.run_completed':
       return 'ran Dawid-Skene EM truth inference'
     case 'invite_reward.granted':
@@ -477,10 +628,18 @@ function verbForEvent(
       return 'created a task'
     case 'task.published':
       return 'published a task'
+    case 'task.paused':
+      return 'paused a task'
+    case 'task.resumed':
+      return 'resumed a task'
+    case 'task.closed':
+      return 'closed a task'
     case 'task.archived':
       return 'archived a task'
     case 'topic.created':
       return 'created a topic'
+    case 'topic.batch_updated':
+      return 'batch-edited topic data'
     case 'topic.claimed':
       return 'claimed a topic'
     case 'topic.released':
@@ -570,6 +729,27 @@ function describeDetail(
       return `${Math.round(score * 100)}% agreement · ${samples} samples`
     }
     return null
+  }
+  // AI pre-review: surface the gate's score + verdict, and on failure the
+  // error reason. score is 0-100; verdict is pass | send_back | human_review.
+  if (
+    type === 'ai_review.completed' ||
+    type === 'ai_review.sent_back' ||
+    type === 'ai_review.started'
+  ) {
+    const parts: string[] = []
+    if (typeof payload.score === 'number') {
+      parts.push(`score ${Math.round(payload.score)}`)
+    }
+    if (typeof payload.verdict === 'string') {
+      parts.push(payload.verdict)
+    }
+    return parts.length > 0 ? parts.join(' · ') : null
+  }
+  if (type === 'ai_review.failed') {
+    const reason =
+      typeof payload.reason === 'string' ? payload.reason.trim() : ''
+    return reason ? `— ${truncate(reason, 240)}` : null
   }
   if (type === 'ds.run_completed') {
     const cells = payload.cellCount

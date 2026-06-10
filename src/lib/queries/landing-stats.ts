@@ -65,16 +65,5 @@ export const getLandingStats = unstable_cache(
   { revalidate: 60, tags: ['landing-stats'] },
 )
 
-/**
- * Compact formatter: 1234 → "1.2k", 12345 → "12k". Landing-only —
- * admin surfaces should show exact counts.
- */
-export function compactNum(n: number): string {
-  if (n < 1000) return String(n)
-  if (n < 10_000) return `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k`
-  if (n < 1_000_000) return `${Math.round(n / 1000)}k`
-  return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
-}
-
 // silence unused import
 void sql

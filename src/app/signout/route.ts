@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server'
 import { signOut } from '@/lib/actions/auth'
+import { publicUrl } from '@/lib/http/public-origin'
 
 /**
  * POST /signout — one-click logout endpoint.
@@ -13,11 +14,11 @@ import { signOut } from '@/lib/actions/auth'
  */
 export async function POST(_request: NextRequest) {
   await signOut()
-  return NextResponse.redirect(new URL('/', _request.url), { status: 303 })
+  return NextResponse.redirect(publicUrl('/', _request), { status: 303 })
 }
 
 // Guard against accidental GET (e.g. someone bookmarking /signout).
 export async function GET(request: NextRequest) {
   // Just bounce back home without doing anything.
-  return NextResponse.redirect(new URL('/', request.url), { status: 303 })
+  return NextResponse.redirect(publicUrl('/', request), { status: 303 })
 }

@@ -171,7 +171,7 @@ export async function inviteToWorkspace(
     emailError = r.error
   } catch (e) {
     emailError = e instanceof Error ? e.message : 'unknown email error'
-    // eslint-disable-next-line no-console
+     
     console.warn('invite magic-link send failed:', emailError)
   }
 

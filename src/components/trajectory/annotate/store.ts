@@ -8,7 +8,6 @@ import type {
   ClaudeHintsByStep,
   PeerMarksByStep,
   RubricSpec,
-  StepView,
   TrajectoryView,
 } from './types'
 

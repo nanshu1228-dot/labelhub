@@ -45,7 +45,7 @@ function median(arr: number[]): number {
   return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2
 }
 
-export interface RaterAxisRow {
+export interface AnnotatorAxisRow {
   /** Stable axis id — rubric/dim id for pair/arena; step kind for traj. */
   axisId: string
   /** Human display label. Same as axisId for now; future: pull names from template. */
@@ -65,7 +65,7 @@ export interface RaterAxisRow {
  * without either signal are excluded from coverage but reported as
  * `unknownCount` so the UI is honest about sample size.
  */
-export interface RaterSpeedStats {
+export interface AnnotatorSpeedStats {
   /** How many of this rater's submissions have a usable duration. */
   measuredCount: number
   /** Submissions with no duration data (legacy or interrupted). */
@@ -82,7 +82,7 @@ export interface RaterSpeedStats {
   suspiciouslyFastCount: number
 }
 
-export interface RaterDrilldown {
+export interface AnnotatorDrilldown {
   userId: string
   displayName: string | null
   email: string | null
@@ -90,11 +90,11 @@ export interface RaterDrilldown {
   approved: number
   rejected: number
   /** Per-axis peer-alignment breakdown (drill rows). */
-  axes: RaterAxisRow[]
+  axes: AnnotatorAxisRow[]
   /** Total annotations submitted in this workspace. */
   totalSubmitted: number
   /** Speed-of-work summary — surfaces water-army patterns. */
-  speed: RaterSpeedStats
+  speed: AnnotatorSpeedStats
 }
 
 const SUSPICIOUSLY_FAST_SEC = 10
@@ -115,10 +115,10 @@ function percentile(arr: number[], p: number): number | null {
  * step_annotations (trajectory) and annotations.payload (pair / arena)
  * so we get a unified per-axis view.
  */
-export async function getRaterDrilldown(opts: {
+export async function getAnnotatorDrilldown(opts: {
   userId: string
   workspaceId: string
-}): Promise<RaterDrilldown | null> {
+}): Promise<AnnotatorDrilldown | null> {
   const db = getDb()
 
   // 1. Resolve the user row.
@@ -344,7 +344,7 @@ export async function getRaterDrilldown(opts: {
   }
 
   // 5. Format axes for the table.
-  const axes: RaterAxisRow[] = []
+  const axes: AnnotatorAxisRow[] = []
   for (const [key, a] of axisAcc) {
     axes.push({
       axisId: key,
@@ -394,7 +394,7 @@ export async function getRaterDrilldown(opts: {
     }
   }
   const sortedAsc = [...durations].sort((a, b) => a - b)
-  const speed: RaterSpeedStats = {
+  const speed: AnnotatorSpeedStats = {
     measuredCount: durations.length,
     unknownCount,
     medianSec:

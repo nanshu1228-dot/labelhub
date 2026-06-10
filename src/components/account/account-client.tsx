@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { updateProfile } from '@/lib/actions/membership'
 import { claimSeededWorkspaces } from '@/lib/actions/admin-claim'
 import { DEMO_WORKSPACE_ID } from '@/lib/seeds'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 
 /**
  * Account page client.
@@ -120,7 +121,7 @@ function ClaimSeededCard({
         })
         router.refresh()
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Claim failed.')
+        setError(getErrorMessage(e, 'Claim failed.'))
       }
     })
   }
@@ -503,7 +504,7 @@ function ProfileSection({
         setInfo('Saved.')
         router.refresh()
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Save failed.')
+        setError(getErrorMessage(e, 'Save failed.'))
       }
     })
   }

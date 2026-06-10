@@ -22,7 +22,7 @@
 
 import { z } from 'zod'
 import { revalidatePath } from 'next/cache'
-import { and, eq, inArray, isNotNull } from 'drizzle-orm'
+import { and, eq, isNotNull } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import {
   annotations,
@@ -240,7 +240,7 @@ export async function runWorkspaceDawidSkene(
       templateMode: mode,
       numClasses: K,
       cellCount: result.cells.length,
-      raterCount: result.raters.length,
+      raterCount: result.annotators.length,
       iterations: result.iterations,
       converged: result.converged,
       logLikelihood: result.logLikelihood,
@@ -271,8 +271,8 @@ export async function runWorkspaceDawidSkene(
     }
   }
 
-  if (result.raters.length > 0) {
-    const confusionRows = result.raters.map((r) => ({
+  if (result.annotators.length > 0) {
+    const confusionRows = result.annotators.map((r) => ({
       runId: run.id,
       userId: r.raterId,
       confusion: r.confusion,
@@ -291,7 +291,7 @@ export async function runWorkspaceDawidSkene(
       runId: run.id,
       mode,
       cellCount: result.cells.length,
-      raterCount: result.raters.length,
+      raterCount: result.annotators.length,
       iterations: result.iterations,
       converged: result.converged,
     },
@@ -303,7 +303,7 @@ export async function runWorkspaceDawidSkene(
     ok: true,
     runId: run.id,
     cellCount: result.cells.length,
-    raterCount: result.raters.length,
+    raterCount: result.annotators.length,
     iterations: result.iterations,
     converged: result.converged,
   }

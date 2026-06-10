@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { useAtomValue } from 'jotai'
 import type { RubricItem, Mark } from '@/lib/templates/rubric'
 import {
@@ -54,7 +55,10 @@ export function AtomicStepRubricRow({
         showKbd={showKbd}
         disabled={disabled}
       />
-      <SaveStatusGlyph status={status} />
+      <SaveStatusGlyph
+        key={status.state === 'saved' ? `saved-${status.at}` : status.state}
+        status={status}
+      />
     </div>
   )
 }
@@ -81,7 +85,10 @@ export function AtomicTrajectoryRubricRow({
         deepDive={deepDive}
         disabled={disabled}
       />
-      <SaveStatusGlyph status={status} />
+      <SaveStatusGlyph
+        key={status.state === 'saved' ? `saved-${status.at}` : status.state}
+        status={status}
+      />
     </div>
   )
 }
@@ -89,10 +96,20 @@ export function AtomicTrajectoryRubricRow({
 /**
  * Tiny floating glyph in the row's top-right: spinner / check / × / nothing.
  * Auto-clears the "saved" state after 1500ms so the row goes back to clean.
+ *
+ * The caller keys this component by the save event, so each 'saved' state
+ * mounts a fresh instance; a mount-time timer then flips it to hidden after
+ * 1500ms. (Previously this read Date.now() during render — impure, and it
+ * never re-rendered to actually clear.)
  */
 function SaveStatusGlyph({ status }: { status: PersistStatus }) {
-  if (status.state === 'idle') return null
-  if (status.state === 'saved' && Date.now() - status.at > 1500) return null
+  const [hidden, setHidden] = useState(false)
+  useEffect(() => {
+    if (status.state !== 'saved') return
+    const t = setTimeout(() => setHidden(true), 1500)
+    return () => clearTimeout(t)
+  }, [status])
+  if (status.state === 'idle' || hidden) return null
   const { color, glyph, title } = renderStatus(status)
   return (
     <span

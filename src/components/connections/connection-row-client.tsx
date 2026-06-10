@@ -1,5 +1,5 @@
 'use client'
-import { useTransition } from 'react'
+import { useState, useTransition } from 'react'
 import {
   disableConnectionDemo,
   enableConnectionDemo,
@@ -26,6 +26,7 @@ export function ConnectionRowClient({
   connection: ConnectionRowData
 }) {
   const [pending, startTransition] = useTransition()
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   const onToggle = () => {
     startTransition(async () => {
@@ -44,17 +45,16 @@ export function ConnectionRowClient({
   }
 
   const onDelete = () => {
-    if (
-      !confirm(
-        `Delete connection "${connection.displayName}"? This also removes its vault secret.`,
-      )
-    )
-      return
+    setConfirmingDelete(true)
+  }
+
+  const confirmDelete = () => {
     startTransition(async () => {
       await deleteConnectionDemo({
         workspaceId,
         connectionId: connection.id,
       })
+      setConfirmingDelete(false)
     })
   }
 
@@ -134,6 +134,54 @@ export function ConnectionRowClient({
           delete
         </button>
       </div>
+
+      {confirmingDelete ? (
+        <div
+          className="basis-full rounded-md p-3"
+          style={{
+            background: 'var(--danger-soft)',
+            border: '1px solid oklch(0.55 0.2 25 / 0.35)',
+          }}
+        >
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="lh-mono lh-caption" style={{ color: 'var(--danger)' }}>
+                DELETE CONNECTION
+              </div>
+              <p
+                className="ts-12 mt-1"
+                style={{ color: 'var(--text)', lineHeight: 1.5 }}
+              >
+                Delete “{connection.displayName}”? The stored vault secret is
+                removed with it, and LLM calls using this provider will stop.
+              </p>
+            </div>
+            <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setConfirmingDelete(false)}
+                disabled={pending}
+                className="lh-btn lh-btn-sm lh-btn-ghost"
+              >
+                cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDelete}
+                disabled={pending}
+                className="lh-btn lh-btn-sm"
+                style={{
+                  color: 'white',
+                  background: 'var(--danger)',
+                  border: '1px solid var(--danger)',
+                }}
+              >
+                delete connection
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

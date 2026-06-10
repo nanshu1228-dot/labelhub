@@ -73,6 +73,19 @@ const TASK = {
   templateMode: 'survey',
 }
 
+/**
+ * Build the task row with a chosen review policy. These transition-
+ * mechanics tests predate spec-9.3 two-stage review and assert the
+ * single-stage direct-accept path, so they run with twoStage:false.
+ * The two-stage gate has its own dedicated describe below.
+ */
+function taskWithPolicy(twoStage: boolean) {
+  return {
+    ...TASK,
+    templateConfig: { taskSettings: { twoStageReview: twoStage } },
+  }
+}
+
 const WORKSPACE = {
   id: 'ws-1',
   name: 'Test WS',
@@ -88,6 +101,8 @@ function setupScenario(opts: {
   workspaceAdminId?: string
   /** Force update.returning() to return [] */
   updateConflict?: boolean
+  /** Per-task review policy. Defaults to single-stage (legacy behaviour). */
+  twoStage?: boolean
 }) {
   const topic = { ...TOPIC_BASE, status: opts.topicStatus }
   const workspace = {
@@ -120,7 +135,7 @@ function setupScenario(opts: {
   const selectQueue: unknown[][] = [
     [ANNOTATION],
     [topic],
-    [TASK],
+    [taskWithPolicy(opts.twoStage ?? false)],
     [{ workspace, role: opts.userRole }],
   ]
   let selectIdx = 0
@@ -129,7 +144,7 @@ function setupScenario(opts: {
     ? []
     : [{ ...topic, status: 'approved', version: topic.version + 1 }]
 
-  vi.mocked(getDb).mockReturnValue({
+  const db: Record<string, unknown> = {
     select: () => ({
       from: () => ({
         where: () => ({
@@ -151,6 +166,9 @@ function setupScenario(opts: {
           onConflictDoNothing() {
             return Promise.resolve()
           },
+          onConflictDoUpdate() {
+            return Promise.resolve()
+          },
           returning: () => Promise.resolve([{ id: 'evt-1' }]),
         }
       },
@@ -162,7 +180,11 @@ function setupScenario(opts: {
         }),
       }),
     }),
-  } as never)
+  }
+  // reviewAnnotation now wraps the topic-update + event-insert in
+  // db.transaction; pass the same mock as the tx handle.
+  db.transaction = async (cb: (tx: unknown) => unknown) => cb(db)
+  vi.mocked(getDb).mockReturnValue(db as never)
 }
 
 beforeEach(() => {
@@ -270,6 +292,21 @@ describe('reviewAnnotation — source-state matrix', () => {
     },
   )
 
+  it('requires feedback when requesting a revision', async () => {
+    setupScenario({
+      userId: ADMIN_USER,
+      userRole: 'admin',
+      topicStatus: 'submitted',
+    })
+    await expect(
+      reviewAnnotation({
+        annotationId: VALID_ANNO_ID,
+        decision: 'request_revision',
+        feedback: '',
+      }),
+    ).rejects.toBeInstanceOf(ValidationError)
+  })
+
   it.each(BLOCKED_STATES)(
     'status=%s → ConflictError (annotation past acceptance gate)',
     async (status) => {
@@ -286,6 +323,59 @@ describe('reviewAnnotation — source-state matrix', () => {
       ).rejects.toBeInstanceOf(ConflictError)
     },
   )
+})
+
+// ─── Two-stage review policy (spec 9.3) ───────────────────────────────────
+
+describe('reviewAnnotation — two-stage review gate', () => {
+  it.each(['submitted', 'reviewing'] as const)(
+    'twoStage on: admin accept from %s is blocked (must pass QC 初审 first)',
+    async (status) => {
+      setupScenario({
+        userId: ADMIN_USER,
+        userRole: 'admin',
+        topicStatus: status,
+        twoStage: true,
+      })
+      await expect(
+        reviewAnnotation({
+          annotationId: VALID_ANNO_ID,
+          decision: 'approve',
+        }),
+      ).rejects.toBeInstanceOf(ConflictError)
+    },
+  )
+
+  it('twoStage on: admin accept from awaiting_acceptance (终审) succeeds', async () => {
+    setupScenario({
+      userId: ADMIN_USER,
+      userRole: 'admin',
+      topicStatus: 'awaiting_acceptance',
+      twoStage: true,
+    })
+    await expect(
+      reviewAnnotation({
+        annotationId: VALID_ANNO_ID,
+        decision: 'approve',
+      }),
+    ).resolves.toEqual({ ok: true })
+  })
+
+  it('twoStage on: 打回 / reject from submitted is still allowed', async () => {
+    setupScenario({
+      userId: ADMIN_USER,
+      userRole: 'admin',
+      topicStatus: 'submitted',
+      twoStage: true,
+    })
+    await expect(
+      reviewAnnotation({
+        annotationId: VALID_ANNO_ID,
+        decision: 'reject',
+        feedback: 'no good',
+      }),
+    ).resolves.toEqual({ ok: true })
+  })
 })
 
 // ─── Optimistic locking ──────────────────────────────────────────────────
@@ -336,6 +426,7 @@ describe('reviewAnnotation — resource resolution', () => {
       insert: () => ({
         values: () => ({
           onConflictDoNothing: () => Promise.resolve(),
+          onConflictDoUpdate: () => Promise.resolve(),
         }),
       }),
     } as never)
@@ -428,6 +519,9 @@ describe('respondToReview — author gate', () => {
               return Promise.resolve().then(onFulfilled)
             },
             onConflictDoNothing() {
+              return Promise.resolve()
+            },
+            onConflictDoUpdate() {
               return Promise.resolve()
             },
             returning: () => Promise.resolve([{ id: 'evt-2' }]),

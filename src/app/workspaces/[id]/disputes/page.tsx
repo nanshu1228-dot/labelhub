@@ -5,7 +5,7 @@ import { getWorkspaceById } from '@/lib/queries/workspaces'
 import {
   getWorkspaceIaaSummary,
   listTopDisputes,
-  type RaterMark,
+  type AnnotatorMark,
 } from '@/lib/queries/iaa'
 import {
   getWorkspaceTrust,
@@ -17,6 +17,9 @@ import { isAnyProviderConfigured } from '@/lib/ai/client'
 import { RefinerActionClient } from '@/components/disputes/refiner-action-client'
 import { PatchActionsClient } from '@/components/disputes/patch-actions-client'
 import { TrustBadge } from '@/components/quality/trust-badge'
+import { DbError } from '@/components/ui/db-error'
+import { EmptyState } from '@/components/ui/empty-state'
+import { SectionHeader } from '@/components/ui/section-header'
 import {
   getPairOrArenaIAA,
   type PairRubricRow,
@@ -108,6 +111,25 @@ export default async function DisputesPage(
   // Any provider counts — the refiner is provider-agnostic.
   const hasAIProvider = isAnyProviderConfigured()
 
+  // Fresh-workspace gate: when every data source is empty, the page would
+  // otherwise stack four blank chart sections (zeroed metric tiles, empty
+  // IAA tables, an empty-disputes box, an empty-patches box) — a "looks
+  // broken" signal. Collapse all of that into one shared EmptyState. The
+  // normal full render is preserved untouched when ANY source has data.
+  const pairHasData =
+    pairIaa != null &&
+    pairIaa.mode !== 'unsupported' &&
+    (pairIaa.pairRubric.length > 0 ||
+      pairIaa.arenaDimensions.length > 0 ||
+      (pairIaa.arenaOverall != null &&
+        pairIaa.arenaOverall.multiRaterTopics > 0))
+  const isEmpty =
+    !dbError &&
+    disputes.length === 0 &&
+    patches.length === 0 &&
+    (summary == null || summary.annotatedSteps === 0) &&
+    !pairHasData
+
   return (
     <div className="app-light min-h-screen">
       <Header workspaceId={workspaceId} workspaceName={workspaceName} />
@@ -126,6 +148,21 @@ export default async function DisputesPage(
 
         {dbError ? (
           <DbError message={dbError} />
+        ) : isEmpty ? (
+          <EmptyState
+            label="§ NO DISPUTES YET"
+            title="No disputes yet"
+            description="Disputes appear once multiple annotators disagree on a topic. Check who has submitted, then revisit this page."
+            cta={{
+              kind: 'link',
+              href: `/workspaces/${workspaceId}/quality`,
+              label: 'View quality',
+            }}
+            secondary={{
+              href: `/workspaces/${workspaceId}`,
+              label: 'Back to workspace',
+            }}
+          />
         ) : (
           <div className="flex flex-col gap-10">
             {summary && <IaaSummary summary={summary} />}
@@ -267,19 +304,6 @@ function Header({
         </Link>
       </div>
     </header>
-  )
-}
-
-function SectionHeader({ title, hint }: { title: string; hint?: string }) {
-  return (
-    <div className="flex items-baseline justify-between gap-3 mb-3">
-      <div className="lbl">§ {title}</div>
-      {hint && (
-        <span className="ts-12 mono" style={{ color: 'var(--mute2)' }}>
-          {hint}
-        </span>
-      )}
-    </div>
   )
 }
 
@@ -468,7 +492,7 @@ function RaterTable({
   trustByUserId,
   viewerIsAdmin,
 }: {
-  raters: RaterMark[]
+  raters: AnnotatorMark[]
   trustByUserId: Record<string, UserTrust>
   viewerIsAdmin: boolean
 }) {
@@ -636,33 +660,6 @@ function EmptyDisputes() {
         </span>{' '}
         to inject synthetic disagreement.
       </p>
-    </div>
-  )
-}
-
-function DbError({ message }: { message: string }) {
-  return (
-    <div
-      className="p-6 rounded-xl"
-      style={{ border: '1px solid var(--line)', background: 'var(--panel)' }}
-    >
-      <div
-        className="ts-13 mono mb-2"
-        style={{ color: 'var(--danger)', letterSpacing: '0.05em' }}
-      >
-        § DATABASE NOT REACHABLE
-      </div>
-      <pre
-        className="mt-2 ts-12 mono p-3 overflow-auto whitespace-pre-wrap"
-        style={{
-          background: 'var(--code-bg)',
-          border: '1px solid var(--code-line)',
-          color: 'var(--code-text)',
-          borderRadius: 8,
-        }}
-      >
-        {message}
-      </pre>
     </div>
   )
 }

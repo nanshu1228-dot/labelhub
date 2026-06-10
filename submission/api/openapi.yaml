@@ -1,0 +1,1346 @@
+openapi: 3.1.0
+info:
+  title: LabelHub Core API
+  version: "1.0.0"
+  summary: HTTP edge of the LabelHub data-annotation platform.
+  description: >
+    Portable OpenAPI description of LabelHub's **HTTP route handlers**
+    (`src/app/api/**`). These thin external edges authenticate, then delegate to
+    the library layer. They cover the **machine-to-machine** surfaces:
+    workspace-API-key ingest/read endpoints, admin (Supabase session) export
+    endpoints, public operational endpoints, and the LLM gateway proxy.
+
+
+    LabelHub deliberately keeps **internal mutations off HTTP** — the browser UI
+    creates tasks, submits/reviews annotations, and runs payouts through
+    **Next.js Server Actions** (`'use server'` functions), NOT these routes. That
+    RPC surface is not expressible in OpenAPI; it is documented in the companion
+    `API.md` ("Server-Action RPC surface"). This file documents only what is
+    reachable over HTTP.
+
+
+    ## Authentication models
+
+    Three distinct models are in play (see `securitySchemes`):
+
+    1. **Workspace API key** — machine-to-machine. A `lh_ws_*` (or rate-limited
+       public `lh_demo_*`) bearer token. Only the SHA-256 hash is stored; the
+       workspace is *inferred from the key*, so these endpoints take no
+       `workspaceId`. Accepted on `Authorization: Bearer <key>`, bare
+       `Authorization: <key>`, `x-api-key: <key>`, or `x-labelhub-api-key: <key>`.
+    2. **Supabase user session** — cookie session from `@supabase/ssr`. Used by
+       publisher-initiated/admin HTTP flows (`/api/export/*`, `/api/eval-runs`,
+       `/api/form-uploads`, `/api/llm-assist`, `/api/workspaces/{id}/...`). The
+       route resolves the target workspace, then calls a workspace-scoped guard
+       (`requireWorkspaceAdmin` / `requireWorkspaceMember`).
+    3. **Admin ops token** — a single `ADMIN_DIAG_TOKEN` env secret on
+       `/api/admin/*`. If the env is unset the endpoint returns 503 (no
+       fallback). Prefer `Authorization: Bearer <token>` or `x-admin-token`;
+       `?token=` is a soft-deprecated fallback.
+
+    Public endpoints (`/api/health`, `/api/demo/info`) take no auth and are
+    IP-rate-limited.
+
+
+    ## Conventions
+
+    - JSON in, JSON out unless a file is returned (exports stream
+      `attachment` downloads).
+    - Errors are a typed hierarchy mapped to HTTP status. Most routes return
+      `{ "error": "<msg>", "code": "<CODE>" }`; the API-key read/gateway routes
+      nest it as `{ "error": { "message": "<msg>", "code": "<CODE>" } }`.
+      Internal failures NEVER echo DB/stack text — they return
+      `code: "INTERNAL"`, status 500.
+    - Every authenticated edge writes an `api_request_log` row (success and
+      failure) for audit.
+
+servers:
+  - url: https://aipert.top
+    description: Live demo deployment
+  - url: http://localhost:3000
+    description: Local development
+
+tags:
+  - name: Trajectories
+    description: Workspace-API-key ingest + read of captured agent trajectories.
+  - name: Annotations
+    description: Workspace-API-key read of annotation results.
+  - name: Quality
+    description: Workspace-API-key read of the quality roll-up.
+  - name: Webhooks
+    description: Workspace-API-key management of event webhooks.
+  - name: Export
+    description: Session-auth (admin) dataset / task / trajectory export.
+  - name: Eval runs
+    description: Session-auth (admin) simulated-agent runs.
+  - name: Uploads
+    description: Session-auth form-material uploads.
+  - name: AI assist
+    description: Session-auth per-field / per-topic LLM assist.
+  - name: Workspace
+    description: Session-auth workspace activity polling.
+  - name: Gateway proxy
+    description: Workspace-API-key LLM provider proxy with trajectory capture.
+  - name: Operational
+    description: Public health / demo info.
+  - name: Admin ops
+    description: Token-gated out-of-band operations.
+
+paths:
+  # ───────────────────────── Trajectories (API key) ──────────────────────────
+  /api/ingest/trajectories:
+    post:
+      tags: [Trajectories]
+      summary: Ingest a trajectory (SDK capture endpoint)
+      description: >
+        Production SDK ingest. Reads the raw body (capped at 2 MB → 413),
+        authenticates the workspace API key, detects the trajectory format
+        (overridable via `X-LabelHub-Format`), and persists it. Returns 202.
+      operationId: ingestTrajectory
+      security:
+        - workspaceApiKey: []
+      parameters:
+        - name: X-LabelHub-Agent-Name
+          in: header
+          required: false
+          schema: { type: string, default: unnamed-agent }
+        - name: X-LabelHub-Source
+          in: header
+          required: false
+          description: One of the known trajectory sources; falls back to `production`.
+          schema: { type: string, default: production }
+        - name: X-LabelHub-Format
+          in: header
+          required: false
+          description: Force a format instead of auto-detecting.
+          schema: { type: string }
+      requestBody:
+        required: true
+        description: >
+          The trajectory payload. Shape depends on the detected/overridden
+          format (canonical LabelHub schema, OpenAI chat, Anthropic messages, …).
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "202":
+          description: Accepted and persisted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  trajectoryId: { type: string, format: uuid }
+                  stepCount: { type: integer }
+                  format: { type: string }
+                  providersInferred: { type: integer }
+        "400":
+          description: Bad JSON or undetectable format (`BAD_JSON` / `UNKNOWN_FORMAT`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FlatError" }
+        "401":
+          description: Missing/invalid/expired API key.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FlatError" }
+        "413":
+          description: Body exceeds the 2 MB ingest cap (`PAYLOAD_TOO_LARGE`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FlatError" }
+        "500":
+          $ref: "#/components/responses/FlatInternalError"
+
+  /api/trajectories:
+    get:
+      tags: [Trajectories]
+      summary: List captured trajectories
+      description: >
+        Read-side list for the API key's workspace (workspace inferred from the
+        key). Steps are NOT inlined — fetch a single trajectory for that.
+      operationId: listTrajectories
+      security:
+        - workspaceApiKey: []
+      parameters:
+        - name: agent
+          in: query
+          description: ILIKE substring filter on agentName.
+          schema: { type: string }
+        - name: source
+          in: query
+          description: Comma-separated allow-list of trajectory sources.
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, minimum: 1, maximum: 200 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0, minimum: 0 }
+        - name: createdAfter
+          in: query
+          description: Inclusive ISO-8601 lower bound.
+          schema: { type: string, format: date-time }
+        - name: createdBefore
+          in: query
+          description: Exclusive ISO-8601 upper bound.
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: Page of trajectory rows.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  trajectories:
+                    type: array
+                    items: { type: object, additionalProperties: true }
+                  total: { type: integer }
+                  hasMore: { type: boolean }
+                  limit: { type: integer }
+                  offset: { type: integer }
+        "401":
+          $ref: "#/components/responses/NestedUnauthorized"
+        "500":
+          $ref: "#/components/responses/NestedInternalError"
+
+  /api/trajectories/{id}:
+    get:
+      tags: [Trajectories]
+      summary: Get one trajectory with steps + tool providers
+      description: >
+        Returns the trajectory row, every step, and the referenced tool
+        providers. Cross-workspace reads are forbidden (403) even with a valid
+        UUID.
+      operationId: getTrajectory
+      security:
+        - workspaceApiKey: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Trajectory bundle.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  trajectory: { type: object, additionalProperties: true }
+                  steps:
+                    type: array
+                    items: { type: object, additionalProperties: true }
+                  toolProviders:
+                    type: object
+                    additionalProperties: { type: object, additionalProperties: true }
+        "401":
+          $ref: "#/components/responses/NestedUnauthorized"
+        "403":
+          description: Trajectory belongs to a different workspace.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NestedError" }
+        "404":
+          description: Trajectory not found.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NestedError" }
+        "500":
+          $ref: "#/components/responses/NestedInternalError"
+
+  # ───────────────────────── Annotations (API key) ───────────────────────────
+  /api/annotations:
+    get:
+      tags: [Annotations]
+      summary: List annotation results
+      description: >
+        Customer-facing read of annotation results for the API key's workspace.
+        Unknown `status` values are silently dropped.
+      operationId: listAnnotations
+      security:
+        - workspaceApiKey: []
+      parameters:
+        - name: trajectory_id
+          in: query
+          description: Filter to one trajectory. Must be a UUID (else 400).
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [drafting, revising, submitted, reviewing, approved, rejected]
+        - name: since
+          in: query
+          description: Inclusive ISO-8601 lower bound on submittedAt.
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          description: Exclusive ISO-8601 upper bound on submittedAt.
+          schema: { type: string, format: date-time }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, minimum: 1, maximum: 200 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0, minimum: 0 }
+      responses:
+        "200":
+          description: Page of annotation result rows.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  annotations:
+                    type: array
+                    items: { type: object, additionalProperties: true }
+                  total: { type: integer }
+                  limit: { type: integer }
+                  offset: { type: integer }
+                  hasMore: { type: boolean }
+        "400":
+          description: Malformed `trajectory_id` (`BAD_TRAJECTORY_ID`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NestedError" }
+        "401":
+          $ref: "#/components/responses/NestedUnauthorized"
+        "500":
+          $ref: "#/components/responses/NestedInternalError"
+
+  /api/annotations/{id}:
+    get:
+      tags: [Annotations]
+      summary: Get one annotation
+      description: >
+        Single-annotation lookup scoped to the key's workspace. Returns 404 for
+        both "does not exist" and "belongs to another workspace" (no
+        cross-tenant existence leak).
+      operationId: getAnnotation
+      security:
+        - workspaceApiKey: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The annotation.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  annotation: { type: object, additionalProperties: true }
+        "400":
+          description: Id is not a UUID (`BAD_ID`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NestedError" }
+        "401":
+          $ref: "#/components/responses/NestedUnauthorized"
+        "404":
+          description: Not found / cross-workspace.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NestedError" }
+        "500":
+          $ref: "#/components/responses/NestedInternalError"
+
+  # ───────────────────────── Quality (API key) ───────────────────────────────
+  /api/quality/summary:
+    get:
+      tags: [Quality]
+      summary: Workspace quality roll-up
+      description: >
+        IAA metrics + per-rater trust + calibration + gold standards + critical
+        violations in one round-trip. Workspace inferred from the API key; no
+        params.
+      operationId: getQualitySummary
+      security:
+        - workspaceApiKey: []
+      responses:
+        "200":
+          description: Quality summary snapshot.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "401":
+          $ref: "#/components/responses/NestedUnauthorized"
+        "500":
+          $ref: "#/components/responses/NestedInternalError"
+
+  # ───────────────────────── Webhooks (API key) ──────────────────────────────
+  /api/webhooks:
+    get:
+      tags: [Webhooks]
+      summary: List webhook subscriptions
+      description: Lists the API key's workspace webhooks (secrets are never returned after creation).
+      operationId: listWebhooks
+      security:
+        - workspaceApiKey: []
+      responses:
+        "200":
+          description: Webhook list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  webhooks:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        url: { type: string, format: uri }
+                        eventTypes:
+                          type: array
+                          items: { type: string }
+                        enabled: { type: boolean }
+                        createdAt: { type: string, format: date-time }
+                        lastDeliveryAt: { type: string, format: date-time, nullable: true }
+                        lastDeliveryStatus: { type: integer, nullable: true }
+                        failureCount: { type: integer }
+        "401":
+          $ref: "#/components/responses/NestedUnauthorized"
+        "500":
+          $ref: "#/components/responses/NestedInternalError"
+    post:
+      tags: [Webhooks]
+      summary: Register a webhook
+      description: >
+        Subscribe a URL to annotation events. The plain `secret` is returned
+        ONCE; use it to verify the `X-LabelHub-Signature` HMAC-SHA256 on
+        deliveries.
+      operationId: createWebhook
+      security:
+        - workspaceApiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url:
+                  type: string
+                  format: uri
+                  maxLength: 2000
+                events:
+                  type: array
+                  description: Empty/omitted = all known annotation events.
+                  items:
+                    type: string
+                    enum:
+                      - annotation.approved
+                      - annotation.rejected
+                      - annotation.revised
+                      - annotation.submitted
+      responses:
+        "201":
+          description: Created. `secret` shown once.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  webhook:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid }
+                      url: { type: string, format: uri }
+                      eventTypes:
+                        type: array
+                        items: { type: string }
+                      enabled: { type: boolean }
+                      createdAt: { type: string, format: date-time }
+                      secret: { type: string }
+        "400":
+          description: Validation failure (`VALIDATION`) or bad JSON (`BAD_JSON`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NestedError" }
+        "401":
+          $ref: "#/components/responses/NestedUnauthorized"
+        "500":
+          $ref: "#/components/responses/NestedInternalError"
+
+  /api/webhooks/{id}:
+    delete:
+      tags: [Webhooks]
+      summary: Revoke a webhook
+      description: Soft-deletes (revokes) a webhook subscription. The row is kept for audit.
+      operationId: deleteWebhook
+      security:
+        - workspaceApiKey: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  id: { type: string, format: uuid }
+        "400":
+          description: Id is not a UUID (`BAD_ID`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NestedError" }
+        "401":
+          $ref: "#/components/responses/NestedUnauthorized"
+        "404":
+          description: Not found or already revoked.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NestedError" }
+        "500":
+          $ref: "#/components/responses/NestedInternalError"
+
+  # ───────────────────────── Export (session auth) ───────────────────────────
+  /api/export/dataset:
+    get:
+      tags: [Export]
+      summary: Export a frozen dataset version
+      description: >
+        Streams the frozen manifest of a dataset version. `format` controls the
+        content shape (`raw` | `teaching`), `encoding` the file format
+        (`json` | `jsonl` | `csv` | `excel`). Large exports (estimated > 5 MB)
+        enqueue an async job and return 202 with a `statusUrl` to poll.
+        Admin of the *version's* workspace (resolved before the guard).
+      operationId: exportDatasetVersion
+      security:
+        - supabaseSession: []
+      parameters:
+        - name: versionId
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+        - name: format
+          in: query
+          schema: { type: string, enum: [raw, teaching], default: raw }
+        - name: encoding
+          in: query
+          schema: { type: string, enum: [json, jsonl, csv, excel], default: jsonl }
+        - name: mapping
+          in: query
+          description: JSON array of `{ source, target, transform? }` field-mapping entries.
+          schema: { type: string }
+      responses:
+        "200":
+          description: Synchronous export stream (small datasets).
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+            application/json: {}
+            application/jsonl: {}
+            text/csv: {}
+        "202":
+          description: Async export enqueued; poll `statusUrl`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jobId: { type: string, format: uuid }
+                  status: { type: string, const: pending }
+                  statusUrl: { type: string }
+                  estimatedBytes: { type: integer }
+                  rowCount: { type: integer }
+        "400":
+          description: Missing `versionId` or unknown format/encoding (`VALIDATION_ERROR`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FlatError" }
+        "401":
+          description: Not signed in.
+        "403":
+          description: Not an admin of the version's workspace.
+        "404":
+          description: Dataset version not found (`NOT_FOUND`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FlatError" }
+        "500":
+          $ref: "#/components/responses/FlatInternalError"
+
+  /api/export/jobs/{id}:
+    get:
+      tags: [Export]
+      summary: Poll an async export job
+      description: >
+        Returns the job status; when `completed`, lazily mints a `downloadUrl`
+        (signed Supabase URL, 60s TTL, or local-FS public URL). Admin of the
+        job's workspace; 404 to non-admins (no existence leak).
+      operationId: getExportJob
+      security:
+        - supabaseSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Job status.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  status: { type: string, enum: [pending, running, completed, failed] }
+                  format: { type: string }
+                  byteSize: { type: integer, nullable: true }
+                  rowCount: { type: integer, nullable: true }
+                  downloadUrl: { type: string, nullable: true }
+                  error: { type: string, nullable: true }
+                  createdAt: { type: string, format: date-time }
+                  finishedAt: { type: string, format: date-time, nullable: true }
+        "404":
+          description: Job not found / not admin (`NOT_FOUND`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NestedError" }
+        "500":
+          $ref: "#/components/responses/NestedInternalError"
+
+  /api/export/trajectories:
+    get:
+      tags: [Export]
+      summary: Export trajectories + annotations as JSONL
+      description: >
+        Streams a JSONL download of trajectory bundles for a workspace
+        (admin session auth). Capped at 200 trajectories per call; paginate via
+        `createdBefore`.
+      operationId: exportTrajectoriesJsonl
+      security:
+        - supabaseSession: []
+      parameters:
+        - name: workspaceId
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100, maximum: 200 }
+        - name: createdBefore
+          in: query
+          schema: { type: string, format: date-time }
+        - name: sources
+          in: query
+          description: Comma-separated source allow-list.
+          schema: { type: string }
+        - name: includeDeleted
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: JSONL attachment.
+          content:
+            application/jsonl:
+              schema: { type: string }
+        "400":
+          description: Missing `workspaceId` (`VALIDATION_ERROR`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FlatError" }
+        "401":
+          description: Not signed in.
+        "403":
+          description: Not a workspace admin.
+        "500":
+          $ref: "#/components/responses/FlatInternalError"
+
+  /api/workspaces/{id}/tasks/{taskId}/export:
+    get:
+      tags: [Export]
+      summary: Export one task's submitted annotations
+      description: >
+        Task-scoped annotation export (admin session auth). One row per
+        submitted annotation, including AI-review fields, human-review events,
+        and (trajectory mode) nested step annotations. Capped/paginated via
+        `limit` (max 50000) + `offset`.
+      operationId: exportTaskAnnotations
+      security:
+        - supabaseSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Workspace id.
+          schema: { type: string, format: uuid }
+        - name: taskId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: format
+          in: query
+          schema: { type: string, enum: [json, jsonl, csv, excel], default: json }
+        - name: mapping
+          in: query
+          description: JSON array of field-mapping entries (overrides the default table mapping).
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50000, maximum: 50000 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+      responses:
+        "200":
+          description: Annotation export in the requested format.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+            application/jsonl:
+              schema: { type: string }
+            text/csv:
+              schema: { type: string }
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "400":
+          description: Unknown format (`VALIDATION_ERROR`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FlatError" }
+        "401":
+          description: Not signed in.
+        "403":
+          description: Not a workspace admin.
+        "404":
+          description: Task not found / not in this workspace (`NOT_FOUND`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FlatError" }
+        "500":
+          $ref: "#/components/responses/FlatInternalError"
+
+  # ───────────────────────── Eval runs (session auth) ────────────────────────
+  /api/eval-runs:
+    post:
+      tags: [Eval runs]
+      summary: Run a simulated agent (capture trajectories)
+      description: >
+        Publisher-initiated simulated-agent run (admin session auth, NOT API
+        key). Drives a Sonnet agent loop with Haiku-simulated tools over each
+        input, persists one trajectory per input, and enforces the daily AI
+        quota. Body capped at 500 KB (→ 413).
+      operationId: createEvalRun
+      security:
+        - supabaseSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [workspaceId, agent, inputs]
+              properties:
+                workspaceId: { type: string, format: uuid }
+                agentName: { type: string, default: eval-agent, maxLength: 120 }
+                agent:
+                  type: object
+                  required: [systemPrompt]
+                  properties:
+                    model: { type: string }
+                    systemPrompt: { type: string, minLength: 1, maxLength: 20000 }
+                    tools:
+                      type: array
+                      maxItems: 20
+                      items:
+                        type: object
+                        required: [name, description, input_schema]
+                        properties:
+                          name: { type: string, minLength: 1, maxLength: 64 }
+                          description: { type: string, minLength: 1, maxLength: 2000 }
+                          input_schema: { type: object, additionalProperties: true }
+                inputs:
+                  type: array
+                  minItems: 1
+                  maxItems: 10
+                  items: { type: string, minLength: 1, maxLength: 8000 }
+                taskId: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Run results (one trajectory per input).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  trajectories:
+                    type: array
+                    items: { type: object, additionalProperties: true }
+                  totalInputTokens: { type: integer }
+                  totalOutputTokens: { type: integer }
+        "400":
+          description: Bad JSON or Zod validation failure.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FlatError" }
+        "401":
+          description: Not signed in.
+        "403":
+          description: Not a workspace admin.
+        "413":
+          description: Body exceeds 500 KB (`PAYLOAD_TOO_LARGE`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FlatError" }
+        "429":
+          description: Daily AI quota exceeded (`QUOTA_EXCEEDED`).
+        "500":
+          $ref: "#/components/responses/FlatInternalError"
+
+  # ───────────────────────── Uploads (session auth) ──────────────────────────
+  /api/form-uploads:
+    post:
+      tags: [Uploads]
+      summary: Upload form material (Custom Designer)
+      description: >
+        Multipart upload of a file for the Custom Designer file/image material.
+        Auth mirrors annotation save: signed-in workspace member (not viewer),
+        topic must belong to the workspace/task and be drafting/revising and not
+        claimed by someone else. Max 25 MB.
+      operationId: uploadFormMaterial
+      security:
+        - supabaseSession: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [workspaceId, topicId, fieldId, file]
+              properties:
+                workspaceId: { type: string, format: uuid }
+                topicId: { type: string, format: uuid }
+                taskId: { type: string, format: uuid }
+                fieldId: { type: string, minLength: 1, maxLength: 120 }
+                maxSizeMb: { type: number, maximum: 25 }
+                file: { type: string, format: binary }
+      responses:
+        "200":
+          description: Stored file descriptor.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  file:
+                    type: object
+                    properties:
+                      url: { type: string }
+                      path: { type: string }
+                      name: { type: string }
+                      size: { type: integer }
+                      type: { type: string }
+                      fieldId: { type: string }
+                      uploadedAt: { type: string, format: date-time }
+                  reused: { type: boolean }
+        "400":
+          description: Invalid upload request (Zod) or validation error.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string }
+                  details: { type: object, additionalProperties: true }
+        "403":
+          description: Viewer role, or topic claimed by another annotator.
+        "404":
+          description: Topic or task not found.
+        "409":
+          description: Topic is not in a draftable state.
+        "500":
+          description: Upload failed.
+
+  # ───────────────────────── AI assist (session auth) ────────────────────────
+  /api/llm-assist:
+    post:
+      tags: [AI assist]
+      summary: Per-field / per-topic LLM assist
+      description: >
+        Signed-in labeler assist. Runs Claude over the field/topic prompt +
+        current form context and returns plain text. Per-user rate limit
+        (10/min) + daily AI quota. Body capped at 32 KB.
+      operationId: llmAssist
+      security:
+        - supabaseSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [promptTemplate]
+              properties:
+                scope: { type: string, enum: [field, topic], default: field }
+                promptTemplate: { type: string, minLength: 1, maxLength: 8000 }
+                context: { type: object, additionalProperties: true }
+                tier: { type: string, enum: [fast, default, premium], default: fast }
+                itemData: {}
+                schemaSummary:
+                  type: array
+                  maxItems: 80
+                  items:
+                    type: object
+                    properties:
+                      id: { type: string, maxLength: 120 }
+                      label: { type: string, maxLength: 200 }
+                      kind: { type: string, maxLength: 80 }
+                      required: { type: boolean }
+      responses:
+        "200":
+          description: Generated text + token usage.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  text: { type: string }
+                  usage:
+                    type: object
+                    properties:
+                      model: { type: string }
+                      inputTokens: { type: integer }
+                      outputTokens: { type: integer }
+        "400":
+          description: Invalid JSON or request.
+        "401":
+          description: Sign-in required.
+        "413":
+          description: Body exceeds 32 KB.
+        "429":
+          description: Per-user rate limit or daily quota exceeded.
+        "502":
+          description: Upstream AI call failed.
+    options:
+      tags: [AI assist]
+      summary: CORS preflight
+      operationId: llmAssistPreflight
+      responses:
+        "204":
+          description: "No content (Allow: POST)."
+
+  # ───────────────────────── Workspace (session auth) ────────────────────────
+  /api/workspaces/{id}/recent-events:
+    get:
+      tags: [Workspace]
+      summary: Poll recent workspace events
+      description: >
+        Member-readable live-activity strip. Returns the last N events with the
+        actor display name (or id prefix). Polled ~every 5s by the dashboard.
+      operationId: recentEvents
+      security:
+        - supabaseSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 20, minimum: 1, maximum: 50 }
+      responses:
+        "200":
+          description: Recent events.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        ts: { type: string, format: date-time }
+                        type: { type: string }
+                        actor: { type: string, nullable: true }
+        "403":
+          description: Not a workspace member.
+        "500":
+          description: Internal error.
+
+  # ───────────────────────── Gateway proxy (API key) ─────────────────────────
+  /api/proxy/{kind}/{path}:
+    post:
+      tags: [Gateway proxy]
+      summary: LLM provider proxy with trajectory capture
+      description: >
+        Catch-all proxy. Forwards a chat-completions / messages request to the
+        registered provider's upstream (`<connection.baseUrl>/<path>`), streams
+        or buffers the response back, and captures the round-trip as a
+        trajectory in the after()-window. Workspace API key auth; per-connection
+        and per-key RPM limits; optional topic-scope system-prompt injection.
+        `model` and a non-empty `messages` array are required in the body.
+      operationId: proxyLlm
+      security:
+        - workspaceApiKey: []
+      parameters:
+        - name: kind
+          in: path
+          required: true
+          description: Provider key (e.g. `openai`, `anthropic`, `doubao`, `deepseek`, `qwen`, `moonshot`).
+          schema: { type: string }
+        - name: path
+          in: path
+          required: true
+          description: Upstream path forwarded verbatim (e.g. `chat/completions` or `v1/messages`).
+          schema: { type: string }
+      requestBody:
+        required: true
+        description: Provider-native chat request (OpenAI-compat or Anthropic Messages).
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, messages]
+              properties:
+                model: { type: string }
+                messages:
+                  type: array
+                  items: { type: object, additionalProperties: true }
+                stream: { type: boolean }
+              additionalProperties: true
+      responses:
+        "200":
+          description: Upstream response (JSON or SSE stream), passed through.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+            text/event-stream:
+              schema: { type: string }
+        "400":
+          description: Bad JSON / missing model / missing messages.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProxyError" }
+        "401":
+          description: Missing/invalid API key.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProxyError" }
+        "404":
+          description: Unknown provider (`UNKNOWN_PROVIDER`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProxyError" }
+        "429":
+          description: Rate limited (`RATE_LIMITED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProxyError" }
+        "502":
+          description: Upstream not configured / unreachable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProxyError" }
+        "500":
+          description: Internal error.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProxyError" }
+    get:
+      tags: [Gateway proxy]
+      summary: Method-not-allowed hint
+      operationId: proxyLlmGet
+      parameters:
+        - name: kind
+          in: path
+          required: true
+          schema: { type: string }
+        - name: path
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "405":
+          description: Use POST.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProxyError" }
+
+  # ───────────────────────── Operational (public) ────────────────────────────
+  /api/health:
+    get:
+      tags: [Operational]
+      summary: Health check
+      description: >
+        Public, no auth, IP-rate-limited (60/min). Returns liveness + DB latency.
+        Internal detail fields (provider snapshot, 5-min traffic window, git SHA)
+        are only included when a valid `HEALTH_DETAILED_TOKEN` bearer is
+        presented.
+      operationId: health
+      responses:
+        "200":
+          description: Healthy / degraded.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [ok, degraded, down] }
+                  ts: { type: string, format: date-time }
+                  uptimeMs: { type: integer }
+                  db:
+                    type: object
+                    properties:
+                      ok: { type: boolean }
+                      latencyMs: { type: integer, nullable: true }
+                  proxy:
+                    type: object
+                    description: Only present with a detailed token.
+                  window5min:
+                    type: object
+                    description: Only present with a detailed token.
+                  version:
+                    type: string
+                    nullable: true
+                    description: Short git SHA; only present with a detailed token.
+        "429":
+          description: Rate limited.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, const: rate_limited }
+        "503":
+          description: DB unreachable (status `down`).
+
+  /api/demo/info:
+    get:
+      tags: [Operational]
+      summary: Public demo credentials
+      description: >
+        Public, no auth, IP-rate-limited (30/min), CDN-cached 60s. Returns the
+        demo workspace's published API key + proxy base for the landing snippet.
+        `demoKey` is null if not yet minted.
+      operationId: demoInfo
+      responses:
+        "200":
+          description: Demo info.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  proxyBase: { type: string }
+                  demoKey: { type: string, nullable: true }
+                  demoKeyRpm: { type: integer, nullable: true }
+                  mintedAt: { type: string, nullable: true }
+                  workspaceId: { type: string, format: uuid }
+                  workspaceUrl: { type: string }
+        "429":
+          description: Rate limited.
+
+  # ───────────────────────── Admin ops (token) ───────────────────────────────
+  /api/admin/diag:
+    get:
+      tags: [Admin ops]
+      summary: Env-presence diagnostic
+      description: >
+        Token-gated read-only diagnostic of which provider/auth/email env vars
+        are present (never leaks values). 503 if `ADMIN_DIAG_TOKEN` is unset.
+      operationId: adminDiag
+      security:
+        - adminToken: []
+      responses:
+        "200":
+          description: Env presence report.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "403":
+          description: Bad token.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NestedError" }
+        "503":
+          description: Admin endpoints disabled (`ADMIN_DISABLED`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NestedError" }
+
+  /api/admin/compute-hints:
+    post:
+      tags: [Admin ops]
+      summary: Synchronously compute trajectory hints
+      description: >
+        Token-gated. Runs the trajectory-hint reviewer inside the request
+        lifetime (vs the async after()-window path) for retry-by-curl / demo
+        pre-seeding. `GET` also works for browser pasting.
+      operationId: adminComputeHints
+      security:
+        - adminToken: []
+      parameters:
+        - name: trajectoryId
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Hint compute result (ok true/false).
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "400":
+          description: Missing `trajectoryId` (`MISSING_PARAM`).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NestedError" }
+        "403":
+          description: Bad token.
+        "500":
+          description: Compute failed (`INTERNAL`).
+        "503":
+          description: Admin endpoints disabled.
+    get:
+      tags: [Admin ops]
+      summary: Synchronously compute trajectory hints (GET alias)
+      operationId: adminComputeHintsGet
+      security:
+        - adminToken: []
+      parameters:
+        - name: trajectoryId
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Hint compute result.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+
+  /api/admin/backfill-summaries:
+    post:
+      tags: [Admin ops]
+      summary: Backfill trajectory summaries
+      description: >
+        Token-gated batch LLM summarizer. Summarizes up to `limit`
+        (default 5, max 20) trajectories lacking a cached summary; call
+        repeatedly until `remaining=0`.
+      operationId: adminBackfillSummaries
+      security:
+        - adminToken: []
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 5, minimum: 1, maximum: 20 }
+        - name: force
+          in: query
+          description: Re-summarize even rows that already have a summary.
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Batch result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  processed: { type: integer }
+                  pendingBefore: { type: integer }
+                  remaining: { type: integer }
+                  force: { type: boolean }
+                  results:
+                    type: array
+                    items: { type: object, additionalProperties: true }
+        "403":
+          description: Bad token.
+        "503":
+          description: Admin endpoints disabled.
+
+components:
+  securitySchemes:
+    workspaceApiKey:
+      type: http
+      scheme: bearer
+      description: >
+        Workspace API key (`lh_ws_*`, or rate-limited public `lh_demo_*`).
+        Accepted on `Authorization: Bearer <key>`, bare `Authorization: <key>`,
+        `x-api-key: <key>`, or `x-labelhub-api-key: <key>`. The workspace is
+        inferred from the key.
+    supabaseSession:
+      type: apiKey
+      in: cookie
+      name: sb-access-token
+      description: >
+        Supabase cookie session (`@supabase/ssr`). The route resolves the target
+        workspace, then enforces a workspace-scoped guard
+        (`requireWorkspaceAdmin` / `requireWorkspaceMember`). Cookie name varies
+        by Supabase project ref.
+    adminToken:
+      type: http
+      scheme: bearer
+      description: >
+        Out-of-band ops secret from the `ADMIN_DIAG_TOKEN` env. Send via
+        `Authorization: Bearer <token>` or `x-admin-token`; `?token=` query is a
+        soft-deprecated fallback.
+
+  schemas:
+    FlatError:
+      type: object
+      description: Error envelope used by ingest / export / eval-run routes.
+      properties:
+        error: { type: string }
+        code: { type: string }
+      required: [error, code]
+    NestedError:
+      type: object
+      description: Error envelope used by the API-key read + admin routes.
+      properties:
+        error:
+          type: object
+          properties:
+            message: { type: string }
+            code: { type: string }
+      required: [error]
+    ProxyError:
+      type: object
+      description: Error envelope used by the gateway proxy (adds a `type` tag).
+      properties:
+        error:
+          type: object
+          properties:
+            message: { type: string }
+            code: { type: string }
+            type: { type: string, const: labelhub_proxy }
+      required: [error]
+
+  responses:
+    FlatInternalError:
+      description: "Internal error (generic; no stack/DB text). `code: INTERNAL`."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/FlatError" }
+    NestedInternalError:
+      description: "Internal error (generic; no stack/DB text). `code: INTERNAL`."
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/NestedError" }
+    NestedUnauthorized:
+      description: Missing / invalid / expired API key (`NO_KEY` / `INVALID` / `EXPIRED`).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/NestedError" }

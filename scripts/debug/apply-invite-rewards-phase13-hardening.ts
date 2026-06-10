@@ -24,7 +24,7 @@ import postgres from 'postgres'
 
 const DATABASE_URL = process.env.DATABASE_URL
 if (!DATABASE_URL) {
-  // eslint-disable-next-line no-console
+   
   console.error('DATABASE_URL is not set.')
   process.exit(1)
 }
@@ -65,14 +65,14 @@ const STATEMENTS: Array<{ label: string; sql: string }> = [
 async function main() {
   const sql = postgres(DATABASE_URL!, { max: 1, prepare: false })
   try {
-    // eslint-disable-next-line no-console
+     
     console.log(`[apply] connected, running ${STATEMENTS.length} statements`)
     for (const stmt of STATEMENTS) {
       const t0 = Date.now()
-      // eslint-disable-next-line no-console
+       
       console.log(`[apply] ${stmt.label} …`)
       await sql.unsafe(stmt.sql)
-      // eslint-disable-next-line no-console
+       
       console.log(`[apply] ${stmt.label} ✓ (${Date.now() - t0}ms)`)
     }
     const [check] = await sql<
@@ -87,7 +87,7 @@ async function main() {
         EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'positive_invite_amount') AS positive_amt,
         EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'invite_reward_status_known') AS status_known
     `
-    // eslint-disable-next-line no-console
+     
     console.log('[verify]', check)
   } finally {
     await sql.end({ timeout: 5 })
@@ -95,7 +95,7 @@ async function main() {
 }
 
 main().catch((e) => {
-  // eslint-disable-next-line no-console
+   
   console.error('[apply] failed:', e)
   process.exit(1)
 })

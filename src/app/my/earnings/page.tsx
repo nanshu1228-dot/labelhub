@@ -1,7 +1,7 @@
 import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
 import { optionalUser } from '@/lib/auth/guards'
-import { getMyEarnings } from '@/lib/queries/billing'
+import { getMyEarnings, getMyWithdrawals } from '@/lib/queries/billing'
 import { getMyContribution } from '@/lib/queries/trust-consensus'
 import { listMyInviteRewards } from '@/lib/queries/invite-rewards'
 import { EarningsDashboard } from '@/components/billing/earnings-dashboard'
@@ -38,14 +38,16 @@ export default async function MyEarningsPage() {
   if (!me) {
     redirect('/signin?next=/my/earnings')
   }
-  const [data, contribution, inviteRewards] = await Promise.all([
+  const [data, withdrawals, contribution, inviteRewards] = await Promise.all([
     getMyEarnings(me.id),
+    getMyWithdrawals(me.id),
     getMyContribution({ userId: me.id }),
     listMyInviteRewards({ userId: me.id }).catch(() => []),
   ])
   return (
     <EarningsDashboard
       data={data}
+      withdrawals={withdrawals}
       userId={me.id}
       contribution={contribution}
       inviteRewardsSlot={<InviteRewardsSection rows={inviteRewards} />}

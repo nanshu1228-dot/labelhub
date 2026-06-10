@@ -41,7 +41,7 @@ const STOPS: Stop[] = [
     id: 'landing',
     matchPrefix: '/',
     hereLabel: '01 · Landing',
-    body: 'The gateway thesis lives here. Hit Next to enter the live demo workspace.',
+    body: 'Build annotation tasks with the drag-and-drop form designer, run AI pre-review, coordinate human QC, and export results. Hit Next to enter the live demo workspace.',
     nextHref: `/workspaces/${DEMO_WS}`,
     nextLabel: '→ Enter demo workspace',
   },
@@ -111,6 +111,10 @@ export function OnboardingTour() {
   const [hydrated, setHydrated] = useState(false)
 
   useEffect(() => {
+    // Mount-time hydration: localStorage is unreadable during SSR, so we
+    // flip hydrated + read the dismiss flag once after mount. Deliberate
+    // one-shot sync, not a cascading render.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setHydrated(true)
     try {
       const v = window.localStorage.getItem(STORAGE_KEY)
@@ -155,16 +159,16 @@ export function OnboardingTour() {
       <div
         className="rounded-lg shadow-2xl"
         style={{
-          background: 'oklch(0.13 0 0)',
+          background: 'oklch(0.99 0 0)',
           border: '1px solid oklch(0.3 0.08 280)',
           boxShadow:
-            '0 0 0 1px oklch(0.55 0.2 280 / 0.2), 0 20px 50px oklch(0 0 0 / 0.6)',
+            '0 0 0 1px oklch(0.55 0.2 280 / 0.2), 0 20px 50px oklch(0 0 0 / 0.08)',
         }}
       >
         <div
           className="px-4 py-2 flex items-center justify-between"
           style={{
-            borderBottom: '1px solid oklch(0.22 0 0)',
+            borderBottom: '1px solid oklch(0.92 0 0)',
           }}
         >
           <span
@@ -179,7 +183,7 @@ export function OnboardingTour() {
             className="lh-mono lh-caption"
             style={{
               background: 'transparent',
-              color: 'oklch(0.5 0 0)',
+              color: 'oklch(0.50 0 0)',
               border: 'none',
               cursor: 'pointer',
             }}
@@ -191,7 +195,7 @@ export function OnboardingTour() {
         <div className="px-4 py-3">
           <p
             className="lh-body-sm"
-            style={{ color: 'oklch(0.86 0 0)' }}
+            style={{ color: 'oklch(0.30 0 0)' }}
           >
             {stop.body}
           </p>
@@ -209,7 +213,7 @@ export function OnboardingTour() {
                     background:
                       i <= stopIndex
                         ? 'oklch(0.6 0.18 280)'
-                        : 'oklch(0.28 0 0)',
+                        : 'oklch(0.92 0 0)',
                   }}
                 />
               ))}
@@ -234,9 +238,9 @@ export function OnboardingTour() {
                 onClick={dismiss}
                 className="lh-mono lh-caption px-3 py-1 rounded"
                 style={{
-                  background: 'oklch(0.22 0 0)',
-                  color: 'oklch(0.86 0 0)',
-                  border: '1px solid oklch(0.3 0 0)',
+                  background: 'oklch(0.985 0 0)',
+                  color: 'oklch(0.20 0 0)',
+                  border: '1px solid oklch(0.92 0 0)',
                   cursor: 'pointer',
                 }}
               >

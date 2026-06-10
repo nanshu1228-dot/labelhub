@@ -7,6 +7,7 @@ import {
   unmarkGold,
 } from '@/lib/actions/gold-standards'
 import { GoldBadge } from './gold-badge'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 
 /**
  * Admin-side promote / unmark control for a trajectory's gold standard.
@@ -57,7 +58,6 @@ export function GoldPromoteClient({
       {gold ? (
         <GoldDisplay
           workspaceId={workspaceId}
-          trajectoryId={trajectoryId}
           gold={gold}
           isAdmin={isAdmin}
         />
@@ -73,12 +73,10 @@ export function GoldPromoteClient({
 
 function GoldDisplay({
   workspaceId,
-  trajectoryId: _trajectoryId,
   gold,
   isAdmin,
 }: {
   workspaceId: string
-  trajectoryId: string
   gold: NonNullable<
     Parameters<typeof GoldPromoteClient>[0]['gold']
   >
@@ -87,22 +85,22 @@ function GoldDisplay({
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
+  const [confirmingUnmark, setConfirmingUnmark] = useState(false)
 
   function unmark() {
-    if (
-      !confirm(
-        'Remove this trajectory\'s gold standard? Calibration scores against it will reset.',
-      )
-    ) {
-      return
-    }
+    setError(null)
+    setConfirmingUnmark(true)
+  }
+
+  function confirmUnmark() {
     setError(null)
     startTransition(async () => {
       try {
         await unmarkGold({ workspaceId, goldId: gold.id })
+        setConfirmingUnmark(false)
         router.refresh()
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Unmark failed.')
+        setError(getErrorMessage(e, 'Unmark failed.'))
       }
     })
   }
@@ -154,6 +152,63 @@ function GoldDisplay({
           {gold.explanation}
         </p>
       )}
+      {confirmingUnmark && (
+        <div
+          className="mt-3 rounded-md p-3"
+          style={{
+            background: 'var(--danger-soft)',
+            border: '1px solid oklch(0.55 0.2 25 / 0.35)',
+          }}
+        >
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="lbl" style={{ color: 'var(--danger)' }}>
+                REMOVE GOLD STANDARD
+              </div>
+              <p
+                className="ts-12 mt-1"
+                style={{ color: 'var(--text)', lineHeight: 1.5 }}
+              >
+                Remove this trajectory&apos;s gold standard? Calibration
+                scores against it will reset until another reference answer is
+                promoted.
+              </p>
+            </div>
+            <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setConfirmingUnmark(false)}
+                disabled={isPending}
+                className="ts-11 mono rounded px-2"
+                style={{
+                  minHeight: 30,
+                  color: 'var(--mute)',
+                  background: 'var(--panel)',
+                  border: '1px solid var(--line)',
+                  cursor: isPending ? 'not-allowed' : 'pointer',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmUnmark}
+                disabled={isPending}
+                className="ts-11 mono rounded px-2"
+                style={{
+                  minHeight: 30,
+                  color: 'white',
+                  background: 'var(--danger)',
+                  border: '1px solid var(--danger)',
+                  cursor: isPending ? 'not-allowed' : 'pointer',
+                }}
+              >
+                Remove gold
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {error && (
         <div
           className="ts-11 mono mt-2 rounded-md p-2"
@@ -196,7 +251,7 @@ function PromoteForm({
         setExplanation('')
         router.refresh()
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Promote failed.')
+        setError(getErrorMessage(e, 'Promote failed.'))
       }
     })
   }

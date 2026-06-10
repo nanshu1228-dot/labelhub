@@ -11,6 +11,8 @@ import {
 } from '@/lib/auth/guards'
 import { ConnectionFormClient } from '@/components/connections/connection-form-client'
 import { ConnectionRowClient } from '@/components/connections/connection-row-client'
+import { DbError } from '@/components/ui/db-error'
+import { SectionHeader } from '@/components/ui/section-header'
 
 export const metadata: Metadata = {
   title: 'Provider Connections — LabelHub',
@@ -57,7 +59,6 @@ export default async function ConnectionsPage(
     dbError = e instanceof Error ? e.message : String(e)
   }
 
-  const demoMode = process.env.LABELHUB_DEMO_MODE === 'true'
   const providers = listProviders()
 
   return (
@@ -114,7 +115,7 @@ export default async function ConnectionsPage(
               )}
             </section>
 
-            {demoMode && vaultOk && (
+            {vaultOk && (
               <section>
                 <SectionHeader title="ADD A CONNECTION" />
                 <ConnectionFormClient
@@ -126,18 +127,6 @@ export default async function ConnectionsPage(
                   }))}
                 />
               </section>
-            )}
-
-            {!demoMode && (
-              <p
-                className="ts-13"
-                style={{ color: 'var(--mute)' }}
-              >
-                Connection management is disabled because{' '}
-                <span className="mono">LABELHUB_DEMO_MODE</span> is not{' '}
-                <span className="mono">true</span>. Production deployments
-                should run this surface behind workspace-admin authentication.
-              </p>
             )}
 
             <section>
@@ -211,19 +200,6 @@ function Header({
   )
 }
 
-function SectionHeader({ title, hint }: { title: string; hint?: string }) {
-  return (
-    <div className="flex items-baseline justify-between gap-3 mb-3">
-      <div className="lbl">§ {title}</div>
-      {hint && (
-        <span className="ts-12 mono" style={{ color: 'var(--mute2)' }}>
-          {hint}
-        </span>
-      )}
-    </div>
-  )
-}
-
 function VaultBanner() {
   return (
     <div
@@ -267,33 +243,6 @@ function EmptyConnections() {
         The proxy is using env-var fallbacks. Add a connection below to
         manage keys per-workspace + apply rate limits.
       </p>
-    </div>
-  )
-}
-
-function DbError({ message }: { message: string }) {
-  return (
-    <div
-      className="p-6 rounded-xl"
-      style={{ border: '1px solid var(--line)', background: 'var(--panel)' }}
-    >
-      <div
-        className="ts-13 mono mb-2"
-        style={{ color: 'var(--danger)', letterSpacing: '0.05em' }}
-      >
-        § DATABASE NOT REACHABLE
-      </div>
-      <pre
-        className="mt-2 ts-12 mono p-3 overflow-auto whitespace-pre-wrap"
-        style={{
-          background: 'var(--code-bg)',
-          border: '1px solid var(--code-line)',
-          color: 'var(--code-text)',
-          borderRadius: 8,
-        }}
-      >
-        {message}
-      </pre>
     </div>
   )
 }

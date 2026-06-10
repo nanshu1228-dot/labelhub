@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { closePayoutPeriod } from '@/lib/actions/billing/close-period'
 import { markPayoutPaid } from '@/lib/actions/billing/mark-paid'
 import { formatMoneyMinor } from '@/lib/billing/calculate-payout'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 
 /**
  * Publisher billing dashboard.
@@ -89,7 +90,7 @@ function OpenPeriodSection({
         )
         router.refresh()
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Close failed.')
+        setError(getErrorMessage(e, 'Close failed.'))
       }
     })
   }
@@ -404,7 +405,7 @@ export function MarkPaidButton({
         await markPayoutPaid({ payoutId })
         router.refresh()
       } catch (e) {
-        setErr(e instanceof Error ? e.message : 'Mark paid failed.')
+        setErr(getErrorMessage(e, 'Mark paid failed.'))
       }
     })
   }

@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react'
 import { requestCoachFeedback } from '@/lib/actions/trust-coach'
 import type { CoachFeedback } from '@/lib/ai/trust-coach'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 
 /**
  * AI Coach trigger on /my/quality. The big innovation here:
@@ -31,7 +32,7 @@ export function CoachButton({ workspaceId }: { workspaceId: string }) {
         const r = await requestCoachFeedback({ workspaceId })
         setFeedback(r.feedback)
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Coach failed.')
+        setError(getErrorMessage(e, 'Coach failed.'))
       }
     })
   }

@@ -1,5 +1,5 @@
 import 'server-only'
-import { and, count, eq, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import {
   events,

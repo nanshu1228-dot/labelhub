@@ -27,7 +27,7 @@ const DEMO_WORKSPACE_ID = '00000000-0000-0000-0000-000000000010'
 
 const DATABASE_URL = process.env.DATABASE_URL
 if (!DATABASE_URL) {
-  // eslint-disable-next-line no-console
+   
   console.error('DATABASE_URL not set')
   process.exit(1)
 }
@@ -113,7 +113,7 @@ async function main() {
         AND a.submitted_at IS NOT NULL
         AND a.claude_proposal IS NULL
     `
-    // eslint-disable-next-line no-console
+     
     console.log(
       `[seed-teaching] found ${rows.length} annotations without claude_proposal`,
     )
@@ -192,7 +192,7 @@ async function main() {
       updated++
     }
 
-    // eslint-disable-next-line no-console
+     
     console.log(`[seed-teaching] ✓ updated ${updated} annotations`)
   } finally {
     await sql.end({ timeout: 5 })
@@ -200,7 +200,7 @@ async function main() {
 }
 
 main().catch((e) => {
-  // eslint-disable-next-line no-console
+   
   console.error('[seed-teaching] failed:', e)
   process.exit(1)
 })

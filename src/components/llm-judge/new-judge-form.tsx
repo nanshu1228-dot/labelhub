@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createJudge } from '@/lib/actions/llm-judges'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 
 /**
  * Admin form for configuring a new LLM judge.
@@ -49,7 +50,7 @@ export function NewJudgeForm({ workspaceId }: { workspaceId: string }) {
         })
         router.push(`/workspaces/${workspaceId}/judges/${r.judgeId}`)
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Create judge failed.')
+        setError(getErrorMessage(e, 'Create judge failed.'))
       }
     })
   }

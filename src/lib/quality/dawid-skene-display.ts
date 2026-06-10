@@ -13,14 +13,14 @@ export interface DsRunSummary {
   templateMode: string
   numClasses: number
   cellCount: number
-  raterCount: number
+  annotatorCount: number
   iterations: number
   converged: boolean
   logLikelihood: number
   createdAt: Date
 }
 
-export interface DsRaterRow {
+export interface DsAnnotatorRow {
   userId: string
   displayName: string | null
   confusion: number[][]
@@ -47,7 +47,7 @@ export interface DsTopicSummary {
 
 export interface DsRunReport {
   run: DsRunSummary
-  raters: DsRaterRow[]
+  annotators: DsAnnotatorRow[]
   topics: DsTopicSummary[]
 }
 

@@ -69,7 +69,7 @@ export async function getActiveLearningScores(opts: {
   //    drizzle's count() helper doesn't accept distinct directly;
   //    pull rows and dedupe in JS (workspace scale is fine — hundreds
   //    of topics, low single-digit raters each).
-  const raterRows = await db
+  const annotatorRows = await db
     .select({
       topicId: annotations.topicId,
       userId: annotations.userId,
@@ -81,11 +81,11 @@ export async function getActiveLearningScores(opts: {
         isNotNull(annotations.submittedAt),
       ),
     )
-  const ratersByTopic = new Map<string, Set<string>>()
-  for (const r of raterRows) {
-    const set = ratersByTopic.get(r.topicId) ?? new Set<string>()
+  const annotatorsByTopic = new Map<string, Set<string>>()
+  for (const r of annotatorRows) {
+    const set = annotatorsByTopic.get(r.topicId) ?? new Set<string>()
     set.add(r.userId)
-    ratersByTopic.set(r.topicId, set)
+    annotatorsByTopic.set(r.topicId, set)
   }
 
   // 4. DS-cell posteriors per topic (if a run exists).
@@ -125,7 +125,7 @@ export async function getActiveLearningScores(opts: {
   const out = new Map<string, number>()
   for (const id of topicIds) {
     const posteriors = cellsByTopic.get(id) ?? []
-    const raters = ratersByTopic.get(id)?.size ?? 0
+    const raters = annotatorsByTopic.get(id)?.size ?? 0
     out.set(
       id,
       scoreTopicIG({

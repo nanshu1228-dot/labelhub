@@ -1,21 +1,35 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import type { ReactNode } from 'react'
+import { useEffect, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
+import {
+  CheckCircle2,
+  ClipboardCheck,
+  Loader2,
+  RotateCcw,
+  ShieldAlert,
+  XCircle,
+} from 'lucide-react'
 import { qcReviewAnnotation } from '@/lib/actions/qc-review'
 import { reviewAnnotation } from '@/lib/actions/annotations'
+import { getErrorMessage } from '@/lib/errors/client-utils'
+import { isBlockedByPolicy } from '@/lib/quality/state-machine'
 
 /**
  * Role/status-aware verdict controls. Drops onto the trajectory detail
  * page when the URL has `?annotationId=...` so QC + admin can render
  * a decision without leaving the trajectory view.
  *
- * Permission matrix:
+ * Permission matrix (with twoStage ON — the default — admin's `accept`
+ * in the first row is hidden; QC 初审 must move the topic to
+ * awaiting_acceptance first):
  *
  *                          | annotator | qc        | admin
  *   ─────────────────────────────────────────────────────────
- *   submitted / reviewing  | (await)   | pass ·    | pass · accept ·
+ *   submitted / reviewing  | (await)   | pass ·    | pass · accept* ·
  *                          |           | 打回      | reject · 打回
+ *                          |           |           | (*single-stage only)
  *   awaiting_acceptance    | (await)   | (read)    | accept · reject · 打回
  *   revising               | (resubmit | (read)    | (read)
  *                          | flow elsewhere)
@@ -47,10 +61,18 @@ export interface ReviewVerdictControlsProps {
   /** True when the viewer IS the original submitter — they don't review themselves. */
   viewerIsSubmitter: boolean
   submitterDisplayName: string | null
+  /**
+   * Task-level two-stage review policy (spec §9.3). When true, admin
+   * accept is hidden until QC 初审 moved the topic to awaiting_acceptance
+   * — mirrors the server's `isBlockedByPolicy` gate so the UI never
+   * offers a button the action would reject. Defaults to true to match
+   * the server-side default (`DEFAULT_TASK_SETTINGS.twoStageReview`).
+   */
+  twoStage?: boolean
 }
 
 export function ReviewVerdictControls(props: ReviewVerdictControlsProps) {
-  const { topicStatus, viewerRole, viewerIsSubmitter } = props
+  const { topicStatus, viewerRole, viewerIsSubmitter, twoStage = true } = props
 
   // Terminal states — nothing to do, just render a status note.
   if (topicStatus === 'approved' || topicStatus === 'rejected') {
@@ -58,9 +80,13 @@ export function ReviewVerdictControls(props: ReviewVerdictControlsProps) {
   }
 
   // Submitter looking at their own work in flight — show a status note
-  // instead of buttons. (They CAN'T review themselves; the server
-  // action rejects with ConflictError anyway.)
-  if (viewerIsSubmitter) {
+  // instead of buttons. Exception: an ADMIN viewing their own work keeps
+  // the terminal accept/reject actions — `reviewAnnotation` explicitly
+  // allows admin self-review (annotations.ts "admin reviewing their own
+  // annotation — unusual but possible"; the solo-owner workspace would
+  // otherwise dead-end). Self-QC stays hidden for everyone: qc-review.ts
+  // rejects it server-side.
+  if (viewerIsSubmitter && viewerRole !== 'admin') {
     return <SubmitterStatusNote status={topicStatus} />
   }
 
@@ -69,16 +95,25 @@ export function ReviewVerdictControls(props: ReviewVerdictControlsProps) {
     return null
   }
 
-  // Build the button set per status × role.
+  // Build the button set per status × role. Self-QC is server-rejected
+  // (qc-review.ts), so the QC-pass button never renders on own work.
   const canQCPass =
     (topicStatus === 'submitted' || topicStatus === 'reviewing') &&
-    (viewerRole === 'qc' || viewerRole === 'admin')
+    (viewerRole === 'qc' || viewerRole === 'admin') &&
+    !viewerIsSubmitter
   const canAccept =
     viewerRole === 'admin' &&
     (topicStatus === 'submitted' ||
       topicStatus === 'reviewing' ||
+      topicStatus === 'awaiting_acceptance') &&
+    !isBlockedByPolicy(topicStatus, 'admin_accept', { twoStage })
+  // Terminal reject stays legal pre-初审 even under two-stage — the
+  // policy only forces the accept path through QC.
+  const canReject =
+    viewerRole === 'admin' &&
+    (topicStatus === 'submitted' ||
+      topicStatus === 'reviewing' ||
       topicStatus === 'awaiting_acceptance')
-  const canReject = canAccept
   const canRequestRevision =
     (topicStatus === 'submitted' ||
       topicStatus === 'reviewing' ||
@@ -118,6 +153,7 @@ function VerdictForm({
   const [pending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
   const [info, setInfo] = useState<string | null>(null)
+  const [confirmingReject, setConfirmingReject] = useState(false)
 
   function doQCPass() {
     fire(async () => {
@@ -127,6 +163,7 @@ function VerdictForm({
         feedback: feedback.trim() || undefined,
       })
       setInfo('Marked QC-passed. Forwarded to admin for acceptance.')
+      setConfirmingReject(false)
       setFeedback('')
       router.refresh()
     })
@@ -140,19 +177,19 @@ function VerdictForm({
         feedback: feedback.trim() || undefined,
       })
       setInfo('Annotation accepted. Locked for payout + IAA.')
+      setConfirmingReject(false)
       setFeedback('')
       router.refresh()
     })
   }
 
   function doReject() {
-    if (
-      !confirm(
-        'Terminally reject this annotation? The submitter cannot revise; the work is killed for billing.',
-      )
-    ) {
-      return
-    }
+    setError(null)
+    setInfo(null)
+    setConfirmingReject(true)
+  }
+
+  function confirmReject() {
     fire(async () => {
       await reviewAnnotation({
         annotationId,
@@ -160,6 +197,7 @@ function VerdictForm({
         feedback: feedback.trim() || undefined,
       })
       setInfo('Annotation rejected.')
+      setConfirmingReject(false)
       setFeedback('')
       router.refresh()
     })
@@ -188,6 +226,7 @@ function VerdictForm({
         })
       }
       setInfo('Sent back to submitter for revision.')
+      setConfirmingReject(false)
       setFeedback('')
       router.refresh()
     })
@@ -200,10 +239,45 @@ function VerdictForm({
       try {
         await fn()
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Verdict failed.')
+        setError(getErrorMessage(e, 'Verdict failed.'))
       }
     })
   }
+
+  // Keyboard shortcuts for fast review — ignored while typing in the
+  // feedback box or mid-action. A accept · Q QC pass · S 打回 · R reject.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      const el = document.activeElement as HTMLElement | null
+      if (
+        el &&
+        (el.tagName === 'TEXTAREA' ||
+          el.tagName === 'INPUT' ||
+          el.isContentEditable)
+      )
+        return
+      if (pending) return
+      const k = e.key.toLowerCase()
+      if (k === 'a' && canAccept) {
+        e.preventDefault()
+        doAccept()
+      } else if (k === 'q' && canQCPass) {
+        e.preventDefault()
+        doQCPass()
+      } else if (k === 's' && canRequestRevision) {
+        e.preventDefault()
+        doRequestRevision()
+      } else if (k === 'r' && canReject) {
+        e.preventDefault()
+        doReject()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // doX are stable function declarations; feedback feeds doRequestRevision.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pending, canAccept, canQCPass, canRequestRevision, canReject, feedback])
 
   // If no buttons render (shouldn't happen with the gate above), bail
   // out so we don't show an empty card.
@@ -222,7 +296,7 @@ function VerdictForm({
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <div>
           <div className="lbl" style={{ color: 'var(--accent)' }}>
-            § REVIEW
+            REVIEW
           </div>
           <p
             className="ts-13 mt-0.5"
@@ -289,12 +363,89 @@ function VerdictForm({
         </div>
       )}
 
+      {confirmingReject && (
+        <div
+          className="rounded-md p-3"
+          style={{
+            background: 'var(--danger-soft)',
+            border: '1px solid oklch(0.55 0.2 25 / 0.35)',
+          }}
+        >
+          <div className="flex items-start gap-3">
+            <span
+              className="mt-0.5 inline-flex shrink-0 items-center justify-center rounded"
+              style={{
+                width: 30,
+                height: 30,
+                color: 'var(--danger)',
+                background: 'var(--bg)',
+                border: '1px solid oklch(0.55 0.2 25 / 0.3)',
+              }}
+            >
+              <ShieldAlert size={16} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="lbl" style={{ color: 'var(--danger)' }}>
+                TERMINAL REJECT
+              </div>
+              <p
+                className="ts-12 mt-1"
+                style={{ color: 'var(--text)', lineHeight: 1.5 }}
+              >
+                This closes the annotation instead of sending it back for
+                revision. Add a feedback note if the submitter should see why.
+              </p>
+              <div className="mt-3 flex flex-wrap justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmingReject(false)}
+                  disabled={pending}
+                  className="ts-12 mono inline-flex items-center justify-center rounded-md px-3"
+                  style={{
+                    minHeight: 34,
+                    color: 'var(--text)',
+                    background: 'var(--panel)',
+                    border: '1px solid var(--line)',
+                    cursor: pending ? 'not-allowed' : 'pointer',
+                    opacity: pending ? 0.55 : 1,
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmReject}
+                  disabled={pending}
+                  className="ts-12 mono inline-flex items-center justify-center gap-1.5 rounded-md px-3"
+                  style={{
+                    minHeight: 34,
+                    color: 'white',
+                    background: 'var(--danger)',
+                    border: '1px solid var(--danger)',
+                    cursor: pending ? 'not-allowed' : 'pointer',
+                    opacity: pending ? 0.55 : 1,
+                  }}
+                >
+                  {pending ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <XCircle size={14} />
+                  )}
+                  Reject annotation
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center gap-2 flex-wrap justify-end">
         {canRequestRevision && (
           <Btn
             onClick={doRequestRevision}
             disabled={pending}
-            label="↻ 打回 revision"
+            icon={<RotateCcw size={14} />}
+            label="打回修订"
             tone="warn"
           />
         )}
@@ -302,7 +453,8 @@ function VerdictForm({
           <Btn
             onClick={doQCPass}
             disabled={pending}
-            label="✓ QC pass"
+            icon={<ClipboardCheck size={14} />}
+            label="初审通过"
             tone="qc"
           />
         )}
@@ -310,7 +462,8 @@ function VerdictForm({
           <Btn
             onClick={doReject}
             disabled={pending}
-            label="✗ reject (terminal)"
+            icon={<XCircle size={14} />}
+            label="终拒"
             tone="danger"
           />
         )}
@@ -318,10 +471,26 @@ function VerdictForm({
           <Btn
             onClick={doAccept}
             disabled={pending}
-            label="✓ accept"
+            icon={<CheckCircle2 size={14} />}
+            label="终审通过 · 入库"
             tone="success"
           />
         )}
+      </div>
+
+      <div
+        className="ts-11 mono"
+        style={{ color: 'var(--mute2)', textAlign: 'right' }}
+      >
+        快捷键:
+        {[
+          canAccept && 'A 终审通过',
+          canQCPass && 'Q 初审通过',
+          canRequestRevision && 'S 打回',
+          canReject && 'R 终拒',
+        ]
+          .filter(Boolean)
+          .join(' · ')}
       </div>
     </section>
   )
@@ -378,11 +547,13 @@ function RoleBadge({ role }: { role: ViewerRole }) {
 function Btn({
   onClick,
   disabled,
+  icon,
   label,
   tone,
 }: {
   onClick: () => void
   disabled: boolean
+  icon: ReactNode
   label: string
   tone: 'qc' | 'warn' | 'success' | 'danger'
 }) {
@@ -411,9 +582,10 @@ function Btn({
   const p = palette[tone]
   return (
     <button
+      type="button"
       onClick={onClick}
       disabled={disabled}
-      className="ts-12 mono"
+      className="ts-12 mono inline-flex items-center justify-center gap-1.5"
       style={{
         background: p.bg,
         color: p.fg,
@@ -425,6 +597,7 @@ function Btn({
         opacity: disabled ? 0.5 : 1,
       }}
     >
+      {icon}
       {label}
     </button>
   )
@@ -450,7 +623,7 @@ function TerminalNote({ status }: { status: 'approved' | 'rejected' }) {
           color: status === 'approved' ? 'var(--success)' : 'var(--danger)',
         }}
       >
-        § {status === 'approved' ? 'ACCEPTED' : 'REJECTED'}
+        {status === 'approved' ? 'ACCEPTED' : 'REJECTED'}
       </div>
       <p className="ts-13 mt-1" style={{ color: 'var(--text)' }}>
         This annotation has reached a terminal state. No further verdicts
@@ -478,7 +651,7 @@ function SubmitterStatusNote({ status }: { status: TopicStatus }) {
       }}
     >
       <div className="lbl" style={{ color: 'var(--mute2)' }}>
-        § YOUR ANNOTATION
+        YOUR ANNOTATION
       </div>
       <p className="ts-13 mt-1" style={{ color: 'var(--mute)' }}>
         {msg}

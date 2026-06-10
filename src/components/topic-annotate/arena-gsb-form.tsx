@@ -1,17 +1,19 @@
-'use client'
+"use client";
 
-import { useEffect, useState, useTransition } from 'react'
-import { useRouter } from 'next/navigation'
-import { submitAnnotation } from '@/lib/actions/annotations'
-import type { PairChecklistItem } from '@/lib/templates/types'
-import { dimensionGsb } from '@/lib/templates/modes/arena-gsb'
-import { TopicHeader } from './topic-header'
-import { AIPrecheckButton } from './ai-precheck'
+import { useEffect, useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { submitAnnotation } from "@/lib/actions/annotations";
+import type { PairChecklistItem } from "@/lib/templates/types";
+import { dimensionGsb } from "@/lib/templates/modes/arena-gsb";
+import { TopicHeader } from "./topic-header";
+import { AIPrecheckButton } from "./ai-precheck";
+import { navigateAfterSubmit } from "./after-submit-nav";
 import {
   autosaveStatusLabel,
   useAutosaveDraft,
   type AutosaveStatus,
-} from './use-autosave-draft'
+} from "./use-autosave-draft";
+import { getErrorMessage } from "@/lib/errors/client-utils";
 
 /**
  * Arena-GSB annotator.
@@ -29,11 +31,11 @@ import {
  *   reasoning: string
  */
 
-type DimScore = number | null
-type DimensionsState = Record<string, { a: DimScore; b: DimScore }>
-type Verdict = 'a_better' | 'tie' | 'b_better' | null
+type DimScore = number | null;
+type DimensionsState = Record<string, { a: DimScore; b: DimScore }>;
+type Verdict = "a_better" | "tie" | "b_better" | null;
 
-const SCORE_VALUES = [1, 2, 3, 4, 5] as const
+const SCORE_VALUES = [1, 2, 3, 4, 5] as const;
 
 /**
  * Arena-GSB uses ONLY the dimensions admins define for the task (preset
@@ -48,32 +50,32 @@ function initialDimensions(
   const stored = (payload.dimensions ?? {}) as Record<
     string,
     { a?: number; b?: number }
-  >
-  const out: DimensionsState = {}
+  >;
+  const out: DimensionsState = {};
   for (const dim of spec) {
-    const prior = stored[dim.id] ?? {}
+    const prior = stored[dim.id] ?? {};
     out[dim.id] = {
       a:
-        typeof prior.a === 'number' && prior.a >= 1 && prior.a <= 5
+        typeof prior.a === "number" && prior.a >= 1 && prior.a <= 5
           ? prior.a
           : null,
       b:
-        typeof prior.b === 'number' && prior.b >= 1 && prior.b <= 5
+        typeof prior.b === "number" && prior.b >= 1 && prior.b <= 5
           ? prior.b
           : null,
-    }
+    };
   }
-  return out
+  return out;
 }
 
 function dimensionsToPayload(state: DimensionsState) {
-  const out: Record<string, { a: number; b: number }> = {}
+  const out: Record<string, { a: number; b: number }> = {};
   for (const [id, val] of Object.entries(state)) {
-    if (typeof val.a === 'number' && typeof val.b === 'number') {
-      out[id] = { a: val.a, b: val.b }
+    if (typeof val.a === "number" && typeof val.b === "number") {
+      out[id] = { a: val.a, b: val.b };
     }
   }
-  return out
+  return out;
 }
 
 /**
@@ -89,15 +91,15 @@ function isDimensionVisible(
   dim: PairChecklistItem,
   state: DimensionsState,
 ): boolean {
-  if (!dim.showWhen) return true
-  if (typeof dim.showWhen.when !== 'number') return false
-  const parent = state[dim.showWhen.parentId]
-  if (!parent) return false
-  const min = dim.showWhen.when
+  if (!dim.showWhen) return true;
+  if (typeof dim.showWhen.when !== "number") return false;
+  const parent = state[dim.showWhen.parentId];
+  if (!parent) return false;
+  const min = dim.showWhen.when;
   return (
-    (typeof parent.a === 'number' && parent.a >= min) ||
-    (typeof parent.b === 'number' && parent.b >= min)
-  )
+    (typeof parent.a === "number" && parent.a >= min) ||
+    (typeof parent.b === "number" && parent.b >= min)
+  );
 }
 
 function isComplete(
@@ -109,25 +111,25 @@ function isComplete(
   // Check only currently-visible dimensions — hidden follow-ups behind
   // an unmet threshold are NOT required.
   for (const dim of spec) {
-    if (!isDimensionVisible(dim, state)) continue
-    const v = state[dim.id]
-    if (typeof v?.a !== 'number' || typeof v?.b !== 'number') {
-      return { ok: false, reason: 'Score every dimension for both models.' }
+    if (!isDimensionVisible(dim, state)) continue;
+    const v = state[dim.id];
+    if (typeof v?.a !== "number" || typeof v?.b !== "number") {
+      return { ok: false, reason: "Score every dimension for both models." };
     }
   }
   if (!verdict) {
-    return { ok: false, reason: 'Pick an overall verdict.' }
+    return { ok: false, reason: "Pick an overall verdict." };
   }
   if (!reasoning.trim()) {
-    return { ok: false, reason: 'Reasoning is required.' }
+    return { ok: false, reason: "Reasoning is required." };
   }
-  return { ok: true }
+  return { ok: true };
 }
 
 export interface ArenaPeerCellLite {
-  median: number | null
-  spread: number
-  raters: number
+  median: number | null;
+  spread: number;
+  raters: number;
 }
 
 export function ArenaGsbForm({
@@ -142,110 +144,112 @@ export function ArenaGsbForm({
   workspaceName,
   peerConsensus,
 }: {
-  workspaceId: string
-  topicId: string
-  taskId: string
-  topicStatus: string
-  itemData: Record<string, unknown>
-  dimensions: readonly PairChecklistItem[]
-  initialPayload: Record<string, unknown>
-  taskName: string
-  workspaceName: string
+  workspaceId: string;
+  topicId: string;
+  taskId: string;
+  topicStatus: string;
+  itemData: Record<string, unknown>;
+  dimensions: readonly PairChecklistItem[];
+  initialPayload: Record<string, unknown>;
+  taskName: string;
+  workspaceName: string;
   peerConsensus?: {
-    arena: Record<string, ArenaPeerCellLite>
-    peerCount: number
-  } | null
+    arena: Record<string, ArenaPeerCellLite>;
+    peerCount: number;
+  } | null;
 }) {
-  const router = useRouter()
+  const router = useRouter();
   const [dimensions, setDimensions] = useState<DimensionsState>(() =>
     initialDimensions(spec, initialPayload),
-  )
+  );
   const [verdict, setVerdict] = useState<Verdict>(() => {
-    const v = initialPayload.overallVerdict
-    return v === 'a_better' || v === 'tie' || v === 'b_better' ? v : null
-  })
+    const v = initialPayload.overallVerdict;
+    return v === "a_better" || v === "tie" || v === "b_better" ? v : null;
+  });
   const [reasoning, setReasoning] = useState<string>(() =>
-    typeof initialPayload.reasoning === 'string'
+    typeof initialPayload.reasoning === "string"
       ? initialPayload.reasoning
-      : '',
-  )
-  const [isSubmitting, startSubmit] = useTransition()
-  const [error, setError] = useState<string | null>(null)
-  const isReadOnly =
-    topicStatus !== 'drafting' && topicStatus !== 'revising'
+      : "",
+  );
+  const [isSubmitting, startSubmit] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  // Keyboard scoring: active dimension row + model side (A/B).
+  const [activeIdx, setActiveIdx] = useState(0);
+  const [activeSide, setActiveSide] = useState<"a" | "b">("a");
+  const isReadOnly = topicStatus !== "drafting" && topicStatus !== "revising";
 
   const autosave = useAutosaveDraft({
     topicId,
     taskId,
     readOnly: isReadOnly,
-  })
+  });
 
   // Mount-time restore: if IndexedDB has a fresher draft than the
   // server-loaded one (e.g. last session crashed pre-sync), merge it
   // over current state.
   useEffect(() => {
-    if (isReadOnly) return
-    let cancelled = false
+    if (isReadOnly) return;
+    let cancelled = false;
     void (async () => {
-      const local = await autosave.restoreLocal()
-      if (cancelled || !local) return
+      const local = await autosave.restoreLocal();
+      if (cancelled || !local) return;
       const localDims = local.dimensions as
         | Record<string, { a?: number; b?: number }>
-        | undefined
+        | undefined;
       if (localDims) {
         setDimensions((prev) => {
-          const next = { ...prev }
+          const next = { ...prev };
           for (const [id, v] of Object.entries(localDims)) {
             next[id] = {
               a:
-                typeof v.a === 'number' && v.a >= 1 && v.a <= 5
+                typeof v.a === "number" && v.a >= 1 && v.a <= 5
                   ? v.a
-                  : prev[id]?.a ?? null,
+                  : (prev[id]?.a ?? null),
               b:
-                typeof v.b === 'number' && v.b >= 1 && v.b <= 5
+                typeof v.b === "number" && v.b >= 1 && v.b <= 5
                   ? v.b
-                  : prev[id]?.b ?? null,
-            }
+                  : (prev[id]?.b ?? null),
+            };
           }
-          return next
-        })
+          return next;
+        });
       }
-      const lv = local.overallVerdict
-      if (lv === 'a_better' || lv === 'tie' || lv === 'b_better') {
-        setVerdict(lv)
+      const lv = local.overallVerdict;
+      if (lv === "a_better" || lv === "tie" || lv === "b_better") {
+        setVerdict(lv);
       }
-      if (typeof local.reasoning === 'string') {
-        setReasoning(local.reasoning)
+      if (typeof local.reasoning === "string") {
+        setReasoning(local.reasoning);
       }
-    })()
+    })();
     return () => {
-      cancelled = true
-    }
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topicId, isReadOnly])
+  }, [topicId, isReadOnly]);
 
-  function setScore(dimId: string, side: 'a' | 'b', value: number) {
+  function setScore(dimId: string, side: "a" | "b", value: number) {
     setDimensions((prev) => {
       const next = {
         ...prev,
         [dimId]: { ...prev[dimId], [side]: value },
-      }
+      };
       autosave.markDirty({
         dimensions: dimensionsToPayload(next),
         overallVerdict: verdict ?? undefined,
         reasoning: reasoning.trim() || undefined,
-      })
-      return next
-    })
+      });
+      return next;
+    });
   }
 
   function setOverallVerdict(v: Verdict) {
-    setVerdict(v)
+    setVerdict(v);
     autosave.markDirty({
       dimensions: dimensionsToPayload(dimensions),
       overallVerdict: v ?? undefined,
       reasoning: reasoning.trim() || undefined,
-    })
+    });
   }
 
   function payload() {
@@ -253,23 +257,23 @@ export function ArenaGsbForm({
       dimensions: dimensionsToPayload(dimensions),
       overallVerdict: verdict ?? undefined,
       reasoning: reasoning.trim() || undefined,
-    }
+    };
   }
 
   async function saveDraft() {
-    if (isReadOnly) return
-    setError(null)
-    await autosave.flush(payload())
+    if (isReadOnly) return;
+    setError(null);
+    await autosave.flush(payload());
   }
 
   function submit() {
-    if (isReadOnly) return
-    const check = isComplete(spec, dimensions, verdict, reasoning)
+    if (isReadOnly) return;
+    const check = isComplete(spec, dimensions, verdict, reasoning);
     if (!check.ok) {
-      setError(check.reason)
-      return
+      setError(check.reason);
+      return;
     }
-    setError(null)
+    setError(null);
     startSubmit(async () => {
       try {
         await submitAnnotation({
@@ -279,30 +283,78 @@ export function ArenaGsbForm({
             overallVerdict: verdict!,
             reasoning: reasoning.trim(),
           },
-        })
-        router.push('/my/queue')
-        router.refresh()
+        });
+        // Auto-advance to the next workable topic (falls back to the task page).
+        await navigateAfterSubmit(router, { taskId, topicId });
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Submit failed.')
+        setError(getErrorMessage(e, "Submit failed."));
       }
-    })
+    });
   }
 
   // Auto-suggest overall verdict from sum-of-dimensions whenever the
   // annotator hasn't explicitly picked one. We DON'T overwrite an existing
   // pick — the user's explicit verdict always wins.
   const dimSummary = (() => {
-    let aWins = 0
-    let bWins = 0
-    let ties = 0
+    let aWins = 0;
+    let bWins = 0;
+    let ties = 0;
     for (const v of Object.values(dimensions)) {
-      if (typeof v.a !== 'number' || typeof v.b !== 'number') continue
-      if (v.a > v.b) aWins++
-      else if (v.b > v.a) bWins++
-      else ties++
+      if (typeof v.a !== "number" || typeof v.b !== "number") continue;
+      if (v.a > v.b) aWins++;
+      else if (v.b > v.a) bWins++;
+      else ties++;
     }
-    return { aWins, bWins, ties }
-  })()
+    return { aWins, bWins, ties };
+  })();
+
+  // Dimensions currently on screen (after conditional-visibility filter).
+  // Shared by render + keyboard so they stay in lockstep.
+  const visibleDims = useMemo(
+    () => spec.filter((d) => isDimensionVisible(d, dimensions)),
+    [spec, dimensions],
+  );
+
+  // Keyboard scoring: ↑/↓ (j/k) move the active dimension; ←/→ (h/l)
+  // switch model side; 1–5 set the score for the active (dimension, side).
+  useEffect(() => {
+    if (isReadOnly) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const el = document.activeElement as HTMLElement | null;
+      if (
+        el &&
+        (el.tagName === "TEXTAREA" ||
+          el.tagName === "INPUT" ||
+          el.isContentEditable)
+      )
+        return;
+      const rows = visibleDims;
+      if (rows.length === 0) return;
+      const idx = Math.min(activeIdx, rows.length - 1);
+      const dim = rows[idx];
+      if (e.key === "ArrowDown" || e.key === "j") {
+        e.preventDefault();
+        setActiveIdx(Math.min(idx + 1, rows.length - 1));
+      } else if (e.key === "ArrowUp" || e.key === "k") {
+        e.preventDefault();
+        setActiveIdx(Math.max(idx - 1, 0));
+      } else if (e.key === "ArrowLeft" || e.key === "h") {
+        e.preventDefault();
+        setActiveSide("a");
+      } else if (e.key === "ArrowRight" || e.key === "l") {
+        e.preventDefault();
+        setActiveSide("b");
+      } else if (e.key >= "1" && e.key <= "5") {
+        e.preventDefault();
+        setScore(dim.id, activeSide, Number(e.key));
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // setScore is a hoisted functional setter — safe to call stale.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isReadOnly, visibleDims, activeIdx, activeSide]);
 
   return (
     <>
@@ -317,37 +369,44 @@ export function ArenaGsbForm({
       <section className="mt-8">
         <div className="flex items-baseline justify-between mb-3">
           <div className="lbl">§ DIMENSIONS · 1–5 PER MODEL</div>
-          <div className="ts-11 mono" style={{ color: 'var(--mute2)' }}>
-            dim wins · A {dimSummary.aWins} / tie {dimSummary.ties} / B{' '}
+          <div className="ts-11 mono" style={{ color: "var(--mute2)" }}>
+            dim wins · A {dimSummary.aWins} / tie {dimSummary.ties} / B{" "}
             {dimSummary.bWins}
           </div>
         </div>
 
+        {!isReadOnly && (
+          <div className="ts-11 mono mb-2" style={{ color: "var(--mute2)" }}>
+            键盘:↑/↓ 选维度 · ←/→ 切 A/B · 1–5 打分(当前{" "}
+            {activeSide.toUpperCase()})
+          </div>
+        )}
+
         <div
-          className="rounded-md overflow-hidden"
+          className="rounded-md overflow-x-auto"
           style={{
-            background: 'var(--panel)',
-            border: '1px solid var(--line)',
+            background: "var(--panel)",
+            border: "1px solid var(--line)",
           }}
         >
-          <table className="w-full ts-13">
+          <table className="w-full min-w-[820px] ts-13">
             <thead>
               <tr
                 style={{
-                  background: 'var(--panel2)',
-                  borderBottom: '1px solid var(--line)',
+                  background: "var(--panel2)",
+                  borderBottom: "1px solid var(--line)",
                 }}
               >
                 <th
                   className="text-left px-4 py-2.5 mono ts-11"
-                  style={{ color: 'var(--mute)', fontWeight: 500 }}
+                  style={{ color: "var(--mute)", fontWeight: 500 }}
                 >
                   DIMENSION
                 </th>
                 <th
                   className="px-4 py-2.5 mono ts-11"
                   style={{
-                    color: 'oklch(0.65 0.18 200)',
+                    color: "oklch(0.65 0.18 200)",
                     width: 230,
                   }}
                 >
@@ -356,7 +415,7 @@ export function ArenaGsbForm({
                 <th
                   className="px-4 py-2.5 mono ts-11"
                   style={{
-                    color: 'oklch(0.7 0.18 30)',
+                    color: "oklch(0.7 0.18 30)",
                     width: 230,
                   }}
                 >
@@ -364,15 +423,15 @@ export function ArenaGsbForm({
                 </th>
                 <th
                   className="px-4 py-2.5 mono ts-11 text-center"
-                  style={{ color: 'var(--mute)', width: 70 }}
+                  style={{ color: "var(--mute)", width: 70 }}
                 >
                   GSB
                 </th>
                 {peerConsensus && peerConsensus.peerCount > 0 && (
                   <th
                     className="px-4 py-2.5 mono ts-11 text-center"
-                    style={{ color: 'var(--mute)', width: 170 }}
-                    title={`Aggregated from ${peerConsensus.peerCount} other rater${peerConsensus.peerCount === 1 ? '' : 's'}`}
+                    style={{ color: "var(--mute)", width: 170 }}
+                    title={`Aggregated from ${peerConsensus.peerCount} other rater${peerConsensus.peerCount === 1 ? "" : "s"}`}
                   >
                     PEERS · {peerConsensus.peerCount}
                   </th>
@@ -380,92 +439,119 @@ export function ArenaGsbForm({
               </tr>
             </thead>
             <tbody>
-              {spec
-                // Hide conditional dimensions whose parent score hasn't
-                // crossed the threshold yet. Listed in template order so
-                // a follow-up always appears after its parent row.
-                .filter((dim) => isDimensionVisible(dim, dimensions))
-                .map((dim, idx) => {
-                const row = dimensions[dim.id] ?? { a: null, b: null }
-                const gsb =
-                  typeof row.a === 'number' && typeof row.b === 'number'
-                    ? dimensionGsb(row.a, row.b)
-                    : null
-                return (
-                  <tr
-                    key={dim.id}
-                    style={{
-                      borderTop:
-                        idx === 0 ? 'none' : '1px solid var(--line)',
-                      background: dim.showWhen ? 'var(--panel2)' : undefined,
-                    }}
-                  >
-                    <td
-                      className="px-4 py-3 align-top"
-                      style={{ paddingLeft: dim.showWhen ? 32 : undefined }}
+              {visibleDims.map((dim, idx) => {
+                  const row = dimensions[dim.id] ?? { a: null, b: null };
+                  const gsb =
+                    typeof row.a === "number" && typeof row.b === "number"
+                      ? dimensionGsb(row.a, row.b)
+                      : null;
+                  const isActiveRow =
+                    idx === Math.min(activeIdx, visibleDims.length - 1);
+                  return (
+                    <tr
+                      key={dim.id}
+                      onClick={() => setActiveIdx(idx)}
+                      style={{
+                        borderTop: idx === 0 ? "none" : "1px solid var(--line)",
+                        background: isActiveRow
+                          ? "var(--accent-soft)"
+                          : dim.showWhen
+                            ? "var(--panel2)"
+                            : undefined,
+                        boxShadow: isActiveRow
+                          ? "inset 3px 0 0 var(--accent)"
+                          : undefined,
+                        cursor: "pointer",
+                      }}
                     >
-                      <div className="flex items-center gap-2">
-                        {dim.showWhen && (
+                      <td
+                        className="px-4 py-3 align-top"
+                        style={{ paddingLeft: dim.showWhen ? 32 : undefined }}
+                      >
+                        <div className="flex items-center gap-2">
+                          {dim.showWhen && (
+                            <span
+                              className="ts-11 mono"
+                              style={{ color: "var(--accent)" }}
+                              aria-hidden
+                              title={`Follow-up — only asked when ${dim.showWhen.parentId} ≥ ${dim.showWhen.when}`}
+                            >
+                              ↳
+                            </span>
+                          )}
                           <span
-                            className="ts-11 mono"
-                            style={{ color: 'var(--accent)' }}
-                            aria-hidden
-                            title={`Follow-up — only asked when ${dim.showWhen.parentId} ≥ ${dim.showWhen.when}`}
+                            className="ts-13"
+                            style={{
+                              color: "var(--text)",
+                              fontWeight: 500,
+                            }}
                           >
-                            ↳
+                            {dim.name}
                           </span>
-                        )}
-                        <span
-                          className="ts-13"
-                          style={{
-                            color: 'var(--text)',
-                            fontWeight: 500,
-                          }}
-                        >
-                          {dim.name}
-                        </span>
-                      </div>
-                      {dim.description && (
-                        <div
-                          className="ts-12 mt-0.5"
-                          style={{ color: 'var(--mute2)' }}
-                        >
-                          {dim.description}
                         </div>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 align-middle">
-                      <ScoreRow
-                        value={row.a}
-                        onChange={(v) => setScore(dim.id, 'a', v)}
-                        readOnly={isReadOnly}
-                        sideColor="oklch(0.65 0.18 200)"
-                      />
-                    </td>
-                    <td className="px-4 py-3 align-middle">
-                      <ScoreRow
-                        value={row.b}
-                        onChange={(v) => setScore(dim.id, 'b', v)}
-                        readOnly={isReadOnly}
-                        sideColor="oklch(0.7 0.18 30)"
-                      />
-                    </td>
-                    <td className="px-4 py-3 text-center align-middle">
-                      <GsbBadge gsb={gsb} />
-                    </td>
-                    {peerConsensus && peerConsensus.peerCount > 0 && (
-                      <td className="px-4 py-3 text-center align-middle">
-                        <PeerArenaCell
-                          aCell={peerConsensus.arena[`${dim.id}|a`]}
-                          bCell={peerConsensus.arena[`${dim.id}|b`]}
-                          myA={row.a}
-                          myB={row.b}
+                        {dim.description && (
+                          <div
+                            className="ts-12 mt-0.5"
+                            style={{ color: "var(--mute2)" }}
+                          >
+                            {dim.description}
+                          </div>
+                        )}
+                      </td>
+                      <td
+                        className="px-4 py-3 align-middle"
+                        onClick={() => setActiveSide("a")}
+                        style={{
+                          outline:
+                            isActiveRow && activeSide === "a"
+                              ? "2px solid var(--accent)"
+                              : undefined,
+                          outlineOffset: -2,
+                          borderRadius: 6,
+                        }}
+                      >
+                        <ScoreRow
+                          value={row.a}
+                          onChange={(v) => setScore(dim.id, "a", v)}
+                          readOnly={isReadOnly}
+                          sideColor="oklch(0.65 0.18 200)"
                         />
                       </td>
-                    )}
-                  </tr>
-                )
-              })}
+                      <td
+                        className="px-4 py-3 align-middle"
+                        onClick={() => setActiveSide("b")}
+                        style={{
+                          outline:
+                            isActiveRow && activeSide === "b"
+                              ? "2px solid var(--accent)"
+                              : undefined,
+                          outlineOffset: -2,
+                          borderRadius: 6,
+                        }}
+                      >
+                        <ScoreRow
+                          value={row.b}
+                          onChange={(v) => setScore(dim.id, "b", v)}
+                          readOnly={isReadOnly}
+                          sideColor="oklch(0.7 0.18 30)"
+                        />
+                      </td>
+                      <td className="px-4 py-3 text-center align-middle">
+                        <GsbBadge gsb={gsb} />
+                      </td>
+                      {peerConsensus && peerConsensus.peerCount > 0 && (
+                        <td className="px-4 py-3 text-center align-middle">
+                          <PeerArenaCell
+                            aCell={peerConsensus.arena[`${dim.id}|a`]}
+                            bCell={peerConsensus.arena[`${dim.id}|b`]}
+                            myA={row.a}
+                            myB={row.b}
+                          />
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
             </tbody>
           </table>
         </div>
@@ -512,12 +598,12 @@ export function ArenaGsbForm({
             placeholder="Why this verdict? Reference specific dimensions — the text is the high-value signal."
             className="w-full px-3 py-2 ts-13 rounded-md"
             style={{
-              background: 'var(--bg)',
-              border: '1px solid var(--line)',
-              color: 'var(--text)',
-              outline: 'none',
-              resize: 'vertical',
-              fontFamily: 'var(--font-geist-sans), system-ui',
+              background: "var(--bg)",
+              border: "1px solid var(--line)",
+              color: "var(--text)",
+              outline: "none",
+              resize: "vertical",
+              fontFamily: "var(--font-geist-sans), system-ui",
             }}
           />
         </div>
@@ -526,9 +612,9 @@ export function ArenaGsbForm({
           <div
             className="ts-12 mono mt-3 p-2 rounded"
             style={{
-              background: 'var(--danger-soft)',
-              border: '1px solid oklch(0.55 0.2 25 / 0.35)',
-              color: 'var(--danger)',
+              background: "var(--danger-soft)",
+              border: "1px solid oklch(0.55 0.2 25 / 0.35)",
+              color: "var(--danger)",
             }}
           >
             {error}
@@ -544,37 +630,36 @@ export function ArenaGsbForm({
         <div className="mt-6 flex items-center gap-3 flex-wrap">
           <button
             onClick={saveDraft}
-            disabled={isReadOnly || autosave.status === 'saving'}
+            disabled={isReadOnly || autosave.status === "saving"}
             className="ts-13 mono"
             style={{
-              background: 'transparent',
-              color: 'var(--text)',
-              border: '1px solid var(--line)',
+              background: "transparent",
+              color: "var(--text)",
+              border: "1px solid var(--line)",
               borderRadius: 6,
-              padding: '6px 14px',
-              cursor: isReadOnly ? 'not-allowed' : 'pointer',
-              opacity:
-                isReadOnly || autosave.status === 'saving' ? 0.5 : 1,
+              padding: "6px 14px",
+              cursor: isReadOnly ? "not-allowed" : "pointer",
+              opacity: isReadOnly || autosave.status === "saving" ? 0.5 : 1,
             }}
           >
-            {autosave.status === 'saving' ? 'saving…' : 'save now'}
+            {autosave.status === "saving" ? "saving…" : "save now"}
           </button>
           <button
             onClick={submit}
             disabled={isReadOnly || isSubmitting}
             className="ts-13 mono"
             style={{
-              background: 'var(--accent)',
-              color: 'white',
-              border: '1px solid var(--accent)',
+              background: "var(--accent)",
+              color: "white",
+              border: "1px solid var(--accent)",
               borderRadius: 6,
-              padding: '6px 14px',
+              padding: "6px 14px",
               fontWeight: 500,
-              cursor: isReadOnly ? 'not-allowed' : 'pointer',
+              cursor: isReadOnly ? "not-allowed" : "pointer",
               opacity: isReadOnly || isSubmitting ? 0.5 : 1,
             }}
           >
-            {isSubmitting ? 'submitting…' : 'submit'}
+            {isSubmitting ? "submitting…" : "submit"}
           </button>
           <AutosaveBadge
             status={autosave.status}
@@ -585,9 +670,9 @@ export function ArenaGsbForm({
             <span
               className="ts-12 mono ml-auto px-2 py-0.5 rounded"
               style={{
-                background: 'var(--panel2)',
-                border: '1px solid var(--line)',
-                color: 'var(--mute)',
+                background: "var(--panel2)",
+                border: "1px solid var(--line)",
+                color: "var(--mute)",
               }}
             >
               {topicStatus.toUpperCase()} — read-only
@@ -596,7 +681,7 @@ export function ArenaGsbForm({
         </div>
       </section>
     </>
-  )
+  );
 }
 
 /**
@@ -612,44 +697,44 @@ function AutosaveBadge({
   lastSavedAt,
   errorMessage,
 }: {
-  status: AutosaveStatus
-  lastSavedAt: Date | null
-  errorMessage: string | null
+  status: AutosaveStatus;
+  lastSavedAt: Date | null;
+  errorMessage: string | null;
 }) {
-  const label = autosaveStatusLabel(status, lastSavedAt)
+  const label = autosaveStatusLabel(status, lastSavedAt);
   const palette: Record<AutosaveStatus, { fg: string; bg: string }> = {
-    idle: { fg: 'var(--mute2)', bg: 'transparent' },
+    idle: { fg: "var(--mute2)", bg: "transparent" },
     dirty: {
-      fg: 'oklch(0.55 0.14 75)',
-      bg: 'oklch(0.6 0.14 75 / 0.1)',
+      fg: "oklch(0.55 0.14 75)",
+      bg: "oklch(0.6 0.14 75 / 0.1)",
     },
-    saving: { fg: 'var(--accent)', bg: 'var(--accent-soft)' },
+    saving: { fg: "var(--accent)", bg: "var(--accent-soft)" },
     saved: {
-      fg: 'oklch(0.5 0.13 150)',
-      bg: 'oklch(0.5 0.13 150 / 0.1)',
+      fg: "oklch(0.5 0.13 150)",
+      bg: "oklch(0.5 0.13 150 / 0.1)",
     },
-    error: { fg: 'var(--danger)', bg: 'var(--danger-soft)' },
-  }
-  const p = palette[status]
+    error: { fg: "var(--danger)", bg: "var(--danger-soft)" },
+  };
+  const p = palette[status];
   return (
     <span
       className="ts-11 mono ml-auto px-2 py-0.5 rounded inline-flex items-center gap-1"
       style={{
         color: p.fg,
         background: p.bg,
-        border: status === 'idle' ? 'none' : `1px solid ${p.fg}33`,
+        border: status === "idle" ? "none" : `1px solid ${p.fg}33`,
       }}
       title={
-        status === 'error' && errorMessage
+        status === "error" && errorMessage
           ? `${errorMessage} — your changes are still safe in your browser; reload the page to retry.`
-          : status === 'dirty'
-            ? 'Unsaved changes — auto-save fires in ~1 second. Local backup is already saved in your browser.'
+          : status === "dirty"
+            ? "Unsaved changes — auto-save fires in ~1 second. Local backup is already saved in your browser."
             : undefined
       }
     >
-      {label || (status === 'idle' ? '·' : status)}
+      {label || (status === "idle" ? "·" : status)}
     </span>
-  )
+  );
 }
 
 function ScoreRow({
@@ -658,15 +743,15 @@ function ScoreRow({
   readOnly,
   sideColor,
 }: {
-  value: number | null
-  onChange: (v: number) => void
-  readOnly?: boolean
-  sideColor: string
+  value: number | null;
+  onChange: (v: number) => void;
+  readOnly?: boolean;
+  sideColor: string;
 }) {
   return (
     <div className="flex gap-1.5">
       {SCORE_VALUES.map((n) => {
-        const active = value === n
+        const active = value === n;
         return (
           <button
             key={n}
@@ -676,42 +761,39 @@ function ScoreRow({
             className="mono ts-12"
             style={{
               minWidth: 32,
-              padding: '4px 0',
+              padding: "4px 0",
               borderRadius: 5,
               fontWeight: 600,
-              background: active ? sideColor : 'transparent',
-              color: active ? 'white' : sideColor,
+              background: active ? sideColor : "transparent",
+              color: active ? "white" : sideColor,
               border: `1px solid ${active ? sideColor : `${sideColor}55`}`,
-              cursor: readOnly ? 'not-allowed' : 'pointer',
+              cursor: readOnly ? "not-allowed" : "pointer",
               opacity: readOnly ? 0.6 : 1,
             }}
           >
             {n}
           </button>
-        )
+        );
       })}
     </div>
-  )
+  );
 }
 
-function GsbBadge({ gsb }: { gsb: 'A' | 'tie' | 'B' | null }) {
+function GsbBadge({ gsb }: { gsb: "A" | "tie" | "B" | null }) {
   if (gsb === null) {
     return (
-      <span
-        className="ts-11 mono"
-        style={{ color: 'var(--mute2)' }}
-      >
+      <span className="ts-11 mono" style={{ color: "var(--mute2)" }}>
         —
       </span>
-    )
+    );
   }
   const styles =
-    gsb === 'A'
-      ? { bg: 'oklch(0.65 0.18 200 / 0.15)', fg: 'oklch(0.65 0.18 200)' }
-      : gsb === 'B'
-        ? { bg: 'oklch(0.7 0.18 30 / 0.15)', fg: 'oklch(0.7 0.18 30)' }
-        : { bg: 'var(--panel2)', fg: 'var(--mute)' }
-  const label = gsb === 'A' ? 'A 优' : gsb === 'B' ? 'B 优' : 'tie'
+    gsb === "A"
+      ? { bg: "oklch(0.65 0.18 200 / 0.15)", fg: "oklch(0.65 0.18 200)" }
+      : gsb === "B"
+        ? { bg: "oklch(0.7 0.18 30 / 0.15)", fg: "oklch(0.7 0.18 30)" }
+        : { bg: "var(--panel2)", fg: "var(--mute)" };
+  const label = gsb === "A" ? "A 优" : gsb === "B" ? "B 优" : "tie";
   return (
     <span
       className="mono ts-11"
@@ -720,13 +802,13 @@ function GsbBadge({ gsb }: { gsb: 'A' | 'tie' | 'B' | null }) {
         color: styles.fg,
         border: `1px solid ${styles.fg}33`,
         borderRadius: 4,
-        padding: '2px 8px',
+        padding: "2px 8px",
         fontWeight: 600,
       }}
     >
       {label}
     </span>
-  )
+  );
 }
 
 function VerdictRadio({
@@ -737,14 +819,14 @@ function VerdictRadio({
   readOnly,
   color,
 }: {
-  label: string
-  value: Exclude<Verdict, null>
-  current: Verdict
-  onChange: (v: Verdict) => void
-  readOnly?: boolean
-  color: string
+  label: string;
+  value: Exclude<Verdict, null>;
+  current: Verdict;
+  onChange: (v: Verdict) => void;
+  readOnly?: boolean;
+  color: string;
 }) {
-  const active = current === value
+  const active = current === value;
   return (
     <button
       type="button"
@@ -753,19 +835,19 @@ function VerdictRadio({
       className="ts-13 mono"
       style={{
         flex: 1,
-        padding: '8px 14px',
+        padding: "8px 14px",
         borderRadius: 6,
-        background: active ? color : 'transparent',
-        color: active ? 'white' : color,
+        background: active ? color : "transparent",
+        color: active ? "white" : color,
         border: `1px solid ${active ? color : `${color}55`}`,
         fontWeight: 500,
-        cursor: readOnly ? 'not-allowed' : 'pointer',
+        cursor: readOnly ? "not-allowed" : "pointer",
         opacity: readOnly ? 0.6 : 1,
       }}
     >
       {label}
     </button>
-  )
+  );
 }
 
 /**
@@ -780,45 +862,45 @@ function PeerArenaCell({
   myA,
   myB,
 }: {
-  aCell?: ArenaPeerCellLite
-  bCell?: ArenaPeerCellLite
-  myA: number | null
-  myB: number | null
+  aCell?: ArenaPeerCellLite;
+  bCell?: ArenaPeerCellLite;
+  myA: number | null;
+  myB: number | null;
 }) {
   if (!aCell && !bCell) {
     return (
-      <span className="ts-11 mono" style={{ color: 'var(--mute2)' }}>
+      <span className="ts-11 mono" style={{ color: "var(--mute2)" }}>
         —
       </span>
-    )
+    );
   }
   const sideStat = (
     cell: ArenaPeerCellLite | undefined,
     my: number | null,
     label: string,
   ) => {
-    if (!cell || cell.median === null) return null
-    const drifted = typeof my === 'number' && Math.abs(my - cell.median) > 1
-    const highSpread = cell.spread > 2
+    if (!cell || cell.median === null) return null;
+    const drifted = typeof my === "number" && Math.abs(my - cell.median) > 1;
+    const highSpread = cell.spread > 2;
     const color = drifted
-      ? 'var(--danger)'
+      ? "var(--danger)"
       : highSpread
-        ? 'oklch(0.7 0.14 75)'
-        : 'var(--mute)'
+        ? "oklch(0.7 0.14 75)"
+        : "var(--mute)";
     return (
       <span
         className="mono ts-11"
         style={{ color }}
-        title={`${label}: median ${cell.median.toFixed(1)} (${cell.raters} rater${cell.raters === 1 ? '' : 's'}, spread ${cell.spread})${drifted ? ' — submitter drifts >1' : ''}`}
+        title={`${label}: median ${cell.median.toFixed(1)} (${cell.raters} rater${cell.raters === 1 ? "" : "s"}, spread ${cell.spread})${drifted ? " — submitter drifts >1" : ""}`}
       >
         {label}:med {cell.median.toFixed(1)}
       </span>
-    )
-  }
+    );
+  };
   return (
     <div className="flex items-center justify-center gap-2">
-      {sideStat(aCell, myA, 'A')}
-      {sideStat(bCell, myB, 'B')}
+      {sideStat(aCell, myA, "A")}
+      {sideStat(bCell, myB, "B")}
     </div>
-  )
+  );
 }

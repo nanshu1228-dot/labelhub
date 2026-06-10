@@ -106,7 +106,7 @@ export async function askWorkspaceAnalyst(
       sampleCount: sampleRows.length,
     }
   } catch (e) {
-    // eslint-disable-next-line no-console
+     
     console.error(
       '[analyze] analyst call failed:',
       e instanceof Error ? e.message : e,

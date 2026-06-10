@@ -86,8 +86,7 @@ export async function signUp(input: SignUpInput) {
     // (string match on the message also works as a defensive fallback).
     const rawMsg = error?.message ?? ''
     const isEnumerationLeak =
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (error as any)?.code === 'user_already_exists' ||
+      (error as { code?: string } | null)?.code === 'user_already_exists' ||
       /already (registered|exists)/i.test(rawMsg)
     if (isEnumerationLeak) {
       throw new ValidationError(

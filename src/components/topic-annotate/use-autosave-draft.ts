@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { saveDraftAnnotation } from '@/lib/actions/annotations'
 import { getLocalDb } from '@/lib/local-store'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 
 /**
  * Shared autosave engine for the topic annotation forms (pair-rubric +
@@ -146,24 +147,41 @@ export function useAutosaveDraft(
       }
       setStatus('saving')
       const promise = (async () => {
-        try {
-          await saveDraftAnnotation({
-            topicId: opts.topicId,
-            payload,
-          })
-          await markSyncedLocal()
-          lastSentHashRef.current = hash
-          setStatus('saved')
-          setLastSavedAt(new Date())
-          setErrorMessage(null)
-        } catch (e) {
-          setStatus('error')
-          setErrorMessage(
-            e instanceof Error ? e.message : 'Save failed.',
-          )
-        } finally {
-          inFlightRef.current = null
+        // D20-C — exponential-backoff retry: 3 attempts at 0s / 2s
+        // / 8s. Transient flakes (network blip, 503 from Vercel)
+        // recover without a labeler-visible failure. Only after
+        // all three fail do we surface 'error' to the badge.
+        let lastError: unknown = null
+        const delaysMs = [0, 2_000, 8_000]
+        for (let attempt = 0; attempt < delaysMs.length; attempt++) {
+          if (delaysMs[attempt] > 0) {
+            await new Promise((r) => setTimeout(r, delaysMs[attempt]))
+          }
+          try {
+            await saveDraftAnnotation({
+              topicId: opts.topicId,
+              payload,
+            })
+            await markSyncedLocal()
+            lastSentHashRef.current = hash
+            setStatus('saved')
+            setLastSavedAt(new Date())
+            setErrorMessage(null)
+            lastError = null
+            break
+          } catch (e) {
+            lastError = e
+            // Last attempt — fall through to set 'error' below.
+            if (attempt === delaysMs.length - 1) continue
+            // Mid-attempt: stay in 'saving' so the badge keeps
+            // showing "Saving…" rather than flickering to error.
+          }
         }
+        if (lastError) {
+          setStatus('error')
+          setErrorMessage(getErrorMessage(lastError, 'Save failed.'))
+        }
+        inFlightRef.current = null
       })()
       inFlightRef.current = promise
       return promise

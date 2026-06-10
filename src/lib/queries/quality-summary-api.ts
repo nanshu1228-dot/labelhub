@@ -20,7 +20,7 @@ import { getMyContribution } from './trust-consensus'
  * stable API contract on top.
  */
 
-export interface ApiQualitySummaryRater {
+export interface ApiQualitySummaryAnnotator {
   userId: string
   email: string | null
   displayName: string | null
@@ -60,7 +60,7 @@ export interface ApiQualitySummary {
     agreementRate: number | null
   }
   raterCount: number
-  raters: ApiQualitySummaryRater[]
+  raters: ApiQualitySummaryAnnotator[]
   goldStandards: {
     count: number
     items: Array<{
@@ -102,7 +102,7 @@ export async function getQualitySummaryForApi(
   )
 
   // Build per-rater contribution counts in parallel.
-  const raters: ApiQualitySummaryRater[] = await Promise.all(
+  const raters: ApiQualitySummaryAnnotator[] = await Promise.all(
     trustList.map(async (t) => {
       const contribution = await getMyContribution({
         userId: t.userId,
@@ -169,8 +169,8 @@ export async function getQualitySummaryForApi(
         trajectoryId: v.trajectoryId,
         rubricId: v.rubricId,
         rubricName: v.rubricName,
-        raterId: v.raterId,
-        raterDisplayName: v.raterDisplayName,
+        raterId: v.annotatorId,
+        raterDisplayName: v.annotatorDisplayName,
         ts: v.ts.toISOString(),
       })),
     },

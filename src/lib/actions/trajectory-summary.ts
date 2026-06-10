@@ -19,7 +19,7 @@ import { z } from 'zod'
 import { eq } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { trajectories, trajectorySteps } from '@/lib/db/schema'
-import { ForbiddenError, NotFoundError } from '@/lib/errors'
+import { AppError, ForbiddenError, NotFoundError, ValidationError } from '@/lib/errors'
 import { requireWorkspaceMember } from '@/lib/auth/guards'
 import {
   summarizeTrajectory,
@@ -41,7 +41,7 @@ export interface SummaryCacheResult {
 
 export async function summarizeTrajectoryAndCache(
   input: z.infer<typeof inputSchema>,
-): Promise<SummaryCacheResult | { ok: false; error: string }> {
+): Promise<SummaryCacheResult> {
   const parsed = inputSchema.parse(input)
   const db = getDb()
 
@@ -80,7 +80,7 @@ export async function summarizeTrajectoryAndCache(
     .orderBy(trajectorySteps.sequence)
 
   if (steps.length === 0) {
-    return { ok: false, error: 'trajectory has no steps' }
+    throw new ValidationError('trajectory has no steps')
   }
 
   try {
@@ -129,14 +129,14 @@ export async function summarizeTrajectoryAndCache(
     return { ok: true, summary: result.summary, cached: false }
   } catch (e) {
     // 3rd security audit: don't leak DB / provider error text. Log
-    // server-side, return a generic message to the caller.
-    // eslint-disable-next-line no-console
+    // server-side, throw a generic typed error to the caller.
+
     console.error(
       '[trajectory-summary] failed:',
       e instanceof Error ? e.message : e,
       e instanceof Error ? e.stack : undefined,
     )
-    return { ok: false, error: 'summarization failed' }
+    throw new AppError('SUMMARIZATION_FAILED', 'summarization failed', 500)
   }
 }
 
@@ -168,7 +168,7 @@ export async function scheduleSummaryIfMissing(input: {
     return // silent — this is a fire-and-forget; auth fail = skip
   }
   await summarizeTrajectoryAndCache(parsed).catch((e) => {
-    // eslint-disable-next-line no-console
+     
     console.warn(
       `scheduleSummaryIfMissing failed for trajectory ${parsed.trajectoryId}:`,
       e instanceof Error ? e.message : e,

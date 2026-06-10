@@ -15,6 +15,9 @@ export function LangProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY) as Lang | null
+      // Mount-time hydration from an external store (localStorage isn't
+      // readable during SSR) — a one-shot sync, not a cascading render.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (saved === 'zh' || saved === 'en') setLangState(saved)
     } catch {
       // localStorage may be unavailable

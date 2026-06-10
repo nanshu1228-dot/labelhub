@@ -41,13 +41,15 @@ const EXPECTED_GUARDS: Record<string, RegExp> = {
   'export.ts': /requireWorkspaceAdmin\(/,
   'gold-standards.ts': /requireWorkspaceAdmin\(/,
   'tasks.ts': /requireWorkspaceAdmin\(/,
-  'tool-providers.ts': /requireWorkspaceAdmin\(/,
   'topic-scope.ts': /requireWorkspaceAdmin\(/,
-  'trajectories.ts': /requireWorkspaceAdmin\(/,
   // Billing admin surfaces.
   'billing/approve-annotation.ts': /requireWorkspaceAdmin\(/,
   'billing/close-period.ts': /requireWorkspaceAdmin\(/,
   'billing/mark-paid.ts': /requireWorkspaceAdmin\(/,
+  // Operable payment loop: admin credits an account; admin reviews/marks-paid
+  // withdrawal requests. Both are workspace-admin only.
+  'billing/admin-credit.ts': /requireWorkspaceAdmin\(/,
+  'billing/review-withdrawal.ts': /requireWorkspaceAdmin\(/,
   // QC-or-above (qc + admin).
   'qc-review.ts': /requireWorkspaceQC\(/,
   // Member-level write surfaces (annotator + qc + admin pass).
@@ -60,11 +62,12 @@ const EXPECTED_GUARDS: Record<string, RegExp> = {
   'annotations.ts': /require(User|WorkspaceAdmin)\(/,
   'membership.ts': /require(User|WorkspaceAdmin|WorkspaceMember)\(/,
   'queue.ts': /require(User|WorkspaceMember)\(/,
-  'step-annotations.ts': /requireUser\(/,
+  // createTopic / batch admin surfaces use requireWorkspaceAdmin;
+  // claimTopic + claimTopics (bulk-claim, §4.3) + releaseTopic use
+  // requireUser and self-check ownership/quota in-body.
   'topics.ts': /require(User|WorkspaceAdmin)\(/,
   'workspaces.ts': /require(User|WorkspaceAdmin)\(/,
   'billing/payment-methods.ts': /requireUser\(/,
-  'ai.ts': /require(WorkspaceAdmin|WorkspaceMember)\(/,
   // Self-service workspace seed claim — signed-in user takes over
   // workspaces whose adminId still matches the seed sentinel. The
   // sentinel check itself happens in-SQL, so requireUser is enough.
@@ -73,6 +76,15 @@ const EXPECTED_GUARDS: Record<string, RegExp> = {
   'draft-feedback.ts': /requireWorkspaceMember\(/,
   // NL → rubric generator — admin only (template_config is admin-managed).
   'template-generator.ts': /requireWorkspaceAdmin\(/,
+  // NL → custom-designer FormSchema generator — admin only (form schemas
+  // are admin-managed; mirrors template-generator above).
+  'generate-form-schema.ts': /requireWorkspaceAdmin\(/,
+  // AI pre-submit form check (custom-designer) — workspace member (annotator+),
+  // mirrors draft-feedback for pair/arena.
+  'check-form-answers.ts': /requireWorkspaceMember\(/,
+  // "Next workable topic" lookup for labeler auto-advance — member-gated,
+  // read-only (the annotate page / submit does the actual claim).
+  'next-topic.ts': /requireWorkspaceMember\(/,
   // LLM-as-Judge config + runs — admin only (cost + visibility).
   'llm-judges.ts': /requireWorkspaceAdmin\(/,
   // Trust lifecycle — admin only (probation/suspend are sensitive).
@@ -100,6 +112,20 @@ const EXPECTED_GUARDS: Record<string, RegExp> = {
   'inbox.ts': /requireWorkspaceMember\(/,
   'trajectory-summary.ts': /requireWorkspaceMember\(/,
   'trajectory-hints.ts': /requireWorkspaceMember\(/,
+  // No-key, no-code trajectory upload — any signed-in workspace member can
+  // drop a trajectory into their own workspace's inbox to annotate it.
+  'trajectory-upload.ts': /requireWorkspaceMember\(/,
+  // Finals P2 D9 — per-task AI Review Agent config. Owner-only (writes
+  // tune the rubric the agent uses against every annotation in the
+  // task). Read path also guarded so the prompt doesn't leak.
+  'ai-agent-config.ts': /requireWorkspaceAdmin\(/,
+  // AI Agent admin ops — dry-run preview (试运行) + manual re-run of a
+  // failed verdict. Both admin-only (burn quota / mutate review state).
+  'ai-agent-ops.ts': /requireWorkspaceAdmin\(/,
+  // Finals P3 D11 — batch review delegates to qcReviewAnnotation
+  // per-row; each row's auth + state-transition runs there, including
+  // requireWorkspaceQC. This file is the dispatcher.
+  'review-batch.ts': /qcReviewAnnotation\(/,
 }
 
 /**
@@ -113,6 +139,22 @@ const EXPECTED_GUARDS: Record<string, RegExp> = {
 const ALLOWED_NO_GUARD: Set<string> = new Set([
   // Supabase auth bridge — sign-in/up flows don't have workspace context.
   'auth.ts',
+  // Finals P2 D7 — AI Review scheduler runs in Vercel's after() window
+  // AFTER the submitter has been guarded by submitAnnotation's
+  // requireWorkspaceMember. The scheduler operates on annotation-ID
+  // alone and walks back to the workspace; opening it directly without
+  // a valid annotationId is a no-op (Zod parse fails closed). The
+  // after-hook isolation contract (never throw, never block) is the
+  // safety guarantee here, not a guard call.
+  'ai-review-submission.ts',
+  // Pure helpers split out of ai-review-submission.ts so the
+  // 'use server' file can stay async-only (Next.js requirement).
+  // No DB / no auth touched here.
+  'ai-review-keys.ts',
+  // Pure schema + defaults split out of ai-agent-config.ts for the
+  // same 'use server' async-only constraint. The server action file
+  // (ai-agent-config.ts) holds the guard call.
+  'ai-agent-config-schema.ts',
 ])
 
 describe('Server-action guard presence', () => {

@@ -48,7 +48,7 @@ export function checkAdminToken(
     const qsToken = url.searchParams.get('token')
     if (qsToken) {
       supplied = qsToken
-      // eslint-disable-next-line no-console
+       
       console.warn(
         '[admin] token supplied via ?token= querystring — deprecated, ' +
           'leaks into logs. Migrate to `Authorization: Bearer <token>`.',

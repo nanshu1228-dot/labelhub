@@ -56,7 +56,7 @@ describe('rubric.rubricSpecSchema — runtime validation', () => {
   })
 
   it('REJECTS enum without options (storage would be unconstrained string)', () => {
-    const bad: any = {
+    const bad: RubricSpec = {
       perStep: [{ id: 'path', name: 'Path', scale: 'enum' }],
       perTrajectory: [],
     }
@@ -64,7 +64,7 @@ describe('rubric.rubricSpecSchema — runtime validation', () => {
   })
 
   it('REJECTS non-enum with options (UI would render an unused field)', () => {
-    const bad: any = {
+    const bad: RubricSpec = {
       perStep: [{ id: 'safety', name: 'Safety', scale: 'bool', options: ['yes', 'no'] }],
       perTrajectory: [],
     }
@@ -72,7 +72,7 @@ describe('rubric.rubricSpecSchema — runtime validation', () => {
   })
 
   it('REJECTS ids not in snake_case (storage-key safety)', () => {
-    const bad: any = {
+    const bad: RubricSpec = {
       perStep: [{ id: 'ToolChoice', name: 'Tool choice', scale: 'likert' }],
       perTrajectory: [],
     }

@@ -34,9 +34,20 @@ import {
   transactions,
   walletBalance,
 } from '@/lib/db/schema'
-import { AppError, NotFoundError } from '@/lib/errors'
+import { AppError, ConflictError, NotFoundError } from '@/lib/errors'
 import { uuidLike } from '@/lib/validators/uuid'
 import { requireWorkspaceAdmin } from '@/lib/auth/guards'
+
+/**
+ * A db handle OR an open transaction — both expose select/insert/update with
+ * identical signatures (drizzle's PgTransaction extends the same base), so
+ * money helpers can run either standalone or inside a caller's transaction.
+ * Structural Pick keeps this fully typed (no `any`).
+ */
+type WalletExecutor = Pick<
+  ReturnType<typeof getDb>,
+  'select' | 'insert' | 'update'
+>
 
 const inputSchema = z.object({
   payoutId: uuidLike,
@@ -91,68 +102,91 @@ export async function markPayoutPaid(
   // resolved (admin-of-A can't mark a payout in workspace B).
   const { user: actor } = await requireWorkspaceAdmin(periodRow.workspaceId)
 
-  // ── 1. Flip payout → paid ─────────────────────────────────────────
-  await db
-    .update(payouts)
-    .set({
-      status: 'paid',
-      paidAt: new Date(),
-      externalRef: parsed.externalRef ?? null,
-      paymentMethodId: parsed.paymentMethodId ?? payout.paymentMethodId ?? null,
-    })
-    .where(eq(payouts.id, payout.id))
+  // ── 1–5. Flip → ledger → wallet → period → audit, ATOMICALLY ──────
+  // One transaction + a status-CAS so a mid-action crash can't strand the
+  // payout as 'paid' without its 'earn' ledger row (which the ALREADY_PAID
+  // guard above would then make permanently unsettleable), and two concurrent
+  // mark-paid calls can't both write an 'earn' row. Mirrors close-period.ts.
+  const { txnId, newBalance, periodAlsoClosed } = await db.transaction(
+    async (tx) => {
+      // 1. Conditional flip — only if still in the status we observed.
+      const flipped = await tx
+        .update(payouts)
+        .set({
+          status: 'paid',
+          paidAt: new Date(),
+          externalRef: parsed.externalRef ?? null,
+          paymentMethodId:
+            parsed.paymentMethodId ?? payout.paymentMethodId ?? null,
+        })
+        .where(
+          and(eq(payouts.id, payout.id), eq(payouts.status, payout.status)),
+        )
+        .returning({ id: payouts.id })
+      if (flipped.length === 0) {
+        throw new ConflictError(
+          `Payout ${payout.id} was modified concurrently — not paying it twice.`,
+        )
+      }
 
-  // ── 2. Append 'earn' transaction ─────────────────────────────────
-  const [txn] = await db
-    .insert(transactions)
-    .values({
-      userId: payout.userId,
-      type: 'earn',
-      amountMinor: payout.amountMinor, // positive — annotator earned this
-      currency: payout.currency,
-      workspaceId: periodRow.workspaceId,
-      refTable: 'payouts',
-      refId: payout.id,
-      memo: `Payout from period ${payout.payoutPeriodId.slice(0, 8)}…`,
-    })
-    .returning({ id: transactions.id })
+      // 2. Append 'earn' transaction.
+      const [txn] = await tx
+        .insert(transactions)
+        .values({
+          userId: payout.userId,
+          type: 'earn',
+          amountMinor: payout.amountMinor, // positive — annotator earned this
+          currency: payout.currency,
+          workspaceId: periodRow.workspaceId,
+          refTable: 'payouts',
+          refId: payout.id,
+          memo: `Payout from period ${payout.payoutPeriodId.slice(0, 8)}…`,
+        })
+        .returning({ id: transactions.id })
 
-  // ── 3. Rebuild wallet for (user × workspace × currency) ───────────
-  const newBalance = await rebuildWallet({
-    userId: payout.userId,
-    workspaceId: periodRow.workspaceId,
-    currency: payout.currency,
-  })
+      // 3. Rebuild wallet for (user × workspace × currency) — inside the tx.
+      const newBalance = await rebuildWallet(
+        {
+          userId: payout.userId,
+          workspaceId: periodRow.workspaceId,
+          currency: payout.currency,
+        },
+        tx,
+      )
 
-  // ── 4. Period also paid? ──────────────────────────────────────────
-  const [{ remaining }] = await db
-    .select({
-      remaining: sql<number>`count(*) filter (where status != 'paid' and status != 'reversed')::int`,
-    })
-    .from(payouts)
-    .where(eq(payouts.payoutPeriodId, payout.payoutPeriodId))
-  const periodAlsoClosed = Number(remaining) === 0
-  if (periodAlsoClosed) {
-    await db
-      .update(payoutPeriods)
-      .set({ status: 'paid', paidAt: new Date() })
-      .where(eq(payoutPeriods.id, payout.payoutPeriodId))
-  }
+      // 4. Period also paid?
+      const [{ remaining }] = await tx
+        .select({
+          remaining: sql<number>`count(*) filter (where status != 'paid' and status != 'reversed')::int`,
+        })
+        .from(payouts)
+        .where(eq(payouts.payoutPeriodId, payout.payoutPeriodId))
+      const periodAlsoClosed = Number(remaining) === 0
+      if (periodAlsoClosed) {
+        await tx
+          .update(payoutPeriods)
+          .set({ status: 'paid', paidAt: new Date() })
+          .where(eq(payoutPeriods.id, payout.payoutPeriodId))
+      }
 
-  // ── 5. Event + revalidate ────────────────────────────────────────
-  await db.insert(events).values({
-    type: 'payout.paid',
-    workspaceId: periodRow.workspaceId,
-    actorId: actor.id,
-    payload: {
-      payoutId: payout.id,
-      transactionId: txn.id,
-      amountMinor: payout.amountMinor,
-      currency: payout.currency,
-      externalRef: parsed.externalRef ?? null,
-      periodAlsoClosed,
+      // 5. Audit event (in the tx so it lands iff the settlement commits).
+      await tx.insert(events).values({
+        type: 'payout.paid',
+        workspaceId: periodRow.workspaceId,
+        actorId: actor.id,
+        payload: {
+          payoutId: payout.id,
+          transactionId: txn.id,
+          amountMinor: payout.amountMinor,
+          currency: payout.currency,
+          externalRef: parsed.externalRef ?? null,
+          periodAlsoClosed,
+        },
+      })
+
+      return { txnId: txn.id, newBalance, periodAlsoClosed }
     },
-  })
+  )
 
   try {
     revalidatePath(`/workspaces/${periodRow.workspaceId}/billing`)
@@ -164,7 +198,7 @@ export async function markPayoutPaid(
   return {
     ok: true,
     payoutId: payout.id,
-    transactionId: txn.id,
+    transactionId: txnId,
     newWalletBalanceMinor: newBalance,
     periodAlsoClosed,
   }
@@ -177,12 +211,16 @@ export async function markPayoutPaid(
  * the (workspace × currency) slice. Cheap because we have indexed scans
  * on (user_id, ts). Upserts the wallet_balance row.
  */
-export async function rebuildWallet(opts: {
-  userId: string
-  workspaceId: string
-  currency: string
-}): Promise<number> {
-  const db = getDb()
+export async function rebuildWallet(
+  opts: {
+    userId: string
+    workspaceId: string
+    currency: string
+  },
+  /** Run inside a caller's transaction when provided; else standalone. */
+  executor?: WalletExecutor,
+): Promise<number> {
+  const db = executor ?? getDb()
   const [{ balance }] = await db
     .select({
       balance: sql<number>`coalesce(sum(${transactions.amountMinor}), 0)::int`,

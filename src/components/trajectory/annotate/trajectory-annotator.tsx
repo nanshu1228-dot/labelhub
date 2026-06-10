@@ -2,6 +2,7 @@
 
 import './annotate.css'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import {
   type WritableAtom,
   useAtom,
@@ -9,6 +10,7 @@ import {
   Provider as JotaiProvider,
 } from 'jotai'
 import { useHydrateAtoms } from 'jotai/utils'
+import { submitTrajectoryAnnotation } from '@/lib/actions/annotate-marks'
 import type { Mark, RubricSpec } from '@/lib/templates/rubric'
 import { rubricsForStepKind } from '@/lib/templates/rubric'
 import type {
@@ -28,6 +30,7 @@ import { AttachmentsStrip } from './attachments-strip'
 import { RubricReferenceDrawer } from './rubric-reference-drawer'
 import { useAnnotateKeyboard } from './use-annotate-keyboard'
 import { useAutosaveMark } from './use-autosave-mark'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 import {
   deepDiveAtom,
   modeAtom,
@@ -79,8 +82,20 @@ export interface TrajectoryAnnotatorProps {
   /** Optional trajectory to compare against (B side). Driven by ?compareWith URL param. */
   compareWithTrajectory?: TrajectoryView | null
   disabled?: boolean
-  onSubmit?: () => void
-  submitDisabled?: boolean
+  /**
+   * ISO timestamp if this user already submitted their annotation of the
+   * trajectory for review, else null. Seeds the Submit button so a
+   * reopened-after-submit trajectory shows "Submitted" on first paint.
+   */
+  initialSubmittedAt?: string | null
+  /** Hide the Submit CTA entirely (e.g. read-only / viewer tours). */
+  hideSubmit?: boolean
+  /**
+   * Override the internal submit handler. Defaults to
+   * `submitTrajectoryAnnotation` for this workspace + trajectory. Exposed
+   * mostly for tests / alternate hosts; the page relies on the default.
+   */
+  onSubmit?: () => void | Promise<void>
   submitLabel?: string
 }
 
@@ -164,11 +179,13 @@ function TrajectoryAnnotatorInner({
   candidateTrajectories,
   compareWithTrajectory,
   disabled,
+  initialSubmittedAt,
+  hideSubmit,
   onSubmit,
-  submitDisabled,
   submitLabel,
 }: TrajectoryAnnotatorProps) {
   const store = useStore()
+  const router = useRouter()
   const [mode, setMode] = useAtom(modeAtom)
   const [deepDive, setDeepDive] = useAtom(deepDiveAtom)
   const [selectedIdx, setSelectedIdx] = useAtom(selectedIdxAtom)
@@ -205,6 +222,9 @@ function TrajectoryAnnotatorInner({
       }
       if (Object.keys(stepBucket).length) out[s.id] = stepBucket
     }
+    // Intentional one-shot snapshot init on trajectory change (perf note above);
+    // pre-existing pattern, same as the exhaustive-deps suppression below.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMarksSnapshot(out)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trajectory.id])
@@ -273,6 +293,58 @@ function TrajectoryAnnotatorInner({
     [saveTrajectoryMark, store],
   )
 
+  // ─── Submit / mark-reviewed ───────────────────────────────────────────
+  // Explicit finalize step. Autosave only ever persists marks; without
+  // this the annotation row keeps a null submittedAt and the trajectory
+  // never leaves /my/queue. Submission is idempotent server-side, so a
+  // double-click is harmless. On success we flip local state to "Submitted"
+  // and refresh the route so the (revalidated) queue + detail surfaces
+  // reflect the new status. Autosave keeps working before AND after submit.
+  const [submitting, setSubmitting] = useState(false)
+  const [submittedAt, setSubmittedAt] = useState<string | null>(
+    initialSubmittedAt ?? null,
+  )
+  const [submitError, setSubmitError] = useState<string | null>(null)
+
+  const handleSubmit = useCallback(async () => {
+    if (submitting || submittedAt) return
+    setSubmitting(true)
+    setSubmitError(null)
+    try {
+      if (onSubmit) {
+        await onSubmit()
+        setSubmittedAt(new Date().toISOString())
+      } else {
+        const res = await submitTrajectoryAnnotation({
+          workspaceId,
+          trajectoryId: trajectory.id,
+        })
+        setSubmittedAt(res.submittedAt)
+      }
+      // Repaint server surfaces (queue, detail, dashboard) so the
+      // just-submitted trajectory drops out of the queue.
+      router.refresh()
+    } catch (err) {
+      setSubmitError(getErrorMessage(err, 'Submit failed'))
+    } finally {
+      setSubmitting(false)
+    }
+  }, [
+    submitting,
+    submittedAt,
+    onSubmit,
+    workspaceId,
+    trajectory.id,
+    router,
+  ])
+
+  const showSubmit = !hideSubmit
+  const submitButtonLabel = submittedAt
+    ? (submitLabel ? `${submitLabel} ✓` : 'Submitted ✓')
+    : submitting
+      ? 'Submitting…'
+      : (submitLabel ?? 'Submit for review')
+
   const progress = useMemo<AnnotateProgress>(
     () => computeProgress(trajectory, rubric, marksSnapshot),
     [trajectory, rubric, marksSnapshot],
@@ -312,9 +384,10 @@ function TrajectoryAnnotatorInner({
         setDeepDive={setDeepDive}
         progress={progress}
         onOpenReference={() => setShowReference(true)}
-        onSubmit={onSubmit}
-        submitDisabled={submitDisabled}
-        submitLabel={submitLabel}
+        onSubmit={showSubmit ? handleSubmit : undefined}
+        submitDisabled={submitting || submittedAt != null}
+        submitLabel={submitButtonLabel}
+        submitError={submitError}
       />
 
       {trajectory.attachments.length > 0 && (

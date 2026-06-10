@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { acceptInvite } from '@/lib/actions/membership'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 
 /**
  * The Accept button on /invites/[token].
@@ -28,10 +29,11 @@ export function AcceptInviteClient({
     startTransition(async () => {
       try {
         await acceptInvite({ token })
+        // No refresh() after push — it aborts the in-flight push
+        // navigation on slow links (see after-submit-nav.ts).
         router.push(`/workspaces/${workspaceId}`)
-        router.refresh()
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Accept failed.')
+        setError(getErrorMessage(e, 'Accept failed.'))
       }
     })
   }

@@ -108,7 +108,7 @@ async function resolveDemoBearer(): Promise<{
     if (status >= 200 && status < 300) {
       return { bearer: override, source: `LABELHUB_KEY env (ping ${status})` }
     }
-    // eslint-disable-next-line no-console
+     
     console.warn(
       `[smoke] LABELHUB_KEY env returned ${status} on liveness ping — treating as dead, falling through to /api/demo/info`,
     )
@@ -122,13 +122,13 @@ async function resolveDemoBearer(): Promise<{
     if (status >= 200 && status < 300) {
       return { bearer: live, source: `/api/demo/info (ping ${status})` }
     }
-    // eslint-disable-next-line no-console
+     
     console.error(
       `[smoke] /api/demo/info returned a key but it failed the liveness ping (status ${status}). Server-side seed may be inconsistent with proxy auth.`,
     )
     process.exit(2)
   }
-  // eslint-disable-next-line no-console
+   
   console.error(
     `[smoke] could not resolve a working demo bearer (env LABELHUB_KEY dead or unset, ${BASE_URL}/api/demo/info also failed).`,
   )

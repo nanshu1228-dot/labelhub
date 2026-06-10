@@ -197,8 +197,8 @@ async function classifyForTopic(
 
 export interface AnnotationTimeRow {
   annotationId: string
-  raterId: string
-  raterDisplayName: string | null
+  annotatorId: string
+  annotatorDisplayName: string | null
   trajectoryId: string | null
   trajectoryAgentName: string | null
   elapsedSeconds: number | null
@@ -315,8 +315,8 @@ export async function listWorkspaceAnnotationTimes(
 
     return {
       annotationId: r.annotationId,
-      raterId: r.userId,
-      raterDisplayName: r.displayName,
+      annotatorId: r.userId,
+      annotatorDisplayName: r.displayName,
       trajectoryId: firstMark?.trajectoryId ?? null,
       trajectoryAgentName: firstMark?.trajectoryAgentName ?? null,
       elapsedSeconds,

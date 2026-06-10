@@ -99,6 +99,10 @@ export default async function AdminDashboardPage() {
             oldest unreviewed work first so backlog doesn&apos;t silently
             grow.
           </p>
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <AdminQuickLink href="/admin/forms" label="Form library" />
+            <AdminQuickLink href="/admin/exports" label="Exports" />
+          </div>
         </div>
 
         <section className="mb-8">
@@ -237,7 +241,7 @@ function WorkspaceCard({ card }: { card: AdminWorkspaceCard }) {
         <Mini label="pending" value={card.pendingReview} accent={card.pendingReview > 0 ? 'warn' : undefined} />
         <Mini label="approved" value={card.approvedLast7d} accent="ok" />
         <Mini label="rejected" value={card.rejectedLast7d} accent={card.rejectedLast7d > 0 ? 'bad' : undefined} />
-        <Mini label="打回" value={card.awaitingRevision} accent={card.awaitingRevision > 0 ? 'warn' : undefined} />
+        <Mini label="sent back" value={card.awaitingRevision} accent={card.awaitingRevision > 0 ? 'warn' : undefined} />
       </div>
 
       <p
@@ -446,5 +450,24 @@ function EmptyCard({ message }: { message: string }) {
     >
       {message}
     </div>
+  )
+}
+
+function AdminQuickLink({ href, label }: { href: string; label: string }) {
+  return (
+    <Link
+      href={href}
+      className="ts-12 mono rounded inline-flex items-center"
+      style={{
+        minHeight: 32,
+        padding: '0 12px',
+        background: 'var(--panel)',
+        color: 'var(--text)',
+        border: '1px solid var(--line)',
+        textDecoration: 'none',
+      }}
+    >
+      {label}
+    </Link>
   )
 }

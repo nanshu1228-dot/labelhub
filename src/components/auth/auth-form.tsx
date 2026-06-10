@@ -1,10 +1,12 @@
 'use client'
 
 import { useState, useTransition } from 'react'
+import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { signIn, signUp } from '@/lib/actions/auth'
 import { GoogleSignInButton } from './google-button'
 import { DEMO_WORKSPACE_PATH } from '@/lib/seeds'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 
 /**
  * Shared sign-in / sign-up form.
@@ -50,8 +52,10 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
       try {
         if (mode === 'signin') {
           await signIn({ email, password })
+          // No refresh() after push — it aborts the in-flight push
+          // navigation on slow links (see after-submit-nav.ts). The
+          // pushed dynamic route re-renders with the new session anyway.
           router.push(next)
-          router.refresh()
         } else {
           const result = await signUp({ email, password, displayName })
           if (result.requiresEmailConfirm) {
@@ -61,10 +65,9 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
             return
           }
           router.push(next)
-          router.refresh()
         }
       } catch (e) {
-        const msg = e instanceof Error ? e.message : 'Something went wrong.'
+        const msg = getErrorMessage(e, 'Something went wrong.')
         setError(msg)
       }
     })
@@ -86,7 +89,7 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
   return (
     <div className="auth-shell">
       <header className="auth-header">
-        <a href="/" aria-label="LabelHub home" className="auth-logo">
+        <Link href="/" aria-label="LabelHub home" className="auth-logo">
           <svg width="22" height="22" viewBox="0 0 18 18" fill="none">
             <rect
               x="0.5"
@@ -104,7 +107,7 @@ export function AuthForm({ mode }: { mode: AuthMode }) {
             />
           </svg>
           <span>LabelHub</span>
-        </a>
+        </Link>
       </header>
 
       <main className="auth-main">

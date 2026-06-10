@@ -39,9 +39,9 @@ export interface CriticalViolation {
   level: 'step' | 'trajectory'
   /** Step that the violation is attached to (null when level === 'trajectory'). */
   stepId: string | null
-  /** Rater who raised the flag. */
-  raterId: string
-  raterDisplayName: string | null
+  /** Annotator who raised the flag. */
+  annotatorId: string
+  annotatorDisplayName: string | null
   /** When the violating mark was created/last touched. */
   ts: Date
 }
@@ -161,8 +161,8 @@ export async function listWorkspaceCriticalViolations(
           rubricName: rubric.name,
           level: 'step',
           stepId: sm.trajectoryStepId,
-          raterId: ann.userId,
-          raterDisplayName: ann.displayName,
+          annotatorId: ann.userId,
+          annotatorDisplayName: ann.displayName,
           ts: ann.submittedAt ?? new Date(0),
         })
       }
@@ -185,8 +185,8 @@ export async function listWorkspaceCriticalViolations(
           rubricName: rubric.name,
           level: 'trajectory',
           stepId: null,
-          raterId: ann.userId,
-          raterDisplayName: ann.displayName,
+          annotatorId: ann.userId,
+          annotatorDisplayName: ann.displayName,
           ts: ann.submittedAt ?? new Date(0),
         })
       }

@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { normalizeSupabaseCookieOptions } from './cookie-options'
 
 /**
  * Session-refresh helper called from root `proxy.ts` on every request.
@@ -18,30 +19,29 @@ export async function updateSession(request: NextRequest) {
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
   if (!url || !key) return response
 
+  // See server.ts — opt-in HTTP cookie support for the finals self-host
+  // demo URL. Unset in normal HTTPS deploys.
+  const insecureCookies = process.env.INSECURE_COOKIES === 'true'
+
   const supabase = createServerClient(url, key, {
     cookies: {
       getAll() {
         return request.cookies.getAll()
       },
-      setAll(cookiesToSet) {
+      setAll(cookiesToSet, headers) {
         cookiesToSet.forEach(({ name, value }) =>
           request.cookies.set(name, value),
         )
         response = NextResponse.next({ request })
+        Object.entries(headers).forEach(([key, value]) =>
+          response.headers.set(key, value),
+        )
         cookiesToSet.forEach(({ name, value, options }) => {
-          // Belt-and-suspenders for "stay signed in":
-          //   Supabase SSR's defaults already set maxAge ~400 days, but
-          //   we floor any session-only (undefined/0) cookie at 30 days
-          //   so a browser quirk or a future SDK regression can't silently
-          //   downgrade us to session cookies (lost on tab close).
-          const safeOptions = {
-            ...options,
-            maxAge:
-              options?.maxAge && options.maxAge > 0
-                ? options.maxAge
-                : 60 * 60 * 24 * 30,
-          }
-          response.cookies.set(name, value, safeOptions)
+          response.cookies.set(
+            name,
+            value,
+            normalizeSupabaseCookieOptions(options, insecureCookies),
+          )
         })
       },
     },

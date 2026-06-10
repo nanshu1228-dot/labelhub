@@ -1,8 +1,9 @@
 import 'server-only'
-import { and, count, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm'
+import { and, count, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import {
   annotations,
+  events,
   tasks,
   topics,
   workspaceMembers,
@@ -33,7 +34,7 @@ export interface MyTaskCard {
   taskDescription: string | null
   workspaceId: string
   workspaceName: string
-  templateMode: 'pair-rubric' | 'arena-gsb'
+  templateMode: TopicTaskMode
   /** ISO 4217 / token symbol from rewardConfig.currency. */
   currency: string | null
   /** Per-topic pay in MAJOR units (元 / USD) for human display.
@@ -50,6 +51,8 @@ export interface MyTaskCard {
   /** Task createdAt — used to sort newest first. */
   createdAt: Date
 }
+
+type TopicTaskMode = 'pair-rubric' | 'arena-gsb' | 'custom-designer'
 
 export async function listMyTasks(opts: {
   userId: string
@@ -97,7 +100,11 @@ export async function listMyTasks(opts: {
     .where(
       and(
         inArray(tasks.workspaceId, workspaceIds),
-        inArray(tasks.templateMode, ['pair-rubric', 'arena-gsb']),
+        inArray(tasks.templateMode, [
+          'pair-rubric',
+          'arena-gsb',
+          'custom-designer',
+        ]),
         eq(tasks.status, 'open'),
       ),
     )
@@ -154,12 +161,18 @@ export async function listMyTasks(opts: {
     const economy =
       (t.rewardConfig ?? {}) as {
         baseAmountMinor?: number
+        amount?: number
         currency?: string
       }
+    const baseAmountMinor =
+      typeof economy.baseAmountMinor === 'number'
+        ? economy.baseAmountMinor
+        : typeof economy.amount === 'number'
+          ? economy.amount
+          : null
     const rewardPerTopic =
-      typeof economy.baseAmountMinor === 'number' &&
-      economy.baseAmountMinor > 0
-        ? economy.baseAmountMinor / 100
+      baseAmountMinor !== null && baseAmountMinor > 0
+        ? baseAmountMinor / 100
         : null
     return {
       taskId: t.id,
@@ -167,7 +180,7 @@ export async function listMyTasks(opts: {
       taskDescription: t.description,
       workspaceId: t.workspaceId,
       workspaceName: workspaceNameById.get(t.workspaceId) ?? '',
-      templateMode: t.templateMode as 'pair-rubric' | 'arena-gsb',
+      templateMode: t.templateMode as TopicTaskMode,
       currency: economy.currency ?? null,
       rewardPerTopic,
       claimableCount: Number(c.claimable ?? 0),
@@ -193,12 +206,16 @@ export async function listMyTasks(opts: {
 
 export interface MyTaskTopicRow {
   topicId: string
+  annotationId: string | null
   promptPreview: string
   /** 'mine'      — I claimed it, draft in flight
    *  'fresh'     — unclaimed, anyone can grab
+   *  'revision'  — reviewer / AI sent my submitted work back
    *  'submitted' — I already submitted
    *  'others'    — someone else claimed it (greyed out, not pickable) */
-  state: 'mine' | 'fresh' | 'submitted' | 'others'
+  state: 'mine' | 'fresh' | 'revision' | 'submitted' | 'others'
+  workflowStatus: string
+  reviewFeedback: string | null
   /** AI-estimated 1-5 difficulty (Phase-8) — null when not estimated. */
   difficulty: number | null
   difficultyReason: string | null
@@ -221,7 +238,7 @@ export interface MyTaskDetail {
     guidelinesMarkdown: string | null
     workspaceId: string
     workspaceName: string
-    templateMode: 'pair-rubric' | 'arena-gsb'
+    templateMode: TopicTaskMode
     currency: string | null
     rewardPerTopic: number | null
     deadline: Date | null
@@ -231,6 +248,7 @@ export interface MyTaskDetail {
   counts: {
     fresh: number
     mine: number
+    revision: number
     submitted: number
     others: number
   }
@@ -283,10 +301,12 @@ export async function getMyTaskDetail(opts: {
     .select({
       topicId: topics.id,
       itemData: topics.itemData,
+      topicStatus: topics.status,
       assignedTo: topics.assignedTo,
       createdAt: topics.createdAt,
       difficulty: topics.difficulty,
       difficultyReason: topics.difficultyReason,
+      myAnnotationId: annotations.id,
       myAnnotationSubmittedAt: annotations.submittedAt,
     })
     .from(topics)
@@ -307,17 +327,61 @@ export async function getMyTaskDetail(opts: {
     taskIds: [opts.taskId],
   })
 
-  const counts = { fresh: 0, mine: 0, submitted: 0, others: 0 }
+  const annotationIds = rows
+    .map((r) => r.myAnnotationId)
+    .filter((id): id is string => Boolean(id))
+  const reviewFeedbackByAnnotation = new Map<string, string>()
+  if (annotationIds.length > 0) {
+    const reviewEvents = await db
+      .select({
+        type: events.type,
+        payload: events.payload,
+      })
+      .from(events)
+      .where(
+        and(
+          eq(events.workspaceId, task.workspaceId),
+          inArray(events.type, ['annotation.revised', 'ai_review.sent_back']),
+          sql`${events.payload} ->> 'annotationId' = ANY(${annotationIds})`,
+        ),
+      )
+      .orderBy(desc(events.ts))
+    for (const event of reviewEvents) {
+      const payload = (event.payload ?? {}) as Record<string, unknown>
+      const annotationId =
+        typeof payload.annotationId === 'string' ? payload.annotationId : null
+      if (!annotationId || reviewFeedbackByAnnotation.has(annotationId)) {
+        continue
+      }
+      const feedback =
+        typeof payload.feedback === 'string'
+          ? payload.feedback
+          : typeof payload.reason === 'string'
+            ? payload.reason
+            : null
+      if (feedback?.trim()) {
+        reviewFeedbackByAnnotation.set(annotationId, feedback.trim())
+      }
+    }
+  }
+
+  const counts = { fresh: 0, mine: 0, revision: 0, submitted: 0, others: 0 }
   const out: MyTaskTopicRow[] = []
   for (const r of rows) {
-    const itemData = (r.itemData ?? {}) as { prompt?: unknown }
-    const promptPreview =
-      typeof itemData.prompt === 'string'
-        ? itemData.prompt.slice(0, 200)
-        : '(no prompt)'
+    const promptPreview = topicPreview(r.itemData)
+    const reviewFeedback = r.myAnnotationId
+      ? reviewFeedbackByAnnotation.get(r.myAnnotationId) ?? null
+      : null
 
     let state: MyTaskTopicRow['state']
-    if (r.myAnnotationSubmittedAt) {
+    if (
+      r.myAnnotationSubmittedAt &&
+      r.assignedTo === opts.userId &&
+      (r.topicStatus === 'revising' || r.topicStatus === 'drafting')
+    ) {
+      state = 'revision'
+      counts.revision += 1
+    } else if (r.myAnnotationSubmittedAt) {
       state = 'submitted'
       counts.submitted += 1
     } else if (r.assignedTo === opts.userId) {
@@ -332,8 +396,11 @@ export async function getMyTaskDetail(opts: {
     }
     out.push({
       topicId: r.topicId,
+      annotationId: r.myAnnotationId,
       promptPreview,
       state,
+      workflowStatus: r.topicStatus,
+      reviewFeedback,
       difficulty: r.difficulty,
       difficultyReason: r.difficultyReason,
       createdAt: r.createdAt,
@@ -347,10 +414,11 @@ export async function getMyTaskDetail(opts: {
   // active learning takes precedence. Within the other buckets the
   // old FIFO rule still holds (claims spread across topics).
   const rank: Record<MyTaskTopicRow['state'], number> = {
-    mine: 0,
-    fresh: 1,
-    submitted: 2,
-    others: 3,
+    revision: 0,
+    mine: 1,
+    fresh: 2,
+    submitted: 3,
+    others: 4,
   }
   out.sort((a, b) => {
     const r = rank[a.state] - rank[b.state]
@@ -365,11 +433,18 @@ export async function getMyTaskDetail(opts: {
 
   const economy = (task.rewardConfig ?? {}) as {
     baseAmountMinor?: number
+    amount?: number
     currency?: string
   }
+  const baseAmountMinor =
+    typeof economy.baseAmountMinor === 'number'
+      ? economy.baseAmountMinor
+      : typeof economy.amount === 'number'
+        ? economy.amount
+        : null
   const rewardPerTopic =
-    typeof economy.baseAmountMinor === 'number' && economy.baseAmountMinor > 0
-      ? economy.baseAmountMinor / 100
+    baseAmountMinor !== null && baseAmountMinor > 0
+      ? baseAmountMinor / 100
       : null
 
   return {
@@ -380,7 +455,7 @@ export async function getMyTaskDetail(opts: {
       guidelinesMarkdown: task.guidelinesMarkdown,
       workspaceId: task.workspaceId,
       workspaceName: task.workspaceName,
-      templateMode: task.templateMode as 'pair-rubric' | 'arena-gsb',
+      templateMode: task.templateMode as TopicTaskMode,
       currency: economy.currency ?? null,
       rewardPerTopic,
       deadline: task.deadline,
@@ -388,4 +463,22 @@ export async function getMyTaskDetail(opts: {
     topics: out,
     counts,
   }
+}
+
+function topicPreview(itemData: unknown): string {
+  const row = (itemData ?? {}) as Record<string, unknown>
+  const candidates = [
+    row.prompt,
+    row.content_markdown,
+    row.model_answer,
+    row.response_a,
+    row.response_b,
+    row.id,
+  ]
+  for (const value of candidates) {
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim().slice(0, 200)
+    }
+  }
+  return '(no prompt)'
 }

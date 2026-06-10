@@ -6,7 +6,7 @@
 import { config as loadEnv } from 'dotenv'
 loadEnv({ path: '.env.local' })
 
-import { eq, isNull } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 import * as schema from '../src/lib/db/schema'

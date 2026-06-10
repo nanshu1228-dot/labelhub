@@ -153,7 +153,7 @@ describe('reshapeTeaching — output shape', () => {
       annotationId: 'ann-1',
       topicId: 'topic-1',
       taskId: 'task-1',
-      raterUserId: 'user-1',
+      annotatorUserId: 'user-1',
       submittedAt: '2026-05-18T12:00:00Z',
       itemData: { prompt: 'What is metformin?' },
     })

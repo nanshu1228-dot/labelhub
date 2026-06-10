@@ -18,7 +18,7 @@
  */
 
 import { z } from 'zod'
-import { and, desc, eq, inArray, isNull } from 'drizzle-orm'
+import { and, desc, eq, inArray } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import {
   events,

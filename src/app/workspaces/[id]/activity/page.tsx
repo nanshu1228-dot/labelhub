@@ -1,10 +1,8 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { notFound, redirect } from 'next/navigation'
-import { desc, eq } from 'drizzle-orm'
-import { getDb } from '@/lib/db/client'
-import { events, users } from '@/lib/db/schema'
 import { optionalUser, requireWorkspaceMember } from '@/lib/auth/guards'
+import { listWorkspaceActivity } from '@/lib/queries/activity'
 import { getWorkspaceById } from '@/lib/queries/workspaces'
 
 export const metadata: Metadata = {
@@ -43,22 +41,7 @@ export default async function ActivityPage(
   // Membership gate — viewers can browse activity (read-only by definition).
   await requireWorkspaceMember(workspaceId)
 
-  const db = getDb()
-  const rows = await db
-    .select({
-      id: events.id,
-      type: events.type,
-      actorId: events.actorId,
-      payload: events.payload,
-      ts: events.ts,
-      actorEmail: users.email,
-      actorDisplayName: users.displayName,
-    })
-    .from(events)
-    .leftJoin(users, eq(users.id, events.actorId))
-    .where(eq(events.workspaceId, workspaceId))
-    .orderBy(desc(events.ts))
-    .limit(PAGE_SIZE)
+  const rows = await listWorkspaceActivity(workspaceId)
 
   return (
     <div className="app-light min-h-screen" style={{ background: 'var(--bg)' }}>
@@ -275,8 +258,16 @@ function describeEvent(
       return `Closed payout period: ${numOrZero(p.payoutCount)} payouts, ${(numOrZero(p.grandTotalMinor) / 100).toFixed(2)} grand total`
     case 'payout.paid':
       return `Marked payout paid: ${(numOrZero(p.amountMinor) / 100).toFixed(2)} ${strOrDash(p.currency)}`
+    case 'wallet.credited':
+      return `Admin credited account: +${(numOrZero(p.amountMinor) / 100).toFixed(2)} ${strOrDash(p.currency)}`
     case 'wallet.withdraw_requested':
-      return `Withdraw requested: ${(numOrZero(p.amountMinor) / 100).toFixed(2)} ${strOrDash(p.currency)} via ${strOrDash(p.paymentMethodType)}`
+      return `Withdrawal requested: ${(numOrZero(p.amountMinor) / 100).toFixed(2)} ${strOrDash(p.currency)}`
+    case 'withdrawal.approved':
+      return `Withdrawal approved: ${(numOrZero(p.amountMinor) / 100).toFixed(2)} ${strOrDash(p.currency)}`
+    case 'withdrawal.rejected':
+      return `Withdrawal rejected: ${(numOrZero(p.amountMinor) / 100).toFixed(2)} ${strOrDash(p.currency)}`
+    case 'withdrawal.paid':
+      return `Withdrawal marked paid: ${(numOrZero(p.amountMinor) / 100).toFixed(2)} ${strOrDash(p.currency)} (${strOrDash(p.externalRef)})`
     case 'step_mark.created':
     case 'step_mark.updated':
       return `Marked rubric "${strOrDash(p.rubricId)}" on a trajectory step`

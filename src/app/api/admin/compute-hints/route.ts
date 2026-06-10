@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
     // Log full stack server-side; return generic message to caller. The
     // old behavior returned stack frames + e.message verbatim, which
     // leaked module paths and DB constraint names.
-    // eslint-disable-next-line no-console
+     
     console.error(
       '[admin/compute-hints] internal error:',
       e instanceof Error ? e.stack ?? e.message : e,

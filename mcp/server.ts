@@ -62,7 +62,7 @@ async function main() {
 }
 
 main().catch((e) => {
-  // eslint-disable-next-line no-console
+   
   console.error('[labelhub-mcp] fatal:', e instanceof Error ? e.stack ?? e.message : e)
   process.exit(1)
 })

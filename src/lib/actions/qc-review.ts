@@ -44,12 +44,21 @@ import {
 } from '@/lib/db/schema'
 import { requireWorkspaceQC } from '@/lib/auth/guards'
 import {
+  applyTransition,
+  IllegalTransitionError,
+  type StageAction,
+} from '@/lib/quality/state-machine'
+import {
   ConflictError,
   NotFoundError,
 } from '@/lib/errors'
 import { fanoutWebhook } from '@/lib/webhooks/fanout'
 import { emitNotification } from '@/lib/notifications/emit'
 import { recomputeAndPersistTrust } from '@/lib/quality/trust-recompute'
+import {
+  assertRevisionFeedback,
+  normalizeReviewFeedback,
+} from '@/lib/quality/review-feedback'
 
 const qcReviewSchema = z.object({
   annotationId: z.string().uuid(),
@@ -62,6 +71,8 @@ export async function qcReviewAnnotation(
   input: z.infer<typeof qcReviewSchema>,
 ): Promise<{ ok: true; next: 'awaiting_acceptance' | 'revising' }> {
   const parsed = qcReviewSchema.parse(input)
+  assertRevisionFeedback(parsed.decision, parsed.feedback)
+  const feedback = normalizeReviewFeedback(parsed.feedback)
   const db = getDb()
 
   // Resolve the annotation → topic → task → workspace BEFORE the auth
@@ -91,13 +102,6 @@ export async function qcReviewAnnotation(
 
   const { user, role } = await requireWorkspaceQC(task.workspaceId)
 
-  // QC can only act on annotations in flight. Anything already accepted /
-  // rejected / awaiting acceptance is past the QC stage.
-  if (topic.status !== 'submitted' && topic.status !== 'reviewing') {
-    throw new ConflictError(
-      `Cannot QC-review an annotation whose topic is ${topic.status}.`,
-    )
-  }
   // Don't allow self-QC: the submitter can't QC their own work.
   if (annotation.userId === user.id) {
     throw new ConflictError(
@@ -105,58 +109,76 @@ export async function qcReviewAnnotation(
     )
   }
 
-  const transition = {
-    pass: {
-      next: 'awaiting_acceptance' as const,
-      event: 'annotation.qc_passed' as const,
-    },
-    request_revision: {
-      next: 'revising' as const,
-      event: 'annotation.revised' as const,
-    },
-  } satisfies Record<
-    typeof parsed.decision,
-    { next: 'awaiting_acceptance' | 'revising'; event: string }
-  >
-  const { next, event } = transition[parsed.decision]
-
-  const updated = await db
-    .update(topics)
-    .set({ status: next, version: topic.version + 1 })
-    .where(
-      and(eq(topics.id, topic.id), eq(topics.version, topic.version)),
-    )
-    .returning()
-  if (updated.length === 0) {
-    throw new ConflictError(
-      'Topic was modified concurrently — refresh and try again.',
-    )
+  // Delegate the legality + role check to the canonical state machine
+  // (src/lib/quality/state-machine.ts). The machine throws
+  // IllegalTransitionError when the topic isn't in submitted/reviewing
+  // (covers what the ad-hoc check used to do) and ForbiddenRoleError
+  // when the role doesn't match.
+  const action: StageAction =
+    parsed.decision === 'pass' ? 'qc_pass' : 'qc_request_revision'
+  let transition: ReturnType<typeof applyTransition>
+  try {
+    // requireWorkspaceQC narrowed `role` to admin|qc above. The
+    // state machine's Actor type is the same set + 'annotator'|'ai';
+    // a cast is safe here.
+    transition = applyTransition({
+      from: topic.status,
+      action,
+      role: role as 'admin' | 'qc',
+    })
+  } catch (e) {
+    if (e instanceof IllegalTransitionError) {
+      throw new ConflictError(
+        `Cannot QC-review an annotation whose topic is ${topic.status}.`,
+      )
+    }
+    throw e
   }
+  const next = transition.to as 'awaiting_acceptance' | 'revising'
+  const event =
+    parsed.decision === 'pass' ? 'annotation.qc_passed' : 'annotation.revised'
 
-  await db.insert(events).values({
-    type: event,
-    workspaceId: task.workspaceId,
-    actorId: user.id,
-    payload: {
-      topicId: topic.id,
-      annotationId: annotation.id,
-      submitterUserId: annotation.userId,
-      decision: parsed.decision,
-      feedback: parsed.feedback ?? null,
-      taskId: task.id,
-      templateMode: task.templateMode,
-      // Distinguishes QC verdict from admin verdict when both use the
-      // same `annotation.revised` event type. The review-thread reader
-      // uses this to color the message correctly.
-      reviewerRole: role,
-    },
+  // QC verdict state-change + its audit event, atomically — no status flip
+  // without the trail, and no trail without the flip (mirrors the
+  // reviewAnnotation admin path). The version CAS still guards concurrent
+  // edits; a 0-row update rolls the whole tx back with ConflictError.
+  await db.transaction(async (tx) => {
+    const updated = await tx
+      .update(topics)
+      .set({ status: next, version: topic.version + 1 })
+      .where(and(eq(topics.id, topic.id), eq(topics.version, topic.version)))
+      .returning()
+    if (updated.length === 0) {
+      throw new ConflictError(
+        'Topic was modified concurrently — refresh and try again.',
+      )
+    }
+
+    await tx.insert(events).values({
+      type: event,
+      workspaceId: task.workspaceId,
+      actorId: user.id,
+      payload: {
+        topicId: topic.id,
+        annotationId: annotation.id,
+        submitterUserId: annotation.userId,
+        decision: parsed.decision,
+        feedback: feedback ?? null,
+        taskId: task.id,
+        templateMode: task.templateMode,
+        // Distinguishes QC verdict from admin verdict when both use the
+        // same `annotation.revised` event type. The review-thread reader
+        // uses this to color the message correctly.
+        reviewerRole: role,
+      },
+    })
   })
 
   // Notify the submitter. QC has two outcomes — pass (escalates to
   // admin acceptance, so submitter sees "your work passed QC") vs
   // request_revision (打回, submitter needs to fix it). Different
   // inbox titles so the user knows whether to relax or get to work.
-  const trimmedFeedback = parsed.feedback?.trim().slice(0, 140) || undefined
+  const trimmedFeedback = feedback?.slice(0, 140)
   if (parsed.decision === 'pass') {
     await emitNotification({
       userId: annotation.userId,
@@ -202,11 +224,10 @@ export async function qcReviewAnnotation(
         taskId: task.id,
         submitterUserId: annotation.userId,
         decision: parsed.decision,
-        feedback: parsed.feedback ?? null,
+        feedback: feedback ?? null,
         reviewerRole: role,
       },
     }).catch((e) => {
-      // eslint-disable-next-line no-console
       console.warn('webhook fanout failed (qc-review):', e)
     }),
   )
@@ -218,7 +239,6 @@ export async function qcReviewAnnotation(
       workspaceId: task.workspaceId,
       taskType: task.templateMode,
     }).catch((e) => {
-      // eslint-disable-next-line no-console
       console.warn('[trust] recompute failed (qc-review)', e)
     }),
   )

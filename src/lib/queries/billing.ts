@@ -1,5 +1,5 @@
 import 'server-only'
-import { and, desc, eq, isNull } from 'drizzle-orm'
+import { and, desc, eq, isNull, sql } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import {
   paymentMethods,
@@ -7,7 +7,10 @@ import {
   payoutPeriods,
   payouts,
   transactions,
+  users,
   walletBalance,
+  withdrawalRequests,
+  workspaceMembers,
 } from '@/lib/db/schema'
 
 /**
@@ -262,6 +265,156 @@ export async function getPeriodDetail(
     .limit(200)
 
   return { period, payouts: periodPayouts, lineItems: periodLineItems }
+}
+
+// ─── Withdrawal requests (the operable payment loop) ───────────────────
+
+/**
+ * Admin withdrawal queue for a workspace — newest first, joined to the
+ * requester's email/name so the admin sees who asked. The dashboard
+ * surfaces status='requested' rows as the actionable queue and the rest as
+ * recent history.
+ */
+export async function getWorkspaceWithdrawals(workspaceId: string) {
+  const db = getDb()
+  return db
+    .select({
+      id: withdrawalRequests.id,
+      userId: withdrawalRequests.userId,
+      email: users.email,
+      displayName: users.displayName,
+      amountMinor: withdrawalRequests.amountMinor,
+      currency: withdrawalRequests.currency,
+      status: withdrawalRequests.status,
+      decisionMemo: withdrawalRequests.decisionMemo,
+      externalRef: withdrawalRequests.externalRef,
+      reviewedAt: withdrawalRequests.reviewedAt,
+      createdAt: withdrawalRequests.createdAt,
+    })
+    .from(withdrawalRequests)
+    .leftJoin(users, eq(withdrawalRequests.userId, users.id))
+    .where(eq(withdrawalRequests.workspaceId, workspaceId))
+    .orderBy(desc(withdrawalRequests.createdAt))
+    .limit(50)
+}
+
+/**
+ * Members of a workspace (id + email/name + role) for the admin credit
+ * form's target picker. Read-only.
+ */
+export async function listWorkspaceMembersBasic(workspaceId: string) {
+  const db = getDb()
+  return db
+    .select({
+      userId: workspaceMembers.userId,
+      email: users.email,
+      displayName: users.displayName,
+      role: workspaceMembers.role,
+    })
+    .from(workspaceMembers)
+    .leftJoin(users, eq(workspaceMembers.userId, users.id))
+    .where(eq(workspaceMembers.workspaceId, workspaceId))
+    .orderBy(users.email)
+}
+
+/**
+ * A user's own withdrawal requests across workspaces — so they can track a
+ * pending request that hasn't been approved yet (it won't appear in the
+ * ledger until the debit lands on approval).
+ */
+export async function getMyWithdrawals(userId: string) {
+  const db = getDb()
+  return db
+    .select()
+    .from(withdrawalRequests)
+    .where(eq(withdrawalRequests.userId, userId))
+    .orderBy(desc(withdrawalRequests.createdAt))
+    .limit(20)
+}
+
+// ─── Admin wallet / withdrawal overview ────────────────────────────────
+
+export interface WalletSummaryCurrencyRow {
+  currency: string
+  /** Total outstanding wallet liabilities for members in this workspace. */
+  liabilityMinor: number
+  /** Number of status='requested' withdrawal rows in this currency. */
+  pendingWithdrawalCount: number
+  /** SUM of requested (positive) amounts awaiting a decision. */
+  pendingWithdrawalMinor: number
+}
+
+export interface WorkspaceWalletSummary {
+  byCurrency: WalletSummaryCurrencyRow[]
+}
+
+/**
+ * Admin overview of money the workspace owes its members.
+ *
+ * Two read-only aggregates, merged per currency:
+ *   - liabilities      : SUM(wallet_balance.balance_minor) for this workspace
+ *   - pendingWithdrawal : count + SUM(amount_minor) of status='requested'
+ *                         withdrawal_requests for this workspace
+ *
+ * Both grouped by currency so a multi-currency workspace shows one row each.
+ */
+export async function getWorkspaceWalletSummary(
+  workspaceId: string,
+): Promise<WorkspaceWalletSummary> {
+  const db = getDb()
+
+  const [liabilityRows, pendingRows] = await Promise.all([
+    db
+      .select({
+        currency: walletBalance.currency,
+        liabilityMinor: sql<number>`coalesce(sum(${walletBalance.balanceMinor}), 0)::int`,
+      })
+      .from(walletBalance)
+      .where(eq(walletBalance.workspaceId, workspaceId))
+      .groupBy(walletBalance.currency),
+    db
+      .select({
+        currency: withdrawalRequests.currency,
+        pendingWithdrawalCount: sql<number>`count(*)::int`,
+        pendingWithdrawalMinor: sql<number>`coalesce(sum(${withdrawalRequests.amountMinor}), 0)::int`,
+      })
+      .from(withdrawalRequests)
+      .where(
+        and(
+          eq(withdrawalRequests.workspaceId, workspaceId),
+          eq(withdrawalRequests.status, 'requested'),
+        ),
+      )
+      .groupBy(withdrawalRequests.currency),
+  ])
+
+  // Merge both aggregates into one row per currency.
+  const merged = new Map<string, WalletSummaryCurrencyRow>()
+  for (const r of liabilityRows) {
+    merged.set(r.currency, {
+      currency: r.currency,
+      liabilityMinor: r.liabilityMinor,
+      pendingWithdrawalCount: 0,
+      pendingWithdrawalMinor: 0,
+    })
+  }
+  for (const r of pendingRows) {
+    const cur = merged.get(r.currency) ?? {
+      currency: r.currency,
+      liabilityMinor: 0,
+      pendingWithdrawalCount: 0,
+      pendingWithdrawalMinor: 0,
+    }
+    cur.pendingWithdrawalCount = r.pendingWithdrawalCount
+    cur.pendingWithdrawalMinor = r.pendingWithdrawalMinor
+    merged.set(r.currency, cur)
+  }
+
+  return {
+    byCurrency: [...merged.values()].sort((a, b) =>
+      a.currency.localeCompare(b.currency),
+    ),
+  }
 }
 
 /**

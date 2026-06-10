@@ -50,7 +50,7 @@ export function teeWithAccumulator(opts: TeeOptions): ReadableStream<Uint8Array>
       start(controller) {
         controller.close()
         opts.onDone().catch((e) => {
-          // eslint-disable-next-line no-console
+           
           console.warn('sse-tee onDone failed (empty body):', e)
         })
       },
@@ -75,7 +75,7 @@ export function teeWithAccumulator(opts: TeeOptions): ReadableStream<Uint8Array>
             try {
               for (const ev of parser.push(value)) opts.onEvent(ev)
             } catch (e) {
-              // eslint-disable-next-line no-console
+               
               console.warn('sse-tee parse error:', e)
             }
           }
@@ -84,7 +84,7 @@ export function teeWithAccumulator(opts: TeeOptions): ReadableStream<Uint8Array>
           try {
             await opts.onDone()
           } catch (e) {
-            // eslint-disable-next-line no-console
+             
             console.warn('sse-tee onDone failed:', e)
           }
         } catch (e) {

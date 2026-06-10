@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from 'next/server'
-import { getSupabaseServerClient } from '@/lib/supabase/server'
-import { getDb } from '@/lib/db/client'
-import { users } from '@/lib/db/schema'
+import { createServerClient, type CookieOptions } from '@supabase/ssr'
+import { mirrorAuthUser } from '@/lib/auth/mirror-user'
+import { normalizeSupabaseCookieOptions } from '@/lib/supabase/cookie-options'
+import { publicUrl } from '@/lib/http/public-origin'
 
 /**
  * GET /auth/callback?code=...&next=/somewhere
@@ -35,7 +36,7 @@ export async function GET(request: NextRequest) {
   if (errorParam) {
     // User cancelled at the Google consent screen, or provider returned an
     // error. Send them to /signin with a surfaced error so they see why.
-    const redirectUrl = new URL('/signin', url.origin)
+    const redirectUrl = publicUrl('/signin', request)
     redirectUrl.searchParams.set(
       'oauth_error',
       errorDescription ?? errorParam,
@@ -45,17 +46,63 @@ export async function GET(request: NextRequest) {
   }
 
   if (!code) {
-    return NextResponse.redirect(new URL('/signin', url.origin), {
+    return NextResponse.redirect(publicUrl('/signin', request), {
       status: 303,
     })
   }
 
-  const supabase = await getSupabaseServerClient()
+  const env = getSupabaseEnv()
+  if (!env) {
+    const redirectUrl = publicUrl('/signin', request)
+    redirectUrl.searchParams.set('oauth_error', 'Supabase auth is not configured.')
+    return NextResponse.redirect(redirectUrl, { status: 303 })
+  }
+
+  const successUrl = publicUrl(next, request)
+  const response = NextResponse.redirect(successUrl, { status: 303 })
+  const cookieWrites: Array<{
+    name: string
+    value: string
+    options: CookieOptions
+  }> = []
+  const headerWrites: Record<string, string> = {}
+
+  const applyAuthSideEffects = (target: NextResponse) => {
+    Object.entries(headerWrites).forEach(([key, value]) =>
+      target.headers.set(key, value),
+    )
+    cookieWrites.forEach(({ name, value, options }) => {
+      target.cookies.set(
+        name,
+        value,
+        normalizeSupabaseCookieOptions(options, env.insecureCookies),
+      )
+    })
+    return target
+  }
+
+  const supabase = createServerClient(env.url, env.key, {
+    cookies: {
+      getAll() {
+        return request.cookies.getAll()
+      },
+      setAll(cookiesToSet, headers) {
+        cookiesToSet.forEach(({ name, value }) => {
+          request.cookies.set(name, value)
+        })
+        Object.assign(headerWrites, headers)
+        cookieWrites.push(...cookiesToSet)
+        applyAuthSideEffects(response)
+      },
+    },
+  })
   const { data, error } = await supabase.auth.exchangeCodeForSession(code)
   if (error) {
-    const redirectUrl = new URL('/signin', url.origin)
+    const redirectUrl = publicUrl('/signin', request)
     redirectUrl.searchParams.set('oauth_error', error.message)
-    return NextResponse.redirect(redirectUrl, { status: 303 })
+    return applyAuthSideEffects(
+      NextResponse.redirect(redirectUrl, { status: 303 }),
+    )
   }
 
   // Mirror into public.users so requireUser() doesn't have to lazy-insert.
@@ -64,15 +111,12 @@ export async function GET(request: NextRequest) {
   if (data.user) {
     try {
       const email = data.user.email
-      const displayName =
-        (data.user.user_metadata?.full_name as string | undefined) ??
-        (data.user.user_metadata?.name as string | undefined) ??
-        null
       if (email) {
-        await getDb()
-          .insert(users)
-          .values({ id: data.user.id, email, displayName })
-          .onConflictDoNothing()
+        await mirrorAuthUser({
+          id: data.user.id,
+          email,
+          metadata: data.user.user_metadata,
+        })
       }
     } catch {
       // Swallow — the requireUser() upsert path covers this if it ever
@@ -80,7 +124,7 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  return NextResponse.redirect(new URL(next, url.origin), { status: 303 })
+  return response
 }
 
 function safeNext(next: string | null): string {
@@ -93,3 +137,14 @@ function safeNext(next: string | null): string {
 // Expose the provider whitelist for the trigger button to import — keeps the
 // set of allowed providers single-sourced in this file.
 export const _ALLOWED_PROVIDERS = ALLOWED_PROVIDERS
+
+function getSupabaseEnv() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  if (!url || !key) return null
+  return {
+    url,
+    key,
+    insecureCookies: process.env.INSECURE_COOKIES === 'true',
+  }
+}

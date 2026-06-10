@@ -1,5 +1,5 @@
 import 'server-only'
-import { and, desc, eq, gte, ilike, inArray, or, sql } from 'drizzle-orm'
+import { and, count, desc, eq, gte, ilike, inArray, or, sql } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { events, users, workspaceMembers } from '@/lib/db/schema'
 
@@ -55,6 +55,16 @@ export const AUDIT_EVENT_GROUPS = {
     'llm_judge.created',
     'llm_judge.revoked',
   ],
+  /** AI pre-review pipeline — append-only verdict events the LLM gate
+   *  emits before a human ever sees the annotation. actorId is null (AI
+   *  is the actor), so these are the highest-frequency *non-human* state
+   *  changes; surfaced here so admins can audit "what did the AI gate do". */
+  ai_review: [
+    'ai_review.started',
+    'ai_review.completed',
+    'ai_review.sent_back',
+    'ai_review.failed',
+  ],
   /** Dawid-Skene EM truth-inference runs (Phase-11) — admin-triggered,
    *  visible in audit so an admin's coworker can see "Alice ran DS at 4pm". */
   consensus: ['ds.run_completed'],
@@ -90,9 +100,14 @@ export const AUDIT_EVENT_GROUPS = {
    *  edit lands here. */
   task: [
     'task.created',
+    'task.updated',
     'task.published',
+    'task.paused',
+    'task.resumed',
+    'task.closed',
     'task.archived',
     'topic.created',
+    'topic.batch_updated',
     'topic.claimed',
     'topic.released',
     'topic_scope.auto_generated',
@@ -160,6 +175,8 @@ export interface AuditSearchOpts {
   since?: Date
   /** Cap on returned rows. Default 100, max 500. */
   limit?: number
+  /** Row offset for DB-level pagination. Default 0. */
+  offset?: number
 }
 
 export async function searchAuditLog(
@@ -167,6 +184,7 @@ export async function searchAuditLog(
 ): Promise<AuditRow[]> {
   const db = getDb()
   const limit = Math.min(opts.limit ?? 100, 500)
+  const offset = Math.max(opts.offset ?? 0, 0)
   const since =
     opts.since ?? new Date(Date.now() - 90 * 24 * 3600 * 1000)
 
@@ -242,6 +260,7 @@ export async function searchAuditLog(
     )
     .orderBy(desc(events.ts))
     .limit(limit)
+    .offset(offset)
 
   // Second pass: resolve the SUBJECT name (the rater an action was
   // taken AGAINST). Different event types stash this in different
@@ -301,4 +320,89 @@ export async function searchAuditLog(
       payload,
     }
   })
+}
+
+/**
+ * Resolve the same user-id filter `searchAuditLog` uses (free-text → member
+ * ids, or an exact subject id). Returns `null` when a free-text query matched
+ * no members — the caller should treat that as an empty result, exactly like
+ * `searchAuditLog`'s early `return []`.
+ */
+async function resolveAuditUserIds(
+  opts: Pick<AuditSearchOpts, 'workspaceId' | 'subjectUserId' | 'userQuery'>,
+): Promise<string[] | null> {
+  const db = getDb()
+  const resolvedUserIds: string[] = []
+  if (opts.subjectUserId) {
+    resolvedUserIds.push(opts.subjectUserId)
+  } else if (opts.userQuery && opts.userQuery.trim().length > 0) {
+    const q = `%${opts.userQuery.trim()}%`
+    const memberMatches = await db
+      .select({ userId: workspaceMembers.userId })
+      .from(workspaceMembers)
+      .innerJoin(users, eq(users.id, workspaceMembers.userId))
+      .where(
+        and(
+          eq(workspaceMembers.workspaceId, opts.workspaceId),
+          or(ilike(users.email, q), ilike(users.displayName, q)),
+        ),
+      )
+      .limit(50)
+    for (const r of memberMatches) {
+      if (!resolvedUserIds.includes(r.userId)) {
+        resolvedUserIds.push(r.userId)
+      }
+    }
+    if (resolvedUserIds.length === 0) return null
+  }
+  return resolvedUserIds
+}
+
+/**
+ * Paginated audit-log search. Same filters + ordering as `searchAuditLog`,
+ * but returns `{ rows, total }` where `total` is the full count of matching
+ * events (before limit/offset) so the page can render a Prev/Next control.
+ *
+ * Paging is pushed into SQL (LIMIT/OFFSET via `searchAuditLog`'s own offset
+ * support), so older matches past the first page are no longer dropped.
+ */
+export async function searchAuditLogPaged(
+  opts: AuditSearchOpts,
+): Promise<{ rows: AuditRow[]; total: number }> {
+  const db = getDb()
+  const since = opts.since ?? new Date(Date.now() - 90 * 24 * 3600 * 1000)
+
+  // Resolve the same user filter the row query uses so `total` matches the
+  // rows exactly. A free-text query with no member matches → empty result.
+  const resolvedUserIds = await resolveAuditUserIds(opts)
+  if (resolvedUserIds === null) return { rows: [], total: 0 }
+
+  const defaultTypes = Object.values(AUDIT_EVENT_GROUPS).flat() as string[]
+  const types =
+    opts.types && opts.types.length > 0 ? opts.types : defaultTypes
+
+  const userFilter =
+    resolvedUserIds.length > 0
+      ? or(
+          inArray(events.actorId, resolvedUserIds),
+          sql`${events.payload} ->> 'submitterUserId' = ANY(${resolvedUserIds})`,
+          sql`${events.payload} ->> 'userId' = ANY(${resolvedUserIds})`,
+        )
+      : undefined
+
+  const whereExpr = and(
+    eq(events.workspaceId, opts.workspaceId),
+    inArray(events.type, types),
+    gte(events.ts, since),
+    ...(userFilter ? [userFilter] : []),
+  )
+
+  const [totalRow] = await db
+    .select({ n: count() })
+    .from(events)
+    .where(whereExpr)
+  const total = totalRow?.n ?? 0
+
+  const rows = await searchAuditLog(opts)
+  return { rows, total }
 }

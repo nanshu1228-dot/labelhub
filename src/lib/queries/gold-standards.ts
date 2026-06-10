@@ -1,5 +1,5 @@
 import 'server-only'
-import { and, desc, eq, inArray, sql } from 'drizzle-orm'
+import { desc, eq, inArray, sql } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import {
   annotations,
@@ -7,7 +7,6 @@ import {
   stepAnnotations,
   tasks,
   topics,
-  trajectories,
   users,
 } from '@/lib/db/schema'
 import type { Mark } from '@/lib/templates/rubric'

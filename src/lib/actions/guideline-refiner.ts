@@ -182,7 +182,7 @@ export async function refineGuidelinesDemo(
         id: d.trajectoryStepId,
         stepKind: step?.kind ?? 'unknown',
         stepSummary: summary,
-        raterCalls: d.raters.map((r) => ({
+        annotatorCalls: d.raters.map((r) => ({
           label:
             r.rating != null
               ? (RATING_TO_LABEL[r.rating] ?? `rating:${r.rating}`)
@@ -560,7 +560,7 @@ async function buildPairArenaDisputeContext(opts: {
       // `reasoning` field is per-annotation, not per-rubric). Pull each
       // annotator's notes if available; else leave the label as the
       // payload summary.
-      raterCalls: list.map((a) => {
+      annotatorCalls: list.map((a) => {
         const p = (a.payload ?? {}) as Record<string, unknown>
         const reasoning =
           typeof p.notes === 'string'

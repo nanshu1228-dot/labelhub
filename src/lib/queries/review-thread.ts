@@ -5,7 +5,7 @@ import { annotations, events, users } from '@/lib/db/schema'
 
 /**
  * Review thread — reconstruct the back-and-forth between qc/admin
- * reviewers and the annotator (submitter) from the events log.
+ * reviewers / AI agent and the annotator (submitter) from the events log.
  *
  * Event types that compose a thread:
  *
@@ -14,6 +14,7 @@ import { annotations, events, users } from '@/lib/db/schema'
  *   3. annotation.rejected        — admin rejected (terminal)
  *   4. annotation.revised         — 打回 by QC or admin (feedback inside)
  *   5. annotation.review_replied  — submitter responded
+ *   6. ai_review.sent_back        — AI reviewer requested revision
  *
  * The `reviewerRole` is denormalized on the payload at emit time so the
  * UI can color QC verdicts differently from admin verdicts without a
@@ -31,15 +32,16 @@ export interface ReviewThreadMessage {
    *   - 'submitter' — the annotator (replies to feedback)
    *   - 'qc'        — quality-check reviewer (intermediate step)
    *   - 'reviewer'  — admin doing final acceptance
+   *   - 'ai'        — automated review agent
    */
-  authorRole: 'submitter' | 'qc' | 'reviewer'
+  authorRole: 'submitter' | 'qc' | 'reviewer' | 'ai'
   authorId: string | null
   authorDisplayName: string | null
   authorEmail: string | null
   /** Free-form message body. Empty string when verdict had no note. */
   message: string
   /** Tag for UI styling. */
-  kind: 'qc_passed' | 'approved' | 'rejected' | 'revised' | 'reply'
+  kind: 'qc_passed' | 'approved' | 'rejected' | 'revised' | 'ai_sent_back' | 'reply'
 }
 
 const THREAD_EVENT_TYPES = [
@@ -48,6 +50,7 @@ const THREAD_EVENT_TYPES = [
   'annotation.rejected',
   'annotation.revised',
   'annotation.review_replied',
+  'ai_review.sent_back',
 ] as const
 
 /**
@@ -113,13 +116,17 @@ export async function getReviewThread(opts: {
         ? p.message
         : typeof p.feedback === 'string'
           ? p.feedback
-          : ''
+          : typeof p.reason === 'string'
+            ? p.reason
+            : ''
 
     // Classify author role. The verdict payload carries `reviewerRole`
     // when emitted by the QC action; admin's reviewAnnotation events
     // don't set it so we default those to 'reviewer'.
     let role: ReviewThreadMessage['authorRole']
-    if (r.actorId === submitterId) {
+    if (r.type === 'ai_review.sent_back') {
+      role = 'ai'
+    } else if (r.actorId === submitterId) {
       role = 'submitter'
     } else if (
       r.type === 'annotation.qc_passed' ||
@@ -138,6 +145,7 @@ export async function getReviewThread(opts: {
     if (r.type === 'annotation.approved') kind = 'approved'
     else if (r.type === 'annotation.rejected') kind = 'rejected'
     else if (r.type === 'annotation.revised') kind = 'revised'
+    else if (r.type === 'ai_review.sent_back') kind = 'ai_sent_back'
     else if (r.type === 'annotation.qc_passed') kind = 'qc_passed'
     else kind = 'reply'
 

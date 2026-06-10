@@ -1,6 +1,7 @@
 import 'server-only'
 import { and, eq, isNull } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
+import { readTaskOperationalSettings } from '@/lib/tasks/settings'
 import {
   annotations,
   stepAnnotations,
@@ -43,6 +44,12 @@ export interface AnnotationReviewContext {
     | 'awaiting_acceptance'
     | 'approved'
     | 'rejected'
+  /**
+   * Task-level two-stage review policy (spec §9.3). When true the admin
+   * accept button must not render before QC 初审 — the server action
+   * enforces it; this lets the UI hide the illegal button up front.
+   */
+  twoStageReview: boolean
 }
 
 /**
@@ -64,6 +71,7 @@ export async function getAnnotationReviewContext(opts: {
       submittedAt: annotations.submittedAt,
       topicStatus: topics.status,
       taskWorkspaceId: tasks.workspaceId,
+      taskTemplateConfig: tasks.templateConfig,
     })
     .from(annotations)
     .innerJoin(topics, eq(topics.id, annotations.topicId))
@@ -102,6 +110,8 @@ export async function getAnnotationReviewContext(opts: {
     submitterDisplayName: row.submitterDisplayName ?? null,
     submittedAt: row.submittedAt ?? null,
     topicStatus: row.topicStatus as AnnotationReviewContext['topicStatus'],
+    twoStageReview: readTaskOperationalSettings(row.taskTemplateConfig)
+      .twoStageReview,
   }
 }
 

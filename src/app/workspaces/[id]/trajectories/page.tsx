@@ -13,6 +13,7 @@ import {
 } from '@/lib/auth/guards'
 import { GoldBadge } from '@/components/quality/gold-badge'
 import { FeatureChips } from '@/components/trajectory/feature-chips'
+import { UploadTrajectory } from '@/components/trajectory/upload-trajectory'
 
 export const metadata: Metadata = {
   title: 'Trajectories — LabelHub',
@@ -28,12 +29,15 @@ export const metadata: Metadata = {
  * /workspaces/[id]/trajectories/[trajId] and edits go through Server Actions
  * (so the list stays cacheable + cheap to render).
  *
- * Filters via search params:
+ * Filters + pagination via search params:
  *   ?source=production|eval-run|synthetic|upload — exact match on source
  *   ?agent=<substring>                            — case-insensitive contains
- * Filters are applied AFTER the DB fetch (limit 100). Cheap enough at MVP
- * scale; promote to query-level filtering when the workspace grows past ~1k.
+ *   ?page=<n>                                     — 1-based page (size 50)
+ * Filtering AND paging happen in SQL (see listTrajectoriesWithStepStats), so a
+ * workspace with thousands of captures no longer silently drops older matches.
  */
+const PAGE_SIZE = 50
+
 export default async function TrajectoriesListPage(
   props: PageProps<'/workspaces/[id]/trajectories'>,
 ) {
@@ -44,6 +48,10 @@ export default async function TrajectoriesListPage(
     typeof search?.agent === 'string' && search.agent.trim().length > 0
       ? search.agent.trim().toLowerCase()
       : null
+  const pageParam =
+    typeof search?.page === 'string' ? Number.parseInt(search.page, 10) : 1
+  const page = Number.isFinite(pageParam) && pageParam > 0 ? pageParam : 1
+  const offset = (page - 1) * PAGE_SIZE
 
   // Access control: signed-in workspace members only. The trajectory list
   // exposes agent names, dispute counts, and AI-generated summaries —
@@ -61,8 +69,10 @@ export default async function TrajectoriesListPage(
   // page still renders the design when developing locally without Supabase.
   let workspaceName = 'workspace'
   let dbError: string | null = null
-  let rows: Awaited<ReturnType<typeof listTrajectoriesWithStepStats>> = []
-  let totalBeforeFilters = 0
+  let rows: Awaited<
+    ReturnType<typeof listTrajectoriesWithStepStats>
+  >['rows'] = []
+  let total = 0
   let disputeCounts: Map<string, number> = new Map()
   let goldTrajectoryIds: Set<string> = new Set()
 
@@ -70,14 +80,17 @@ export default async function TrajectoriesListPage(
     const workspace = await getWorkspaceById(workspaceId)
     if (!workspace) notFound()
     workspaceName = workspace.name
-    const all = await listTrajectoriesWithStepStats(workspaceId, { limit: 100 })
-    totalBeforeFilters = all.length
-    rows = all.filter((r) => {
-      if (sourceFilter && r.source !== sourceFilter) return false
-      if (agentFilter && !r.agentName.toLowerCase().includes(agentFilter))
-        return false
-      return true
+    // Source + agent filtering and paging are pushed into SQL, so `total` is
+    // the full count of matches (not just this page) and older matches past
+    // page 1 are no longer dropped.
+    const result = await listTrajectoriesWithStepStats(workspaceId, {
+      limit: PAGE_SIZE,
+      offset,
+      source: (sourceFilter as TrajectorySource | null) ?? undefined,
+      agent: agentFilter ?? undefined,
     })
+    rows = result.rows
+    total = result.total
     // Both dispute counts and gold ids are small id-only queries; fan out.
     const [dc, gold] = await Promise.all([
       listDisputeCountsByTrajectory(
@@ -91,6 +104,13 @@ export default async function TrajectoriesListPage(
   } catch (e) {
     dbError = e instanceof Error ? e.message : String(e)
   }
+
+  const hasFilters = Boolean(sourceFilter || agentFilter)
+  // "Workspace empty" (open the upload panel, hide the filter bar, show the
+  // onboarding empty state) only when there are no captures at all — never when
+  // a filter merely returned no matches. `total` is the filtered count, so this
+  // is only meaningful with no filters active.
+  const isWorkspaceEmpty = !dbError && !hasFilters && total === 0
 
   return (
     <div className="app-light min-h-screen">
@@ -121,7 +141,14 @@ export default async function TrajectoriesListPage(
           </div>
         </div>
 
-        {!dbError && totalBeforeFilters > 0 && (
+        {!dbError && (
+          <UploadTrajectory
+            workspaceId={workspaceId}
+            defaultOpen={isWorkspaceEmpty}
+          />
+        )}
+
+        {!dbError && !isWorkspaceEmpty && (
           <FilterBar
             workspaceId={workspaceId}
             activeSource={sourceFilter}
@@ -131,7 +158,7 @@ export default async function TrajectoriesListPage(
 
         {dbError ? (
           <DbError message={dbError} />
-        ) : totalBeforeFilters === 0 ? (
+        ) : isWorkspaceEmpty ? (
           <Empty workspaceId={workspaceId} />
         ) : rows.length === 0 ? (
           <FilteredEmpty workspaceId={workspaceId} />
@@ -150,16 +177,17 @@ export default async function TrajectoriesListPage(
           </ul>
         )}
 
-        {rows.length > 0 && (
-          <div
-            className="mt-6 ts-12 mono text-center"
-            style={{ color: 'var(--mute2)' }}
-          >
-            showing {rows.length}
-            {rows.length < totalBeforeFilters && (
-              <> of {totalBeforeFilters} (filtered)</>
-            )}
-          </div>
+        {!dbError && total > 0 && (
+          <Pagination
+            workspaceId={workspaceId}
+            sourceFilter={sourceFilter}
+            agentFilter={agentFilter}
+            page={page}
+            pageSize={PAGE_SIZE}
+            total={total}
+            shownOnPage={rows.length}
+            isFiltered={hasFilters}
+          />
         )}
       </main>
     </div>
@@ -223,7 +251,7 @@ function TrajectoryRow({
   isGold,
 }: {
   workspaceId: string
-  row: Awaited<ReturnType<typeof listTrajectoriesWithStepStats>>[number]
+  row: Awaited<ReturnType<typeof listTrajectoriesWithStepStats>>['rows'][number]
   disputeCount: number
   isGold: boolean
 }) {
@@ -471,6 +499,109 @@ function FilterBar({
   )
 }
 
+function Pagination({
+  workspaceId,
+  sourceFilter,
+  agentFilter,
+  page,
+  pageSize,
+  total,
+  shownOnPage,
+  isFiltered,
+}: {
+  workspaceId: string
+  sourceFilter: string | null
+  agentFilter: string | null
+  page: number
+  pageSize: number
+  total: number
+  shownOnPage: number
+  isFiltered: boolean
+}) {
+  const base = `/workspaces/${workspaceId}/trajectories`
+  const buildHref = (nextPage: number) => {
+    const params = new URLSearchParams()
+    if (sourceFilter) params.set('source', sourceFilter)
+    if (agentFilter) params.set('agent', agentFilter)
+    if (nextPage > 1) params.set('page', String(nextPage))
+    const qs = params.toString()
+    return qs ? `${base}?${qs}` : base
+  }
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const hasPrev = page > 1
+  const hasNext = page < totalPages
+  // Inclusive 1-based range of rows shown on this page.
+  const firstRow = shownOnPage > 0 ? (page - 1) * pageSize + 1 : 0
+  const lastRow = (page - 1) * pageSize + shownOnPage
+
+  const linkStyle = {
+    border: '1px solid var(--line)',
+    borderRadius: 6,
+    padding: '0 12px',
+    height: 28,
+    display: 'inline-flex',
+    alignItems: 'center',
+    textDecoration: 'none',
+  } as const
+
+  return (
+    <div className="mt-6 flex items-center justify-between gap-4">
+      <div className="ts-12 mono" style={{ color: 'var(--mute2)' }}>
+        {shownOnPage > 0 ? (
+          <>
+            showing {firstRow}–{lastRow} of {total}
+            {isFiltered && <> (filtered)</>}
+          </>
+        ) : (
+          <>0 of {total}</>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        {hasPrev ? (
+          <Link
+            href={buildHref(page - 1)}
+            className="seg-btn"
+            style={linkStyle}
+            rel="prev"
+          >
+            ← Prev
+          </Link>
+        ) : (
+          <span
+            className="seg-btn ts-12 mono"
+            style={{ ...linkStyle, opacity: 0.4, pointerEvents: 'none' }}
+            aria-disabled="true"
+          >
+            ← Prev
+          </span>
+        )}
+        <span className="ts-12 mono" style={{ color: 'var(--mute2)' }}>
+          page {page} / {totalPages}
+        </span>
+        {hasNext ? (
+          <Link
+            href={buildHref(page + 1)}
+            className="seg-btn"
+            style={linkStyle}
+            rel="next"
+          >
+            Next →
+          </Link>
+        ) : (
+          <span
+            className="seg-btn ts-12 mono"
+            style={{ ...linkStyle, opacity: 0.4, pointerEvents: 'none' }}
+            aria-disabled="true"
+          >
+            Next →
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function FilteredEmpty({ workspaceId }: { workspaceId: string }) {
   return (
     <div
@@ -516,9 +647,9 @@ function Empty({ workspaceId }: { workspaceId: string }) {
         className="ts-13 max-w-[560px] mx-auto"
         style={{ color: 'var(--mute)' }}
       >
-        Fire an agent through the Doubao proxy, the SDK, or the Eval-Run page.
-        Every call lands here. Try the curl example printed by{' '}
-        <span className="mono">npm run bootstrap</span>.
+        Three ways to fill it: paste one in the panel above, point your agent
+        at the proxy with a workspace key, or run an Eval-Run. Every call
+        lands here.
       </p>
       <div className="mt-6 flex items-center justify-center gap-2">
         <Link
@@ -526,6 +657,12 @@ function Empty({ workspaceId }: { workspaceId: string }) {
           className="lh-btn lh-btn-accent"
         >
           Run an agent
+        </Link>
+        <Link
+          href={`/workspaces/${workspaceId}/api`}
+          className="lh-btn lh-btn-ghost"
+        >
+          Get an API key
         </Link>
       </div>
     </div>

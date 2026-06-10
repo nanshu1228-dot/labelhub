@@ -43,6 +43,7 @@ const TASK = {
   id: 'task-1',
   workspaceId: 'ws-1',
   templateMode: 'pair-rubric',
+  status: 'open',
 }
 
 const WORKSPACE = {
@@ -110,6 +111,9 @@ function setupDb(opts: {
             return Promise.resolve().then(onFulfilled)
           },
           onConflictDoNothing() {
+            return Promise.resolve()
+          },
+          onConflictDoUpdate() {
             return Promise.resolve()
           },
           returning: () =>
@@ -226,6 +230,24 @@ describe('saveDraftAnnotation — auto-claim contract', () => {
         assignedTo: USER.id,
       },
       task: TASK,
+      workspaceMemberRole: 'annotator',
+    })
+    await expect(
+      saveDraftAnnotation({ topicId: VALID_TOPIC, payload: {} }),
+    ).rejects.toBeInstanceOf(ConflictError)
+  })
+
+  it('refuses to auto-claim a topic when the task is not open (e.g. paused)', async () => {
+    setupAuth()
+    setupDb({
+      topic: {
+        id: VALID_TOPIC,
+        taskId: TASK.id,
+        status: 'drafting',
+        version: 0,
+        assignedTo: null,
+      },
+      task: { ...TASK, status: 'paused' },
       workspaceMemberRole: 'annotator',
     })
     await expect(

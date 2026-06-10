@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react'
 import { getDraftFeedback } from '@/lib/actions/draft-feedback'
 import type { DraftReview, DraftWarning } from '@/lib/ai/draft-reviewer'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 
 /**
  * AI 预检 — pre-submission draft sanity check.
@@ -54,7 +55,7 @@ export function AIPrecheckButton({
         setLastRunAt(new Date())
       } catch (e) {
         setResult(null)
-        setError(e instanceof Error ? e.message : 'AI 预检 failed.')
+        setError(getErrorMessage(e, 'AI 预检 failed.'))
       }
     })
   }

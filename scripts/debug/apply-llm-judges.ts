@@ -6,7 +6,7 @@ import postgres from 'postgres'
 
 const DATABASE_URL = process.env.DATABASE_URL
 if (!DATABASE_URL) {
-  // eslint-disable-next-line no-console
+   
   console.error('DATABASE_URL is not set.')
   process.exit(1)
 }
@@ -89,14 +89,14 @@ const STATEMENTS: Array<{ label: string; sql: string }> = [
 async function main() {
   const sql = postgres(DATABASE_URL!, { max: 1, prepare: false })
   try {
-    // eslint-disable-next-line no-console
+     
     console.log(`[apply] connected, running ${STATEMENTS.length} statements`)
     for (const stmt of STATEMENTS) {
       const t0 = Date.now()
-      // eslint-disable-next-line no-console
+       
       console.log(`[apply] ${stmt.label} …`)
       await sql.unsafe(stmt.sql)
-      // eslint-disable-next-line no-console
+       
       console.log(`[apply] ${stmt.label} ✓ (${Date.now() - t0}ms)`)
     }
     const tables = await sql<{ table_name: string }[]>`
@@ -104,7 +104,7 @@ async function main() {
       WHERE table_name IN ('llm_judges', 'judge_runs', 'judge_verdicts')
       ORDER BY table_name
     `
-    // eslint-disable-next-line no-console
+     
     console.log('[verify]', tables.map((t) => t.table_name))
   } finally {
     await sql.end({ timeout: 5 })
@@ -112,7 +112,7 @@ async function main() {
 }
 
 main().catch((e) => {
-  // eslint-disable-next-line no-console
+   
   console.error('[apply] failed:', e)
   process.exit(1)
 })

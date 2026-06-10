@@ -2,12 +2,20 @@ import type { Metadata } from 'next'
 import { notFound, redirect } from 'next/navigation'
 import Link from 'next/link'
 import { getWorkspaceById } from '@/lib/queries/workspaces'
-import { getWorkspaceBillingSummary } from '@/lib/queries/billing'
+import {
+  getWorkspaceBillingSummary,
+  getWorkspaceWalletSummary,
+  getWorkspaceWithdrawals,
+  listWorkspaceMembersBasic,
+} from '@/lib/queries/billing'
 import {
   optionalUser,
   requireWorkspaceAdmin,
 } from '@/lib/auth/guards'
 import { BillingDashboard } from '@/components/billing/billing-dashboard'
+import { AccountCreditCard } from '@/components/billing/account-credit-card'
+import { WalletSummary } from '@/components/billing/wallet-summary'
+import { WithdrawalQueue } from '@/components/billing/withdrawal-queue'
 
 export const metadata: Metadata = {
   title: 'Billing — LabelHub',
@@ -45,11 +53,25 @@ export default async function WorkspaceBillingPage(
 
   const workspace = await getWorkspaceById(workspaceId)
   if (!workspace) notFound()
-  const summary = await getWorkspaceBillingSummary(workspaceId)
+  const [summary, walletSummary, withdrawals, members] = await Promise.all([
+    getWorkspaceBillingSummary(workspaceId),
+    getWorkspaceWalletSummary(workspaceId),
+    getWorkspaceWithdrawals(workspaceId),
+    listWorkspaceMembersBasic(workspaceId),
+  ])
+  // Serialize Dates to ISO for the client withdrawal queue.
+  const withdrawalRows = withdrawals.map((w) => ({
+    ...w,
+    createdAt: w.createdAt.toISOString(),
+    reviewedAt: w.reviewedAt ? w.reviewedAt.toISOString() : null,
+  }))
   return (
     <div className="app-light min-h-screen" style={{ background: 'var(--bg)' }}>
       <Header workspaceId={workspaceId} workspaceName={workspace.name} />
-      <main className="mx-auto max-w-[1200px] px-6 py-8">
+      <main className="mx-auto max-w-[1200px] px-6 py-8 flex flex-col gap-6">
+        <WalletSummary summary={walletSummary} />
+        <AccountCreditCard workspaceId={workspaceId} members={members} />
+        <WithdrawalQueue requests={withdrawalRows} />
         <BillingDashboard
           workspaceId={workspaceId}
           summary={summary}

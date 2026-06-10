@@ -12,7 +12,7 @@ import { register } from 'node:module'
 register(
   // Inline loader source — resolves any `server-only` request to a
   // virtual empty module.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   new URL(
     'data:text/javascript,' +
       encodeURIComponent(`

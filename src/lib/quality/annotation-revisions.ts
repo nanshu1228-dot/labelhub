@@ -17,7 +17,19 @@ import { annotationRevisions } from '@/lib/db/schema'
  * a stale revision history, never a lost annotation.
  */
 
-export type RevisionKind = 'autosave' | 'manual' | 'submit' | 'restore'
+export type RevisionKind =
+  | 'autosave'
+  | 'manual'
+  | 'submit'
+  | 'restore'
+  /**
+   * Finals P2 D9 — the AI Review Agent decided 'send_back' and the
+   * topic returned to drafting. `payload` snapshots the same content
+   * the submitter had at the time so the audit log can render the
+   * pre-AI-review state. The `actorId` is the submitter (the AI
+   * agent has no user row); the timeline distinguishes by `kind`.
+   */
+  | 'ai_send_back'
 
 /** Max kept 'autosave' rows per annotation. Submit / manual / restore
  *  rows are immune from pruning — those are the user-meaningful
@@ -93,7 +105,7 @@ export async function writeRevision(
 
     return { revisionId: row.id }
   } catch (e) {
-    // eslint-disable-next-line no-console
+     
     console.warn(
       '[revisions] writeRevision failed (non-fatal):',
       e instanceof Error ? e.message : e,

@@ -12,6 +12,7 @@ import {
 import type { UserTrust } from '@/lib/queries/trust-consensus'
 import type { UserCalibration } from '@/lib/queries/gold-standards'
 import { TrustBadge } from '@/components/quality/trust-badge'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 
 /**
  * Client-side membership management UI.
@@ -198,7 +199,7 @@ function InviteForm({ workspaceId }: { workspaceId: string }) {
         setEmail('')
         router.refresh()
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Invite failed.')
+        setError(getErrorMessage(e, 'Invite failed.'))
       }
     })
   }
@@ -435,6 +436,7 @@ function MemberRow({
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [error, setError] = useState<string | null>(null)
+  const [confirmingRemove, setConfirmingRemove] = useState(false)
   const editable = isAdmin && !isMe && !isCreator
 
   function changeRole(newRole: Role) {
@@ -448,25 +450,25 @@ function MemberRow({
         })
         router.refresh()
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Update failed.')
+        setError(getErrorMessage(e, 'Update failed.'))
       }
     })
   }
 
   function remove() {
-    if (
-      !confirm(
-        `Remove ${member.displayName || member.email} from this workspace?`,
-      )
-    )
-      return
+    setError(null)
+    setConfirmingRemove(true)
+  }
+
+  function confirmRemove() {
     setError(null)
     startTransition(async () => {
       try {
         await removeMember({ workspaceId, userId: member.userId })
+        setConfirmingRemove(false)
         router.refresh()
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Remove failed.')
+        setError(getErrorMessage(e, 'Remove failed.'))
       }
     })
   }
@@ -568,6 +570,67 @@ function MemberRow({
           )}
         </td>
       </tr>
+      {confirmingRemove && (
+        <tr>
+          <td colSpan={isAdmin ? 6 : 4} className="px-3 pb-3">
+            <div
+              className="rounded-md p-3"
+              style={{
+                background: 'var(--danger-soft)',
+                border: '1px solid oklch(0.55 0.2 25 / 0.35)',
+              }}
+            >
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <div className="lbl" style={{ color: 'var(--danger)' }}>
+                    REMOVE MEMBER
+                  </div>
+                  <p
+                    className="ts-12 mt-1"
+                    style={{ color: 'var(--text)', lineHeight: 1.5 }}
+                  >
+                    Remove {member.displayName || member.email} from this
+                    workspace? They will lose access to tasks, review queues,
+                    and workspace data.
+                  </p>
+                </div>
+                <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setConfirmingRemove(false)}
+                    disabled={isPending}
+                    className="ts-11 mono rounded px-2"
+                    style={{
+                      minHeight: 30,
+                      color: 'var(--mute)',
+                      background: 'var(--panel)',
+                      border: '1px solid var(--line)',
+                      cursor: isPending ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={confirmRemove}
+                    disabled={isPending}
+                    className="ts-11 mono rounded px-2"
+                    style={{
+                      minHeight: 30,
+                      color: 'white',
+                      background: 'var(--danger)',
+                      border: '1px solid var(--danger)',
+                      cursor: isPending ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    Remove member
+                  </button>
+                </div>
+              </div>
+            </div>
+          </td>
+        </tr>
+      )}
       {error && (
         <tr>
           <td colSpan={isAdmin ? 6 : 4} className="px-3 pb-2">
@@ -730,7 +793,6 @@ function RoleTag({ role }: { role: Role }) {
 
 function PendingInviteRow({
   invite,
-  workspaceId: _workspaceId,
 }: {
   invite: PendingInvite
   workspaceId: string
@@ -740,6 +802,7 @@ function PendingInviteRow({
   const [copied, setCopied] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [status, setStatus] = useState<string | null>(null)
+  const [confirmingRevoke, setConfirmingRevoke] = useState(false)
 
   function copy() {
     void navigator.clipboard.writeText(invite.inviteUrl)
@@ -761,20 +824,25 @@ function PendingInviteRow({
               : `Email send failed${r.emailError ? ' — ' + r.emailError : ''}. Copy the link instead.`,
         )
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Resend failed.')
+        setError(getErrorMessage(e, 'Resend failed.'))
       }
     })
   }
 
   function revoke() {
-    if (!confirm(`Revoke the invite to ${invite.email}?`)) return
+    setError(null)
+    setConfirmingRevoke(true)
+  }
+
+  function confirmRevoke() {
     setError(null)
     startTransition(async () => {
       try {
         await revokeInvite({ inviteId: invite.id })
+        setConfirmingRevoke(false)
         router.refresh()
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Revoke failed.')
+        setError(getErrorMessage(e, 'Revoke failed.'))
       }
     })
   }
@@ -852,6 +920,62 @@ function PendingInviteRow({
           </button>
         </div>
       </div>
+      {confirmingRevoke && (
+        <div
+          className="mt-3 rounded-md p-3"
+          style={{
+            background: 'var(--danger-soft)',
+            border: '1px solid oklch(0.55 0.2 25 / 0.35)',
+          }}
+        >
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="lbl" style={{ color: 'var(--danger)' }}>
+                REVOKE INVITE
+              </div>
+              <p
+                className="ts-12 mt-1"
+                style={{ color: 'var(--text)', lineHeight: 1.5 }}
+              >
+                Revoke the pending invite to {invite.email}? Their magic link
+                will stop working immediately.
+              </p>
+            </div>
+            <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setConfirmingRevoke(false)}
+                disabled={isPending}
+                className="ts-11 mono rounded px-2"
+                style={{
+                  minHeight: 30,
+                  color: 'var(--mute)',
+                  background: 'var(--panel)',
+                  border: '1px solid var(--line)',
+                  cursor: isPending ? 'not-allowed' : 'pointer',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmRevoke}
+                disabled={isPending}
+                className="ts-11 mono rounded px-2"
+                style={{
+                  minHeight: 30,
+                  color: 'white',
+                  background: 'var(--danger)',
+                  border: '1px solid var(--danger)',
+                  cursor: isPending ? 'not-allowed' : 'pointer',
+                }}
+              >
+                Revoke invite
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {(status || error) && (
         <div
           className="ts-11 mono mt-2"

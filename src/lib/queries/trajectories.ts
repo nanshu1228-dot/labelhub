@@ -81,18 +81,45 @@ export async function getTrajectoryWithSteps(
   return { trajectory: traj, steps, providersById }
 }
 
+/**
+ * Build the WHERE expression for a workspace trajectory list with optional
+ * source (exact) + agent (ILIKE substring) filters, applied at the DB level so
+ * pagination is correct even past the first page.
+ */
+function trajectoryListConditions(
+  workspaceId: string,
+  opts?: {
+    includeDeleted?: boolean
+    source?: TrajectorySource
+    agent?: string
+  },
+): SQL {
+  const conds: SQL[] = [eq(trajectories.workspaceId, workspaceId)]
+  if (!opts?.includeDeleted) {
+    conds.push(isNull(trajectories.deletedAt))
+  }
+  if (opts?.source) {
+    conds.push(eq(trajectories.source, opts.source))
+  }
+  if (opts?.agent && opts.agent.trim().length > 0) {
+    conds.push(ilike(trajectories.agentName, `%${opts.agent.trim()}%`))
+  }
+  return conds.length === 1 ? conds[0] : (and(...conds) as SQL)
+}
+
 export async function listTrajectoriesInWorkspace(
   workspaceId: string,
-  opts?: { limit?: number; offset?: number; includeDeleted?: boolean },
+  opts?: {
+    limit?: number
+    offset?: number
+    includeDeleted?: boolean
+    source?: TrajectorySource
+    agent?: string
+  },
 ) {
   const db = getDb()
   const limit = Math.min(opts?.limit ?? 50, 200)
-  const baseCondition = opts?.includeDeleted
-    ? eq(trajectories.workspaceId, workspaceId)
-    : and(
-        eq(trajectories.workspaceId, workspaceId),
-        isNull(trajectories.deletedAt),
-      )
+  const baseCondition = trajectoryListConditions(workspaceId, opts)
   return db
     .select()
     .from(trajectories)
@@ -109,21 +136,54 @@ export async function listTrajectoriesInWorkspace(
  * trajectory_steps and aggregate; rows with zero steps still appear (left join).
  * Returns the trajectory row plus { stepCount } and the per-kind step
  * histogram so the list can show "3 thinking · 2 tool_call · 1 final".
+ *
+ * `source` (exact) and `agent` (case-insensitive substring) filters are pushed
+ * into SQL so a workspace with thousands of captures paginates correctly —
+ * older matches are no longer dropped by an in-memory filter over the first
+ * page. Returns `{ rows, total }` where `total` is the count of rows matching
+ * the filters (before limit/offset) so the page can render prev/next.
  */
+export type TrajectoryWithStepStats = Awaited<
+  ReturnType<typeof listTrajectoriesInWorkspace>
+>[number] & {
+  stepCount: number
+  stepsByKind: Record<string, number>
+  markedStepCount: number
+}
+
 export async function listTrajectoriesWithStepStats(
   workspaceId: string,
-  opts?: { limit?: number; offset?: number },
-) {
+  opts?: {
+    limit?: number
+    offset?: number
+    source?: TrajectorySource
+    agent?: string
+  },
+): Promise<{ rows: TrajectoryWithStepStats[]; total: number }> {
   const db = getDb()
   const limit = Math.min(opts?.limit ?? 50, 200)
   const offset = opts?.offset ?? 0
 
-  // Page of trajectories first (smaller working set).
+  // Total count for pagination, computed against the same filters so prev/next
+  // reflect the real result set (not just the current page).
+  const whereExpr = trajectoryListConditions(workspaceId, {
+    source: opts?.source,
+    agent: opts?.agent,
+  })
+  const [totalRow] = await db
+    .select({ n: count() })
+    .from(trajectories)
+    .where(whereExpr)
+  const total = totalRow?.n ?? 0
+
+  // Page of trajectories first (smaller working set). Filtering happens in SQL.
   const trajList = await listTrajectoriesInWorkspace(workspaceId, {
     limit,
     offset,
+    source: opts?.source,
+    agent: opts?.agent,
   })
-  if (trajList.length === 0) return []
+  if (trajList.length === 0) return { rows: [], total }
 
   // Single IN-list query for all steps belonging to this page.
   const trajIds = trajList.map((t) => t.id)
@@ -165,12 +225,14 @@ export async function listTrajectoriesWithStepStats(
     markedByTraj.set(r.trajectoryId, (markedByTraj.get(r.trajectoryId) ?? 0) + 1)
   }
 
-  return trajList.map((t) => ({
+  const rows = trajList.map((t) => ({
     ...t,
     stepCount: byTraj.get(t.id)?.total ?? 0,
     stepsByKind: byTraj.get(t.id)?.byKind ?? {},
     markedStepCount: markedByTraj.get(t.id) ?? 0,
   }))
+
+  return { rows, total }
 }
 
 // ───────────────────────────────────────────────────────────────────────

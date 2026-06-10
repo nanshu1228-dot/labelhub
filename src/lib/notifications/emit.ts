@@ -27,6 +27,18 @@ export type NotificationType =
   | 'annotation.revising'
   | 'annotation.awaiting_acceptance'
   | 'review.reply'
+  /**
+   * Finals P3 D13 — AI Review Agent verdict notifications. The
+   * Labeler's inbox surfaces these so they don't have to refresh
+   * the queue to see that the AI agent acted on their submission.
+   *
+   *   ai_review.sent_back  — agent decided the work needs edits;
+   *                          topic returned to drafting
+   *   ai_review.escalated  — agent flagged for human_review;
+   *                          topic stays in reviewing with priority
+   */
+  | 'ai_review.sent_back'
+  | 'ai_review.escalated'
 
 export interface EmitNotificationInput {
   /** Recipient — the user whose inbox this lands in. */
@@ -68,7 +80,7 @@ export async function emitNotification(
       actorId: input.actorId ?? null,
     })
   } catch (e) {
-    // eslint-disable-next-line no-console
+     
     console.warn(
       `[notifications] failed to emit ${input.type} → ${input.userId}:`,
       e instanceof Error ? e.message : e,

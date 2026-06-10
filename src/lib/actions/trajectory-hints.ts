@@ -188,7 +188,7 @@ export async function reviewTrajectoryAndCache(
     inputTokens = result.usage.inputTokens
     outputTokens = result.usage.outputTokens
   } catch (e) {
-    // eslint-disable-next-line no-console
+     
     console.error(
       '[trajectory-hints] review failed:',
       e instanceof Error ? e.message : e,
@@ -263,7 +263,7 @@ export async function scheduleHintsIfMissing(input: {
   // Don't await — fire and forget. The caller is using `after()` already,
   // so this gets serviced post-response in Vercel's after-window.
   await reviewTrajectoryAndCache(parsed).catch((e) => {
-    // eslint-disable-next-line no-console
+     
     console.warn(
       `scheduleHintsIfMissing failed for trajectory ${parsed.trajectoryId}:`,
       e instanceof Error ? e.message : e,

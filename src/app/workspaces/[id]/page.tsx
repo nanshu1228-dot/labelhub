@@ -4,7 +4,6 @@ import { notFound, redirect } from 'next/navigation'
 import { getDb } from '@/lib/db/client'
 import {
   annotations,
-  apiRequestLog,
   events,
   stepAnnotations,
   tasks,
@@ -19,6 +18,7 @@ import {
   requireWorkspaceMember,
 } from '@/lib/auth/guards'
 import { LiveActivityStrip } from '@/components/workspaces/live-activity-strip'
+import { isFocusMode } from '@/lib/workspace-nav'
 
 /**
  * Workspace dashboard.
@@ -248,10 +248,10 @@ export default async function WorkspacePage(
         >
           §  DIAGNOSTIC
         </div>
-        <h1 className="lh-h2 mb-3" style={{ color: 'oklch(0.92 0 0)' }}>
+        <h1 className="lh-h2 mb-3" style={{ color: 'var(--hi)' }}>
           Database not configured
         </h1>
-        <p className="lh-body" style={{ color: 'oklch(0.62 0 0)' }}>
+        <p className="lh-body" style={{ color: 'var(--mute2)' }}>
           Set <span className="lh-mono">DATABASE_URL</span> in{' '}
           <span className="lh-mono">.env.local</span>, then run{' '}
           <span className="lh-mono">npm run db:push</span> to create tables.
@@ -260,10 +260,10 @@ export default async function WorkspacePage(
         <pre
           className="lh-mono lh-body-sm mt-6 p-4 overflow-auto whitespace-pre-wrap"
           style={{
-            background: 'oklch(0.155 0 0)',
-            border: '1px solid oklch(0.22 0 0)',
+            background: 'var(--panel)',
+            border: '1px solid var(--line)',
             borderRadius: 8,
-            color: 'oklch(0.62 0 0)',
+            color: 'var(--mute2)',
           }}
         >
           {dbError}
@@ -274,6 +274,10 @@ export default async function WorkspacePage(
 
   if (!workspace) notFound()
 
+  // Focus mode (default ON) hides the gateway-era cockpit tiles so the
+  // workspace only surfaces the core annotation flow. See lib/workspace-nav.
+  const focus = isFocusMode()
+
   return (
     <main className="max-w-[1280px] mx-auto px-6 py-20">
       <div
@@ -282,13 +286,45 @@ export default async function WorkspacePage(
       >
         §  WORKSPACE
       </div>
-      <h1 className="lh-h1 mb-2" style={{ color: 'oklch(0.95 0 0)' }}>
+      <h1 className="lh-h1 mb-2" style={{ color: 'var(--hi)' }}>
         {workspace.name}
       </h1>
-      <div className="lh-mono lh-body-sm mb-6" style={{ color: 'oklch(0.55 0 0)' }}>
+      <div className="lh-mono lh-body-sm mb-6" style={{ color: 'var(--mute)' }}>
         {workspace.templateMode} · created{' '}
         {new Date(workspace.createdAt).toLocaleString()}
       </div>
+
+      {/*
+        Focus-mode affordance. When focus mode is ON (default), the gateway-era
+        marketplace tiles (Billing / Analyze / Disputes / Judges) are hidden so
+        the cockpit only surfaces the core annotation flow. Without a hint, an
+        admin who expects those tiles just sees them "missing". This badge
+        explains why and links to settings where the env toggle is documented.
+      */}
+      {focus && (
+        <div
+          className="lh-mono lh-body-sm mb-6 inline-flex items-center gap-2 rounded-lg"
+          style={{
+            color: 'var(--mute)',
+            background: 'var(--panel)',
+            border: '1px solid var(--line)',
+            padding: '6px 12px',
+          }}
+        >
+          <span aria-hidden>🔍</span>
+          <span>Core annotations only — gateway sections hidden</span>
+          <Link
+            href={`/workspaces/${id}/settings`}
+            className="lh-mono"
+            style={{
+              color: 'oklch(0.6 0.18 280)',
+              textDecoration: 'none',
+            }}
+          >
+            settings →
+          </Link>
+        </div>
+      )}
 
       {/* Phase-19 live activity strip. Member-readable; everyone in
           the workspace sees the same feed. Self-hides until the first
@@ -348,8 +384,8 @@ export default async function WorkspacePage(
             value={stats.apiKeyCount.toString()}
             hint={
               stats.apiKeyCount === 0
-                ? 'run `npm run bootstrap` to mint one'
-                : 'manage / view endpoints'
+                ? 'create a key + see endpoints'
+                : 'manage keys / view endpoints'
             }
             href={`/workspaces/${id}/api`}
           />
@@ -362,19 +398,21 @@ export default async function WorkspacePage(
             href={`/workspaces/${id}/connections`}
           />
         )}
-        <StatTile
-          label="DISPUTES"
-          value="⚡"
-          hint="IAA + AI guideline refiner"
-          href={`/workspaces/${id}/disputes`}
-        />
+        {!focus && (
+          <StatTile
+            label="DISPUTES"
+            value="⚡"
+            hint="IAA + AI guideline refiner"
+            href={`/workspaces/${id}/disputes`}
+          />
+        )}
         <StatTile
           label="QUALITY"
           value="★"
           hint="gold standards · trust · calibration"
           href={`/workspaces/${id}/quality`}
         />
-        {workspace.templateMode !== 'agent-trace-eval' && (
+        {workspace.templateMode !== 'agent-trace-eval' && !focus && (
           <StatTile
             label="JUDGES"
             value="⚖"
@@ -382,12 +420,14 @@ export default async function WorkspacePage(
             href={`/workspaces/${id}/judges`}
           />
         )}
-        <StatTile
-          label="ANALYZE"
-          value="◔"
-          hint="filter + aggregate + ask Claude"
-          href={`/workspaces/${id}/analyze`}
-        />
+        {!focus && (
+          <StatTile
+            label="ANALYZE"
+            value="◔"
+            hint="filter + aggregate + ask Claude"
+            href={`/workspaces/${id}/analyze`}
+          />
+        )}
         <StatTile
           label="EVENTS"
           value={stats.eventCount.toString()}
@@ -397,7 +437,7 @@ export default async function WorkspacePage(
         <StatTile
           label="AUDIT"
           value="🔍"
-          hint="search 打回 / restore / trust by person"
+          hint="search send-backs / restore / trust by person"
           href={`/workspaces/${id}/audit`}
         />
         {workspace.templateMode === 'agent-trace-eval' && (
@@ -414,12 +454,14 @@ export default async function WorkspacePage(
           hint="invite + manage roles"
           href={`/workspaces/${id}/members`}
         />
-        <StatTile
-          label="BILLING"
-          value="↗"
-          hint="payout periods + spend"
-          href={`/workspaces/${id}/billing`}
-        />
+        {!focus && (
+          <StatTile
+            label="BILLING"
+            value="↗"
+            hint="payout periods + spend"
+            href={`/workspaces/${id}/billing`}
+          />
+        )}
         <StatTile
           label="SETTINGS"
           value="⚙"
@@ -436,12 +478,7 @@ export default async function WorkspacePage(
       */}
       {workspace.templateMode === 'agent-trace-eval' && stats.trajCount === 0 && (
         <div className="mt-10">
-          <div
-            className="lh-mono lh-caption mb-3"
-            style={{ color: 'oklch(0.6 0.18 280)', letterSpacing: '0.06em' }}
-          >
-            § GET STARTED · 3 STEPS
-          </div>
+          <GetStartedEyebrow href="/docs" />
           <div
             className="grid grid-cols-1 md:grid-cols-3 gap-3"
             style={{ maxWidth: 900 }}
@@ -449,22 +486,22 @@ export default async function WorkspacePage(
             <NextStepCard
               n={1}
               done={stats.apiKeyCount > 0}
-              title="Mint a workspace API key"
-              body="Authorize publisher SDK calls + proxy invocations. Run `npm run bootstrap` or hit the API keys page."
+              title="Create a workspace API key"
+              body="Click 'New key' on the API page to mint one in-browser (shown once). Authorizes proxy calls + SDK ingest."
               href={`/workspaces/${id}/api`}
             />
             <NextStepCard
               n={2}
               done={stats.trajCount > 0}
               title="Capture your first trajectory"
-              body="Point your agent at /api/proxy/{provider}/* with the API key — every call is captured. Or run an Eval-Run."
-              href={`/workspaces/${id}/eval-runs/new`}
+              body="Point your agent at /api/proxy/{provider}/* with the key — every call is captured. No code? Paste a trajectory on the Trajectories page, or run an Eval-Run."
+              href={`/workspaces/${id}/trajectories`}
             />
             <NextStepCard
               n={3}
               done={stats.markedSteps > 0}
-              title="Annotate a captured trace"
-              body="Open the trajectory inspector, click 'Open annotator', score steps with the rubric. Claude pre-annotates."
+              title="Annotate your own trace"
+              body="Open the trajectory, score each step against the rubric. Claude pre-annotates; your marks autosave."
               href={`/workspaces/${id}/trajectories`}
             />
           </div>
@@ -475,15 +512,7 @@ export default async function WorkspacePage(
         workspace.templateMode === 'arena-gsb') &&
         stats.taskCount === 0 && (
           <div className="mt-10">
-            <div
-              className="lh-mono lh-caption mb-3"
-              style={{
-                color: 'oklch(0.6 0.18 280)',
-                letterSpacing: '0.06em',
-              }}
-            >
-              § GET STARTED · 3 STEPS
-            </div>
+            <GetStartedEyebrow href="/docs" />
             <div
               className="grid grid-cols-1 md:grid-cols-3 gap-3"
               style={{ maxWidth: 900 }}
@@ -517,11 +546,43 @@ export default async function WorkspacePage(
           </div>
         )}
 
+      {workspace.templateMode === 'custom-designer' && stats.taskCount === 0 && (
+        <div className="mt-10">
+          <GetStartedEyebrow href="/docs" />
+          <div
+            className="grid grid-cols-1 md:grid-cols-3 gap-3"
+            style={{ maxWidth: 900 }}
+          >
+            <NextStepCard
+              n={1}
+              done={stats.taskCount > 0}
+              title="Design your form template"
+              body="Drag fields onto the canvas in the Designer — text, choices, file upload, JSON, LLM assist, ShowItem — then save a serializable schema."
+              href="/admin/forms/new"
+            />
+            <NextStepCard
+              n={2}
+              done={stats.topicCount > 0}
+              title="Create a task + import topics"
+              body="Bind the task to your saved form, then import the dataset to label (JSON / JSONL / Excel) and preview the topics."
+              href={`/workspaces/${id}/tasks/new`}
+            />
+            <NextStepCard
+              n={3}
+              done={stats.submittedAnnotations > 0}
+              title="Publish + share with annotators"
+              body="Publish so topics appear in /my/queue for every member. Submissions then flow into AI pre-review and human QC."
+              href={`/workspaces/${id}/tasks`}
+            />
+          </div>
+        </div>
+      )}
+
       {stats.last && (
         <div className="mt-10">
           <div
             className="lh-mono lh-caption mb-2"
-            style={{ color: 'oklch(0.55 0 0)', letterSpacing: '0.06em' }}
+            style={{ color: 'var(--mute)', letterSpacing: '0.06em' }}
           >
             § MOST RECENT CAPTURE
           </div>
@@ -529,8 +590,8 @@ export default async function WorkspacePage(
             href={`/workspaces/${id}/trajectories/${stats.last.id}`}
             className="block p-4 rounded-xl"
             style={{
-              border: '1px solid oklch(0.22 0 0)',
-              background: 'oklch(0.13 0 0)',
+              border: '1px solid var(--line)',
+              background: 'var(--panel)',
               textDecoration: 'none',
             }}
           >
@@ -544,14 +605,14 @@ export default async function WorkspacePage(
                 </div>
                 <div
                   className="lh-mono mt-1"
-                  style={{ color: 'oklch(0.55 0 0)', fontSize: 12 }}
+                  style={{ color: 'var(--mute)', fontSize: 12 }}
                 >
                   {new Date(stats.last.ts).toLocaleString()}
                 </div>
               </div>
               <span
                 className="lh-mono"
-                style={{ color: 'oklch(0.62 0 0)', fontSize: 12 }}
+                style={{ color: 'var(--mute2)', fontSize: 12 }}
               >
                 open →
               </span>
@@ -565,7 +626,7 @@ export default async function WorkspacePage(
           <div
             className="lh-mono lh-caption mb-2 flex items-center justify-between"
             style={{
-              color: 'oklch(0.55 0 0)',
+              color: 'var(--mute)',
               letterSpacing: '0.06em',
             }}
           >
@@ -585,8 +646,8 @@ export default async function WorkspacePage(
           <ul
             className="rounded-xl overflow-hidden"
             style={{
-              background: 'oklch(0.13 0 0)',
-              border: '1px solid oklch(0.22 0 0)',
+              background: 'var(--panel)',
+              border: '1px solid var(--line)',
             }}
           >
             {recentEvents.map((e, idx) => (
@@ -595,13 +656,13 @@ export default async function WorkspacePage(
                 className="flex items-center gap-3 px-4 py-2 lh-mono"
                 style={{
                   borderTop:
-                    idx === 0 ? 'none' : '1px solid oklch(0.22 0 0)',
+                    idx === 0 ? 'none' : '1px solid var(--line)',
                   fontSize: 12,
                 }}
               >
                 <span
                   style={{
-                    color: 'oklch(0.5 0 0)',
+                    color: 'var(--mute)',
                     width: 130,
                     flexShrink: 0,
                   }}
@@ -624,7 +685,7 @@ export default async function WorkspacePage(
                 {!e.actorId && (
                   <span
                     style={{
-                      color: 'oklch(0.42 0 0)',
+                      color: 'var(--mute2)',
                       fontSize: 11,
                     }}
                   >
@@ -639,10 +700,10 @@ export default async function WorkspacePage(
 
       <div
         className="mt-10 lh-body-sm"
-        style={{ color: 'oklch(0.42 0 0)' }}
+        style={{ color: 'var(--mute2)' }}
       >
         Workspace ID:{' '}
-        <span className="lh-mono" style={{ color: 'oklch(0.62 0 0)' }}>
+        <span className="lh-mono" style={{ color: 'var(--mute2)' }}>
           {workspace.id}
         </span>
       </div>
@@ -688,29 +749,29 @@ function StatTile({
     <div
       className="p-6 h-full"
       style={{
-        border: '1px solid oklch(0.22 0 0)',
+        border: '1px solid var(--line)',
         borderRadius: 12,
-        background: 'oklch(0.13 0 0)',
+        background: 'var(--panel)',
         transition: 'border-color 160ms',
       }}
     >
       <div
         className="lh-mono lh-caption mb-2"
-        style={{ color: 'oklch(0.42 0 0)', letterSpacing: '0.06em' }}
+        style={{ color: 'var(--mute2)', letterSpacing: '0.06em' }}
       >
         {label}
       </div>
       <div
         className="lh-h2 lh-mono"
         style={{
-          color: accent ? 'oklch(0.6 0.18 280)' : 'oklch(0.92 0 0)',
+          color: accent ? 'oklch(0.6 0.18 280)' : 'var(--hi)',
         }}
       >
         {value}
       </div>
       <div
         className="lh-caption mt-2"
-        style={{ color: 'oklch(0.55 0 0)' }}
+        style={{ color: 'var(--mute)' }}
       >
         {hint}
       </div>
@@ -751,10 +812,10 @@ function NextStepCard({
       href={href}
       className="block p-5 rounded-xl relative"
       style={{
-        background: done ? 'oklch(0.5 0.13 150 / 0.06)' : 'oklch(0.155 0 0)',
+        background: done ? 'oklch(0.5 0.13 150 / 0.06)' : 'var(--panel)',
         border: done
           ? '1px solid oklch(0.5 0.13 150 / 0.4)'
-          : '1px solid oklch(0.22 0 0)',
+          : '1px solid var(--line)',
         textDecoration: 'none',
         transition: 'border-color 120ms',
       }}
@@ -779,7 +840,7 @@ function NextStepCard({
             background: done ? 'oklch(0.5 0.13 150)' : 'transparent',
             border: done
               ? '1px solid oklch(0.5 0.13 150)'
-              : '1px solid oklch(0.27 0 0)',
+              : '1px solid var(--line2)',
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -793,7 +854,7 @@ function NextStepCard({
       <h3
         className="lh-h4 mb-1"
         style={{
-          color: 'oklch(0.92 0 0)',
+          color: 'var(--hi)',
           fontSize: 15,
         }}
       >
@@ -801,10 +862,41 @@ function NextStepCard({
       </h3>
       <p
         className="lh-body-sm"
-        style={{ color: 'oklch(0.55 0 0)', lineHeight: 1.5 }}
+        style={{ color: 'var(--mute)', lineHeight: 1.5 }}
       >
         {body}
       </p>
     </Link>
+  )
+}
+
+/**
+ * "§ GET STARTED · 3 STEPS" eyebrow shared by the three mode-specific
+ * onboarding blocks. Mirrors the "§ RECENT ACTIVITY … view all →" header
+ * row: the eyebrow on the left, a docs quick-link on the right so a
+ * first-run admin always has a "where do I read more?" exit alongside the
+ * inline step cards. This affordance is self-dismissing — the whole block
+ * only renders while the workspace has zero tasks/captures, then disappears
+ * once the first step is done.
+ */
+function GetStartedEyebrow({ href }: { href: string }) {
+  return (
+    <div
+      className="lh-mono lh-caption mb-3 flex items-center justify-between"
+      style={{ color: 'oklch(0.6 0.18 280)', letterSpacing: '0.06em' }}
+    >
+      <span>§ GET STARTED · 3 STEPS</span>
+      <Link
+        href={href}
+        className="lh-mono"
+        style={{
+          color: 'oklch(0.6 0.18 280)',
+          textDecoration: 'none',
+          fontSize: 11,
+        }}
+      >
+        read the docs →
+      </Link>
+    </div>
   )
 }

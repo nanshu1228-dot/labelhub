@@ -10,7 +10,7 @@ import postgres from 'postgres'
 
 const DATABASE_URL = process.env.DATABASE_URL
 if (!DATABASE_URL) {
-  // eslint-disable-next-line no-console
+   
   console.error('DATABASE_URL is not set.')
   process.exit(1)
 }
@@ -49,14 +49,14 @@ const STATEMENTS: Array<{ label: string; sql: string }> = [
 async function main() {
   const sql = postgres(DATABASE_URL!, { max: 1, prepare: false })
   try {
-    // eslint-disable-next-line no-console
+     
     console.log(`[apply] connected, running ${STATEMENTS.length} statements`)
     for (const stmt of STATEMENTS) {
       const t0 = Date.now()
-      // eslint-disable-next-line no-console
+       
       console.log(`[apply] ${stmt.label} …`)
       await sql.unsafe(stmt.sql)
-      // eslint-disable-next-line no-console
+       
       console.log(`[apply] ${stmt.label} ✓ (${Date.now() - t0}ms)`)
     }
     const [check] = await sql<{ exists: boolean }[]>`
@@ -65,7 +65,7 @@ async function main() {
         WHERE table_name = 'annotation_revisions'
       ) AS exists
     `
-    // eslint-disable-next-line no-console
+     
     console.log('[verify]', check)
   } finally {
     await sql.end({ timeout: 5 })
@@ -73,7 +73,7 @@ async function main() {
 }
 
 main().catch((e) => {
-  // eslint-disable-next-line no-console
+   
   console.error('[apply] failed:', e)
   process.exit(1)
 })

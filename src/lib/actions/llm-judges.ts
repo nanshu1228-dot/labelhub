@@ -254,7 +254,7 @@ export async function runJudgeAction(
 
       verdictAgreements.push(agreement.overall)
     } catch (e) {
-      // eslint-disable-next-line no-console
+       
       console.warn(
         '[judge] verdict failed on annotation',
         c.annotationId,

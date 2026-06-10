@@ -73,7 +73,7 @@ export interface DSCellPosterior {
   voteCount: number
 }
 
-export interface DSRaterMatrix {
+export interface DSAnnotatorMatrix {
   raterId: string
   /** confusion[truth][observed] — each row sums to 1. */
   confusion: number[][]
@@ -98,7 +98,7 @@ export interface DSResult {
   /** K-vector of marginal class prior, sums to 1. */
   classPrior: number[]
   cells: DSCellPosterior[]
-  raters: DSRaterMatrix[]
+  annotators: DSAnnotatorMatrix[]
 }
 
 /** Build the set of rater IDs, preserving first-seen order. */
@@ -332,7 +332,7 @@ export function runDawidSkene(
         confidence: 1 / input.K,
         voteCount: cell.votes.size,
       })),
-      raters: [],
+      annotators: [],
     }
   }
 
@@ -386,7 +386,7 @@ export function runDawidSkene(
     }
   })
 
-  const raterOut: DSRaterMatrix[] = raters.map((id, r) => {
+  const raterOut: DSAnnotatorMatrix[] = raters.map((id, r) => {
     const mat = confusion[r]
     const diag = mat.reduce((s, row, k) => s + row[k], 0)
     return {
@@ -405,6 +405,6 @@ export function runDawidSkene(
     logLikelihood: lastLogLik,
     classPrior,
     cells: cellOut,
-    raters: raterOut,
+    annotators: raterOut,
   }
 }

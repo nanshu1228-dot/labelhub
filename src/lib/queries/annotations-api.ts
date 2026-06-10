@@ -7,7 +7,6 @@ import {
   stepAnnotations,
   tasks,
   topics,
-  trajectories,
   trajectorySteps,
   users,
 } from '@/lib/db/schema'

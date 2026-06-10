@@ -1,5 +1,5 @@
 import 'server-only'
-import { and, eq, inArray, isNotNull, isNull, or } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import {
   annotations,
@@ -11,7 +11,7 @@ import {
 import { getActiveLearningScores } from '@/lib/queries/active-learning'
 
 /**
- * Topic-queue helper for the pair-rubric and arena-gsb modes.
+ * Topic-queue helper for topic-backed labeling modes.
  *
  * Pairs (NOT trajectories) live in `topics` and are claimed by setting
  * `topics.assignedTo`. The queue surface here mirrors the trajectory
@@ -28,7 +28,7 @@ export type TopicQueueItem = {
   taskName: string
   workspaceId: string
   workspaceName: string
-  templateMode: 'pair-rubric' | 'arena-gsb'
+  templateMode: TopicTemplateMode
   promptPreview: string
   topicStatus: string
   /**
@@ -51,6 +51,8 @@ export type TopicQueueItem = {
    *  bucket ordering — high-IG topics surface first. */
   igScore: number | null
 }
+
+type TopicTemplateMode = 'pair-rubric' | 'arena-gsb' | 'custom-designer'
 
 export interface ListMyTopicQueueOpts {
   userId: string
@@ -87,7 +89,7 @@ export async function listMyTopicQueueForUser(
     memberRows.map((r) => [r.workspaceId, r.workspaceName]),
   )
 
-  // 2. Topics in those workspaces whose task uses one of the pair modes,
+  // 2. Topics in those workspaces whose task uses one of the topic modes,
   //    AND the task is published (status='open' so the topic is claimable).
   const rows = await db
     .select({
@@ -116,10 +118,11 @@ export async function listMyTopicQueueForUser(
     .where(
       and(
         inArray(tasks.workspaceId, workspaceIds),
-        or(
-          eq(tasks.templateMode, 'pair-rubric'),
-          eq(tasks.templateMode, 'arena-gsb'),
-        ),
+        inArray(tasks.templateMode, [
+          'pair-rubric',
+          'arena-gsb',
+          'custom-designer',
+        ]),
         eq(tasks.status, 'open'),
       ),
     )
@@ -135,13 +138,9 @@ export async function listMyTopicQueueForUser(
   // to find my history.
   const out: TopicQueueItem[] = []
   for (const r of rows) {
-    const mode = r.templateMode as 'pair-rubric' | 'arena-gsb' | string
-    if (mode !== 'pair-rubric' && mode !== 'arena-gsb') continue
-    const itemData = (r.itemData ?? {}) as { prompt?: unknown }
-    const promptPreview =
-      typeof itemData.prompt === 'string'
-        ? itemData.prompt.slice(0, 140)
-        : '(no prompt)'
+    const mode = r.templateMode as TopicTemplateMode | string
+    if (!isTopicTemplateMode(mode)) continue
+    const promptPreview = topicPreview(r.itemData)
 
     let state: TopicQueueItem['state']
     if (r.myAnnotationSubmittedAt) {
@@ -215,4 +214,30 @@ export async function listMyTopicQueueForUser(
   })
 
   return out.slice(0, limit)
+}
+
+function isTopicTemplateMode(mode: string): mode is TopicTemplateMode {
+  return (
+    mode === 'pair-rubric' ||
+    mode === 'arena-gsb' ||
+    mode === 'custom-designer'
+  )
+}
+
+function topicPreview(itemData: unknown): string {
+  const row = (itemData ?? {}) as Record<string, unknown>
+  const candidates = [
+    row.prompt,
+    row.content_markdown,
+    row.model_answer,
+    row.response_a,
+    row.response_b,
+    row.id,
+  ]
+  for (const value of candidates) {
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim().slice(0, 140)
+    }
+  }
+  return '(no prompt)'
 }

@@ -40,14 +40,9 @@ if (!Number.isInteger(STEPS) || STEPS < 30 || STEPS > 10000) {
   process.exit(1)
 }
 
-const STEP_KINDS = [
-  'thinking',
-  'tool_call',
-  'tool_result',
-  'final_response',
-] as const
+type StepKind = 'thinking' | 'tool_call' | 'tool_result' | 'final_response'
 
-function pickKind(seq: number): (typeof STEP_KINDS)[number] {
+function pickKind(seq: number): StepKind {
   // Repeating pattern that mimics a real agentic loop:
   //   think → call → result → think → call → result → ... → final
   if (seq === STEPS - 1) return 'final_response'
@@ -58,7 +53,7 @@ function pickKind(seq: number): (typeof STEP_KINDS)[number] {
 }
 
 function makeContent(
-  kind: (typeof STEP_KINDS)[number],
+  kind: StepKind,
   seq: number,
 ): Record<string, unknown> {
   switch (kind) {

@@ -6,6 +6,7 @@ import type { RubricSpec } from '@/lib/templates/rubric'
 import type { TrajectoryView, StepView } from '../types'
 import { KindPill } from '../kind-pill'
 import { submitComparison } from '@/lib/actions/comparisons'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 
 /**
  * Compare layout — two trajectories side-by-side, synced scroll, pick a
@@ -252,7 +253,7 @@ function SideBySide({
         setReason('')
       } catch (e) {
         setSubmitState({
-          error: e instanceof Error ? e.message : 'Submit failed.',
+          error: getErrorMessage(e, 'Submit failed.'),
         })
       }
     })
@@ -308,8 +309,8 @@ function SideBySide({
           className="ts-12 mb-4"
           style={{ color: 'var(--mute)', lineHeight: 1.5 }}
         >
-          You can leave dimensions blank — they'll be recorded as "no
-          preference" in the comparison row.
+          You can leave dimensions blank — they&apos;ll be recorded as &quot;no
+          preference&quot; in the comparison row.
         </p>
 
         <div className="space-y-3">

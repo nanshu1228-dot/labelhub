@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { eq } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { workspaces } from '@/lib/db/schema'
+import { getPublicOrigin } from '@/lib/http/public-origin'
 import { DEMO_WORKSPACE_ID } from '@/lib/seeds'
 import {
   callerIp,
@@ -54,7 +55,7 @@ export async function GET(request: Request) {
       },
     )
   }
-  const origin = new URL(request.url).origin
+  const origin = getPublicOrigin(request)
 
   let demoKey: string | null = null
   let demoKeyRpm: number | null = null

@@ -69,13 +69,13 @@ function setupAuth(
  *   db.select(...).from(workspaces).leftJoin(...).where(...).limit(1)
  *
  * Plus passes through the requireUser mirror upsert
- * (db.insert.values.onConflictDoNothing).
+ * (db.insert.values.onConflictDoUpdate).
  */
 function setupDb(workspaceRows: unknown[]) {
   vi.mocked(getDb).mockReturnValue({
     insert: () => ({
       values: () => ({
-        onConflictDoNothing: () => Promise.resolve(),
+        onConflictDoUpdate: () => Promise.resolve(),
       }),
     }),
     select: () => ({

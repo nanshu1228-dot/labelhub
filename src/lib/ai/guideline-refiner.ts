@@ -51,8 +51,8 @@ export interface DisputeCase {
   /** What the agent did at this step (the "thing being judged"). */
   stepKind: string
   stepSummary: string
-  /** Each rater's call + their stated reason. */
-  raterCalls: Array<{
+  /** Each annotator's call + their stated reason. */
+  annotatorCalls: Array<{
     label: string // 'correct' | 'suspicious' | 'wrong'
     reasoning: string
   }>
@@ -115,7 +115,7 @@ function buildUserPrompt(input: RefinerInput): string {
     blocks.push(`<case id="${escapeForPrompt(d.id)}">`)
     blocks.push(`  step kind: ${escapeForPrompt(d.stepKind)}`)
     blocks.push(`  step summary: ${escapeForPrompt(d.stepSummary)}`)
-    for (const rc of d.raterCalls) {
+    for (const rc of d.annotatorCalls) {
       blocks.push(
         `  <reasoning rated="${escapeForPrompt(rc.label)}">${escapeForPrompt(
           rc.reasoning,

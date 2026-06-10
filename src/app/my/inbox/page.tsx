@@ -49,7 +49,7 @@ export default async function MyInboxPage(props: {
     >
       <div className="mx-auto max-w-[820px]">
         <div className="mb-6">
-          <div className="lbl mb-2">§ INBOX</div>
+          <div className="lbl mb-2">INBOX</div>
           <h1 className="ts-28" style={{ color: 'var(--hi)' }}>
             Your notifications
           </h1>

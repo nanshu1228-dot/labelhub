@@ -1,8 +1,18 @@
 'use client'
 
+import type { ReactNode } from 'react'
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import {
+  BellOff,
+  Check,
+  Circle,
+  Clock3,
+  Reply,
+  RotateCcw,
+  X,
+} from 'lucide-react'
 import {
   markNotificationRead,
   markAllNotificationsRead,
@@ -129,7 +139,7 @@ function NotificationRow({
     >
       <div className="flex items-start gap-3">
         <span
-          className="mono ts-11 shrink-0"
+          className="shrink-0"
           style={{
             width: 22,
             height: 22,
@@ -139,7 +149,6 @@ function NotificationRow({
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
-            fontWeight: 700,
             marginTop: 1,
           }}
           aria-hidden
@@ -208,11 +217,17 @@ function EmptyState() {
       }}
     >
       <div
-        className="ts-32 mb-2"
-        style={{ color: 'var(--mute2)', fontWeight: 300 }}
+        className="mb-3 inline-flex items-center justify-center rounded-md"
+        style={{
+          width: 44,
+          height: 44,
+          color: 'var(--mute2)',
+          background: 'var(--panel2)',
+          border: '1px solid var(--line)',
+        }}
         aria-hidden
       >
-        ✶
+        <BellOff size={22} />
       </div>
       <div className="ts-14" style={{ color: 'var(--text)', fontWeight: 500 }}>
         No notifications yet
@@ -236,26 +251,35 @@ function EmptyState() {
 }
 
 /**
- * Map notification type → glyph + accent color. Centralized so the
+ * Map notification type to icon + accent color. Centralized so the
  * inbox row and any future preview surface render the same.
  */
-function typeIcon(type: string): { icon: string; accentColor: string } {
+function typeIcon(type: string): { icon: ReactNode; accentColor: string } {
   if (type === 'annotation.approved') {
-    return { icon: '✓', accentColor: 'oklch(0.5 0.13 150)' }
+    return { icon: <Check size={13} />, accentColor: 'oklch(0.5 0.13 150)' }
   }
   if (type === 'annotation.rejected') {
-    return { icon: '×', accentColor: 'oklch(0.55 0.2 25)' }
+    return { icon: <X size={13} />, accentColor: 'oklch(0.55 0.2 25)' }
   }
-  if (type === 'annotation.revising') {
-    return { icon: '↻', accentColor: 'oklch(0.6 0.14 75)' }
+  if (type === 'annotation.revising' || type === 'ai_review.sent_back') {
+    return {
+      icon: <RotateCcw size={13} />,
+      accentColor: 'oklch(0.6 0.14 75)',
+    }
   }
-  if (type === 'annotation.awaiting_acceptance') {
-    return { icon: '◔', accentColor: 'oklch(0.65 0.13 200)' }
+  if (
+    type === 'annotation.awaiting_acceptance' ||
+    type === 'ai_review.escalated'
+  ) {
+    return { icon: <Clock3 size={13} />, accentColor: 'oklch(0.65 0.13 200)' }
   }
   if (type === 'review.reply') {
-    return { icon: '↩', accentColor: 'oklch(0.6 0.18 280)' }
+    return { icon: <Reply size={13} />, accentColor: 'oklch(0.6 0.18 280)' }
   }
-  return { icon: '·', accentColor: 'oklch(0.55 0 0)' }
+  return {
+    icon: <Circle size={8} fill="currentColor" />,
+    accentColor: 'oklch(0.55 0 0)',
+  }
 }
 
 function formatRelative(d: Date): string {

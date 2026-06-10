@@ -1,41 +1,47 @@
-import { SiteNav } from '@/components/site/nav'
-import { Hero } from '@/components/site/hero'
-import { GatewayPillars } from '@/components/site/gateway-pillars'
-import { TemplateCards } from '@/components/site/template-cards'
-import { LiveLearning } from '@/components/site/live-learning'
-import { SiteFooter } from '@/components/site/site-footer'
-import { getLandingStats } from '@/lib/queries/landing-stats'
+import { redirect } from "next/navigation";
+import { SiteNav } from "@/components/site/nav";
+import { Hero } from "@/components/site/hero";
+import { TemplateCards } from "@/components/site/template-cards";
+import { SiteFooter } from "@/components/site/site-footer";
+import { oauthCallbackPathFromSearchParams } from "@/lib/auth/oauth-entrypoint";
+import { getLandingStats } from "@/lib/queries/landing-stats";
 
 // Force per-request rendering so the live stats are accurate. Without
 // this Next will happily serve a build-time render with stats=null
 // (Phase-15 reflection fix: prod was showing "—" everywhere because
 // the build had no DATABASE_URL at prerender time).
-export const dynamic = 'force-dynamic'
+export const dynamic = "force-dynamic";
 
 /**
- * Landing — Phase-15 thesis rewrite.
+ * Landing — finals-facing platform entry.
  *
- * Order matters:
- *   Hero (gateway thesis + 3-line drop-in)
- *     → GatewayPillars (capture / scope / fork)
- *       → TemplateCards (the three annotation modes the gateway feeds)
- *         → LiveLearning (existing)
- *
- * Hero stats are real counts pulled from prod at request time. If the
- * DB is unreachable at build, we ship `null` and the Hero shows "—".
+ * The public first impression must match the finals spec: Owner
+ * publishes tasks, Labelers annotate, AI pre-reviews, Reviewers accept
+ * or send back, and admins export datasets. The gateway thesis still
+ * exists deeper in the product, but it is no longer the first thing a
+ * judge sees.
  */
-export default async function HomePage() {
-  const stats = await getLandingStats().catch(() => null)
+export default async function HomePage(props: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const searchParams = (await props.searchParams) ?? {};
+  const oauthCallbackPath = oauthCallbackPathFromSearchParams(searchParams);
+  if (oauthCallbackPath) redirect(oauthCallbackPath);
+
+  const stats = await getLandingStats().catch(() => null);
   return (
-    <>
+    // The marketing surface now renders on the light `.app-light` palette
+    // (matching the signed-in app and the already-light Hero) instead of
+    // the legacy dark landing. Wrapping here gives every section the white
+    // background + activates the `.app-light` overrides for the landing-only
+    // utility classes (nav-link, mode-tag, vote-bar, chart axes, …).
+    <div className="app-light">
       <SiteNav />
       <main>
         <Hero stats={stats} />
-        <GatewayPillars />
         <TemplateCards />
-        <LiveLearning />
       </main>
       <SiteFooter />
-    </>
-  )
+    </div>
+  );
 }

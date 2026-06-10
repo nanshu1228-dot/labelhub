@@ -11,6 +11,13 @@ import {
   trajectorySteps,
   users,
 } from '@/lib/db/schema'
+import {
+  IAA_TOLERANCE,
+  betaPosteriorMean,
+  majorityBoolean,
+  median,
+  withinTolerance,
+} from './iaa-math'
 
 /**
  * Trust score per annotator.
@@ -40,19 +47,22 @@ import {
 
 const PRIOR_ALPHA = 2.5
 const PRIOR_BETA = 2.5
-const PEER_TOLERANCE = 1
+/**
+ * Peer-alignment tolerance — the SAME ±1 used by IAA dispute detection.
+ * Aliased to the canonical `IAA_TOLERANCE` so there is one knob, not two.
+ */
+const PEER_TOLERANCE = IAA_TOLERANCE
 
+/**
+ * Bayesian-smoothed rate. Delegates to the canonical `betaPosteriorMean`
+ * kernel so the β-posterior formula lives in exactly one place; the α=β=2.5
+ * prior is the documented default for this module.
+ */
 function smoothed(positives: number, negatives: number): number {
-  return (
-    (positives + PRIOR_ALPHA) /
-    (positives + negatives + PRIOR_ALPHA + PRIOR_BETA)
-  )
-}
-
-function median(arr: number[]): number {
-  const s = [...arr].sort((a, b) => a - b)
-  const mid = Math.floor(s.length / 2)
-  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2
+  return betaPosteriorMean(positives, negatives, {
+    alpha: PRIOR_ALPHA,
+    beta: PRIOR_BETA,
+  })
 }
 
 // ─── Unified result type ──────────────────────────────────────────────────
@@ -249,7 +259,7 @@ export async function getWorkspacePeerTrust(
         .map((o) => o.rating)
       const m = median(others)
       const acc = initAcc(r.userId, r.displayName)
-      if (Math.abs(r.rating - m) <= PEER_TOLERANCE) acc.aligned++
+      if (withinTolerance(r.rating, m, PEER_TOLERANCE)) acc.aligned++
       else acc.diverged++
     }
   }
@@ -453,11 +463,11 @@ export async function getWorkspacePairPeerTrust(
           (o) => o.cell.kind === 'bool' && o.cell.value === true,
         ).length
         const falseCount = others.length - trueCount
-        if (trueCount === falseCount) {
+        const majority = majorityBoolean(trueCount, falseCount)
+        if (majority === null) {
           acc.unilateral++ // tie among others — no clean consensus
           continue
         }
-        const majority = trueCount > falseCount
         if (e.cell.value === majority) acc.aligned++
         else acc.diverged++
       } else {
@@ -470,7 +480,7 @@ export async function getWorkspacePairPeerTrust(
           continue
         }
         const m = median(otherNums)
-        if (Math.abs(e.cell.value - m) <= PEER_TOLERANCE) acc.aligned++
+        if (withinTolerance(e.cell.value, m, PEER_TOLERANCE)) acc.aligned++
         else acc.diverged++
       }
     }

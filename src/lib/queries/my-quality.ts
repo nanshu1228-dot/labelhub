@@ -9,7 +9,7 @@ import {
   workspaceMembers,
   workspaces,
 } from '@/lib/db/schema'
-import { getRaterDrilldown } from '@/lib/queries/rater-drilldown'
+import { getAnnotatorDrilldown } from '@/lib/queries/rater-drilldown'
 
 /**
  * Annotator-facing self-view ("/my/quality").
@@ -136,7 +136,7 @@ export async function getMyQuality(userId: string): Promise<MyQualitySnapshot> {
     // 2c. Weak axes — reuse the existing drilldown computation.
     let weakAxes: MyQualityWorkspace['weakAxes'] = []
     try {
-      const drill = await getRaterDrilldown({ userId, workspaceId: ws })
+      const drill = await getAnnotatorDrilldown({ userId, workspaceId: ws })
       if (drill) {
         weakAxes = drill.axes
           .filter((a) => a.aligned + a.diverged >= 2) // need some signal

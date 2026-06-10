@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
+import { headers } from 'next/headers'
 import { notFound, redirect } from 'next/navigation'
 import { desc, eq } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
@@ -15,11 +16,18 @@ import {
 } from '@/lib/queries/api-keys'
 import { ExampleTabs } from '@/components/api/example-tabs'
 import {
+  CreateApiKeyButton,
+  RevokeKeyButton,
+} from '@/components/api/api-key-actions'
+import {
   listProviders,
   type ProviderDef,
 } from '@/lib/proxy/provider-registry'
 import { resolveTopicScope } from '@/lib/queries/topic-scope'
+import { getRecentCaptureFailures } from '@/lib/queries/capture-health'
 import { TopicScopeAdmin } from '@/components/api/topic-scope-admin'
+import { DbError } from '@/components/ui/db-error'
+import { SectionHeader } from '@/components/ui/section-header'
 
 export const metadata: Metadata = {
   title: 'API — LabelHub',
@@ -43,6 +51,17 @@ export default async function ApiManagementPage(
 ) {
   const { id: workspaceId } = await props.params
 
+  // Resolve the deployed origin so copy-paste examples target the real host
+  // (https://aipert.top) instead of a hardcoded localhost. Falls back
+  // gracefully behind proxies that strip the forwarded headers.
+  const h = await headers()
+  const host =
+    h.get('x-forwarded-host') ?? h.get('host') ?? 'localhost:3000'
+  const proto =
+    h.get('x-forwarded-proto') ??
+    (host.startsWith('localhost') || host.startsWith('127.') ? 'http' : 'https')
+  const origin = `${proto}://${host}`
+
   // Admin-only — API key prefixes + usage logs are operational secrets
   // even though plain keys never leave the DB.
   const me = await optionalUser()
@@ -59,23 +78,28 @@ export default async function ApiManagementPage(
   let usage: Awaited<ReturnType<typeof getWorkspaceApiUsage>> | null = null
   let recentLog: Array<typeof apiRequestLog.$inferSelect> = []
   let topicScope: Awaited<ReturnType<typeof resolveTopicScope>> = null
+  let captureFailures: Awaited<
+    ReturnType<typeof getRecentCaptureFailures>
+  > = []
 
   try {
     const workspace = await getWorkspaceById(workspaceId)
     if (!workspace) notFound()
     workspaceName = workspace.name
     const db = getDb()
-    ;[keys, usage, recentLog, topicScope] = await Promise.all([
-      listApiKeysWithStatus(workspaceId),
-      getWorkspaceApiUsage(workspaceId),
-      db
-        .select()
-        .from(apiRequestLog)
-        .where(eq(apiRequestLog.workspaceId, workspaceId))
-        .orderBy(desc(apiRequestLog.ts))
-        .limit(20),
-      resolveTopicScope({ workspaceId }),
-    ])
+    ;[keys, usage, recentLog, topicScope, captureFailures] =
+      await Promise.all([
+        listApiKeysWithStatus(workspaceId),
+        getWorkspaceApiUsage(workspaceId),
+        db
+          .select()
+          .from(apiRequestLog)
+          .where(eq(apiRequestLog.workspaceId, workspaceId))
+          .orderBy(desc(apiRequestLog.ts))
+          .limit(20),
+        resolveTopicScope({ workspaceId }),
+        getRecentCaptureFailures(workspaceId),
+      ])
   } catch (e) {
     dbError = e instanceof Error ? e.message : String(e)
   }
@@ -100,15 +124,22 @@ export default async function ApiManagementPage(
           <DbError message={dbError} />
         ) : (
           <div className="flex flex-col gap-10">
-            <EndpointsSection workspaceId={workspaceId} />
+            <EndpointsSection workspaceId={workspaceId} base={origin} />
             <TopicScopeAdmin
               workspaceId={workspaceId}
               scope={topicScope}
             />
             <LimitationsSection />
-            <KeysSection keys={keys} />
+            <KeysSection
+              keys={keys}
+              workspaceId={workspaceId}
+              origin={origin}
+            />
             <UsageSection usage={usage} />
-            <RecentCallsSection rows={recentLog} />
+            <RecentCallsSection
+              rows={recentLog}
+              captureFailures={captureFailures}
+            />
           </div>
         )}
       </main>
@@ -304,9 +335,8 @@ print(llm.invoke([{"role": "user", "content": "${demo.samplePrompt}"}]).content)
   }
 }
 
-function buildEndpoints(workspaceId: string): EndpointSpec[] {
-  const KEY_PLACEHOLDER = 'lh_ws_…'
-  const base = 'http://localhost:3000'
+function buildEndpoints(workspaceId: string, base: string): EndpointSpec[] {
+  const KEY_PLACEHOLDER = 'lh_ws_YOUR_KEY'
 
   // Auto-generate one proxy endpoint per registered provider. Adding a new
   // upstream LLM provider = 3 lines in `provider-registry.ts` and it shows
@@ -452,8 +482,14 @@ for t in data["trajectories"]:
   ]
 }
 
-function EndpointsSection({ workspaceId }: { workspaceId: string }) {
-  const endpoints = buildEndpoints(workspaceId)
+function EndpointsSection({
+  workspaceId,
+  base,
+}: {
+  workspaceId: string
+  base: string
+}) {
+  const endpoints = buildEndpoints(workspaceId, base)
   return (
     <section>
       <SectionHeader title="ENDPOINTS" hint={`${endpoints.length} routes`} />
@@ -640,17 +676,28 @@ function AuthBadge({ auth }: { auth: EndpointSpec['auth'] }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // 2. API keys
 
+const KEYS_GRID = '1.6fr 1.1fr 1.1fr 1.1fr 0.8fr 0.7fr'
+
 function KeysSection({
   keys,
+  workspaceId,
+  origin,
 }: {
   keys: Awaited<ReturnType<typeof listApiKeysWithStatus>>
+  workspaceId: string
+  origin: string
 }) {
   return (
     <section>
-      <SectionHeader
-        title="API KEYS"
-        hint={`${keys.filter((k) => k.isActive).length} active / ${keys.length} total`}
-      />
+      <div className="flex items-baseline justify-between gap-3 mb-3">
+        <div className="flex items-baseline gap-3">
+          <div className="lbl">§ API KEYS</div>
+          <span className="ts-12 mono" style={{ color: 'var(--mute2)' }}>
+            {keys.filter((k) => k.isActive).length} active / {keys.length} total
+          </span>
+        </div>
+        <CreateApiKeyButton workspaceId={workspaceId} origin={origin} />
+      </div>
       {keys.length === 0 ? (
         <EmptyKeys />
       ) : (
@@ -664,8 +711,7 @@ function KeysSection({
           <div
             className="grid gap-3 px-4 py-2.5 ts-12 mono hairline-b"
             style={{
-              gridTemplateColumns:
-                '1.6fr 1.3fr 1.2fr 1.2fr 0.8fr',
+              gridTemplateColumns: KEYS_GRID,
               color: 'var(--mute2)',
               letterSpacing: '0.04em',
               background: 'var(--panel2)',
@@ -676,14 +722,14 @@ function KeysSection({
             <span>CREATED</span>
             <span>LAST USED</span>
             <span>STATUS</span>
+            <span />
           </div>
           {keys.map((k) => (
             <div
               key={k.id}
               className="grid gap-3 px-4 py-3 ts-13 hairline-b"
               style={{
-                gridTemplateColumns:
-                  '1.6fr 1.3fr 1.2fr 1.2fr 0.8fr',
+                gridTemplateColumns: KEYS_GRID,
                 color: 'var(--text)',
                 alignItems: 'center',
               }}
@@ -732,6 +778,9 @@ function KeysSection({
                   </span>
                 )}
               </span>
+              <span className="text-right">
+                {k.isActive && <RevokeKeyButton apiKeyId={k.id} />}
+              </span>
             </div>
           ))}
         </div>
@@ -740,9 +789,9 @@ function KeysSection({
         className="mt-3 ts-12 mono"
         style={{ color: 'var(--mute2)' }}
       >
-        mint a new key:{' '}
+        keys are shown in full only once, at creation. CLI alternative:{' '}
         <span style={{ color: 'var(--hi)' }}>npm run bootstrap</span>{' '}
-        &nbsp;&middot;&nbsp; rotate all bootstrap keys:{' '}
+        &nbsp;&middot;&nbsp; rotate bootstrap keys:{' '}
         <span style={{ color: 'var(--hi)' }}>
           npm run bootstrap -- --rotate
         </span>
@@ -758,11 +807,11 @@ function EmptyKeys() {
       style={{ border: '1px dashed var(--line2)', background: 'var(--panel)' }}
     >
       <p className="ts-13" style={{ color: 'var(--mute)' }}>
-        No API keys yet. Run{' '}
+        No API keys yet. Click{' '}
         <span className="mono" style={{ color: 'var(--hi)' }}>
-          npm run bootstrap
+          + New key
         </span>{' '}
-        to mint one.
+        above to mint one — you&apos;ll see the full key once.
       </p>
     </div>
   )
@@ -866,12 +915,17 @@ function UsageTile({
 
 function RecentCallsSection({
   rows,
+  captureFailures,
 }: {
   rows: Array<typeof apiRequestLog.$inferSelect>
+  captureFailures: Awaited<ReturnType<typeof getRecentCaptureFailures>>
 }) {
   return (
     <section>
       <SectionHeader title="RECENT CALLS" hint={`last ${rows.length}`} />
+      {captureFailures.length > 0 && (
+        <CaptureFailuresHint failures={captureFailures} />
+      )}
       {rows.length === 0 ? (
         <div
           className="text-center py-8 rounded-xl ts-13"
@@ -929,54 +983,49 @@ function RecentCallsSection({
   )
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// shared
-
-function SectionHeader({
-  title,
-  hint,
+// A non-blocking amber hint shown above RECENT CALLS when the proxy
+// returned 200s but silently failed to persist the captured trajectory
+// (DB / validation / storage error inside the after()-window). Surfaces
+// the latest failure + time so an admin notices a capture gap that would
+// otherwise be invisible.
+function CaptureFailuresHint({
+  failures,
 }: {
-  title: string
-  hint?: string
+  failures: Awaited<ReturnType<typeof getRecentCaptureFailures>>
 }) {
-  return (
-    <div className="flex items-baseline justify-between gap-3 mb-3">
-      <div className="lbl">§ {title}</div>
-      {hint && (
-        <span
-          className="ts-12 mono"
-          style={{ color: 'var(--mute2)' }}
-        >
-          {hint}
-        </span>
-      )}
-    </div>
-  )
-}
-
-function DbError({ message }: { message: string }) {
+  const latest = failures[0]
   return (
     <div
-      className="p-6 rounded-xl"
-      style={{ border: '1px solid var(--line)', background: 'var(--panel)' }}
+      className="mb-3 px-4 py-3 rounded-xl"
+      style={{
+        border: '1px solid oklch(0.7 0.14 75 / 0.4)',
+        background: 'oklch(0.7 0.14 75 / 0.08)',
+      }}
     >
-      <div
-        className="ts-13 mono mb-2"
-        style={{ color: 'var(--danger)', letterSpacing: '0.05em' }}
-      >
-        § DATABASE NOT REACHABLE
+      <div className="ts-13" style={{ color: 'var(--warn)', fontWeight: 500 }}>
+        ⚠ {failures.length} recent capture failure
+        {failures.length === 1 ? '' : 's'}
       </div>
-      <pre
-        className="mt-2 ts-12 mono p-3 overflow-auto whitespace-pre-wrap"
-        style={{
-          background: 'var(--code-bg)',
-          border: '1px solid var(--code-line)',
-          color: 'var(--code-text)',
-          borderRadius: 8,
-        }}
-      >
-        {message}
-      </pre>
+      {latest && (
+        <p
+          className="ts-12 mono mt-1"
+          style={{ color: 'var(--mute)', lineHeight: 1.5 }}
+        >
+          <span style={{ color: 'var(--mute2)' }}>
+            {new Date(latest.ts).toLocaleString()}
+          </span>
+          {' — '}
+          <span className="truncate-1" style={{ color: 'var(--hi)' }}>
+            {latest.message}
+          </span>
+        </p>
+      )}
+      <p className="ts-12 mt-1" style={{ color: 'var(--mute2)' }}>
+        These calls returned 200 to the client but no trajectory was
+        persisted. Capture is best-effort and never blocks the proxy
+        response.
+      </p>
     </div>
   )
 }
+

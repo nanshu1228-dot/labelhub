@@ -27,7 +27,7 @@ import postgres from 'postgres'
 
 const DATABASE_URL = process.env.DATABASE_URL
 if (!DATABASE_URL) {
-  // eslint-disable-next-line no-console
+   
   console.error('DATABASE_URL is not set.')
   process.exit(1)
 }
@@ -74,15 +74,15 @@ async function main() {
   // statement runs sequentially on a single connection.
   const sql = postgres(DATABASE_URL!, { max: 1, prepare: false })
   try {
-    // eslint-disable-next-line no-console
+     
     console.log(`[apply] connected, running ${STATEMENTS.length} statements`)
     for (const stmt of STATEMENTS) {
       const t0 = Date.now()
-      // eslint-disable-next-line no-console
+       
       console.log(`[apply] ${stmt.label} …`)
       await sql.unsafe(stmt.sql)
       const ms = Date.now() - t0
-      // eslint-disable-next-line no-console
+       
       console.log(`[apply] ${stmt.label} ✓ (${ms}ms)`)
     }
 
@@ -100,7 +100,7 @@ async function main() {
         WHERE table_name = 'notifications'
       ) AS exists
     `
-    // eslint-disable-next-line no-console
+     
     console.log('[verify]', {
       annotations_started_at: annCols.has_started,
       annotations_duration_sec: annCols.has_duration,
@@ -112,7 +112,7 @@ async function main() {
 }
 
 main().catch((e) => {
-  // eslint-disable-next-line no-console
+   
   console.error('[apply] failed:', e)
   process.exit(1)
 })

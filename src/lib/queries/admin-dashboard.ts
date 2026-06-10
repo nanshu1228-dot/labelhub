@@ -186,7 +186,7 @@ export async function getAdminDashboardData(opts: {
     revisingRows.map((r) => [r.workspaceId, Number(r.n ?? 0)]),
   )
   const lastEvtByWs = new Map<string, Date | null>(
-    lastEventRows.map((r) => [r.workspaceId, r.ts]),
+    lastEventRows.map((r) => [r.workspaceId, coerceDate(r.ts)]),
   )
 
   const cardData = adminWorkspaces.map((ws) => ({
@@ -245,7 +245,7 @@ export async function getAdminDashboardData(opts: {
     templateMode: r.templateMode,
     topicStatus: r.topicStatus,
     submitterDisplayName: r.submitterDisplayName ?? null,
-    submittedAt: r.submittedAt ?? null,
+    submittedAt: coerceDate(r.submittedAt),
   }))
 
   // 4. Recently rejected — last 14 days, joined back to annotation+task
@@ -306,7 +306,7 @@ export async function getAdminDashboardData(opts: {
       templateMode: r.templateMode,
       topicStatus: r.topicStatus,
       submitterDisplayName: r.submitterDisplayName ?? null,
-      submittedAt: r.submittedAt ?? null,
+      submittedAt: coerceDate(r.submittedAt),
     }))
   }
 
@@ -359,3 +359,13 @@ export async function userAdminsAnyWorkspace(userId: string): Promise<boolean> {
 
 // Silence unused-imports until trajectories is needed for a per-mode card
 void trajectories
+
+function coerceDate(value: unknown): Date | null {
+  if (!value) return null
+  if (value instanceof Date) return value
+  if (typeof value === 'string' || typeof value === 'number') {
+    const d = new Date(value)
+    return Number.isNaN(d.getTime()) ? null : d
+  }
+  return null
+}

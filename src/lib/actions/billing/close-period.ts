@@ -31,7 +31,7 @@ import {
   payoutPeriods,
   payouts,
 } from '@/lib/db/schema'
-import { AppError, NotFoundError } from '@/lib/errors'
+import { AppError, ConflictError, NotFoundError } from '@/lib/errors'
 import { uuidLike } from '@/lib/validators/uuid'
 import { requireWorkspaceAdmin } from '@/lib/auth/guards'
 
@@ -99,73 +99,103 @@ export async function closePayoutPeriod(
     )
   }
 
-  // ── 2. Aggregate approved line items by (user, currency) ──────────
-  const aggregates = await db
-    .select({
-      userId: payoutLineItems.userId,
-      currency: payoutLineItems.currency,
-      totalMinor: sql<number>`sum(${payoutLineItems.totalAmountMinor})::int`,
-      lineCount: sql<number>`count(*)::int`,
-    })
-    .from(payoutLineItems)
-    .where(
-      and(
-        eq(payoutLineItems.payoutPeriodId, periodRow.id),
-        eq(payoutLineItems.status, 'approved'),
-      ),
-    )
-    .groupBy(payoutLineItems.userId, payoutLineItems.currency)
+  // ── 2–5. Aggregate → create payouts → close → audit, ATOMICALLY ──
+  // One transaction so a mid-pipeline crash can't leave the period 'open'
+  // with payouts already written — a re-close would otherwise re-aggregate
+  // the same approved line items and DOUBLE-PAY. The period flip is a
+  // conditional CAS on status='open', so two admins racing close() can't
+  // both create payouts (the loser rolls back with ConflictError).
+  const period = periodRow
+  const { insertable, grandTotal, byCurrency } = await db.transaction(
+    async (tx) => {
+      // 2. Aggregate approved line items by (user, currency).
+      const aggregates = await tx
+        .select({
+          userId: payoutLineItems.userId,
+          currency: payoutLineItems.currency,
+          totalMinor: sql<number>`sum(${payoutLineItems.totalAmountMinor})::int`,
+          lineCount: sql<number>`count(*)::int`,
+        })
+        .from(payoutLineItems)
+        .where(
+          and(
+            eq(payoutLineItems.payoutPeriodId, period.id),
+            eq(payoutLineItems.status, 'approved'),
+          ),
+        )
+        .groupBy(payoutLineItems.userId, payoutLineItems.currency)
 
-  // ── 3. Insert one payouts row per (user × currency) ──────────────
-  // Filter zero-amount aggregates: don't pollute payouts with $0 rows.
-  const insertable = aggregates.filter((a) => Number(a.totalMinor) > 0)
+      // 3. Insert one payouts row per (user × currency). Filter zero-amount
+      // aggregates: don't pollute payouts with $0 rows.
+      const insertable = aggregates.filter((a) => Number(a.totalMinor) > 0)
+      if (insertable.length > 0) {
+        await tx.insert(payouts).values(
+          insertable.map((a) => ({
+            payoutPeriodId: period.id,
+            userId: a.userId,
+            amountMinor: Number(a.totalMinor),
+            currency: a.currency,
+            status: 'pending' as const,
+          })),
+        )
+      }
 
-  if (insertable.length > 0) {
-    await db.insert(payouts).values(
-      insertable.map((a) => ({
-        payoutPeriodId: periodRow.id,
-        userId: a.userId,
-        amountMinor: Number(a.totalMinor),
-        currency: a.currency,
-        status: 'pending' as const,
-      })),
-    )
-  }
+      // 4. Conditional close — refuses (rolls the whole tx back) if another
+      // close already flipped this period, so payouts can't be created twice.
+      const closed = await tx
+        .update(payoutPeriods)
+        .set({ status: 'closed', closedAt: new Date() })
+        .where(
+          and(
+            eq(payoutPeriods.id, period.id),
+            eq(payoutPeriods.status, 'open'),
+          ),
+        )
+        .returning({ id: payoutPeriods.id })
+      if (closed.length === 0) {
+        throw new ConflictError(
+          `Payout period ${period.id} was closed concurrently — nothing double-paid.`,
+        )
+      }
 
-  // ── 4. Mark the period closed ─────────────────────────────────────
-  await db
-    .update(payoutPeriods)
-    .set({ status: 'closed', closedAt: new Date() })
-    .where(eq(payoutPeriods.id, periodRow.id))
+      // 5. Audit event (inside the tx so it lands iff the close commits).
+      const grandTotal = insertable.reduce(
+        (acc, a) => acc + Number(a.totalMinor),
+        0,
+      )
+      const byCurrencyMap = new Map<
+        string,
+        { userCount: number; totalMinor: number }
+      >()
+      for (const a of insertable) {
+        const cur = byCurrencyMap.get(a.currency) ?? {
+          userCount: 0,
+          totalMinor: 0,
+        }
+        cur.userCount += 1
+        cur.totalMinor += Number(a.totalMinor)
+        byCurrencyMap.set(a.currency, cur)
+      }
+      const byCurrency = [...byCurrencyMap.entries()].map(([currency, v]) => ({
+        currency,
+        ...v,
+      }))
 
-  // ── 5. Event + cache busts ───────────────────────────────────────
-  const grandTotal = insertable.reduce(
-    (acc, a) => acc + Number(a.totalMinor),
-    0,
-  )
-  const byCurrencyMap = new Map<string, { userCount: number; totalMinor: number }>()
-  for (const a of insertable) {
-    const cur = byCurrencyMap.get(a.currency) ?? { userCount: 0, totalMinor: 0 }
-    cur.userCount += 1
-    cur.totalMinor += Number(a.totalMinor)
-    byCurrencyMap.set(a.currency, cur)
-  }
-  const byCurrency = [...byCurrencyMap.entries()].map(([currency, v]) => ({
-    currency,
-    ...v,
-  }))
+      await tx.insert(events).values({
+        type: 'payout_period.closed',
+        workspaceId: parsed.workspaceId,
+        actorId: actor.id,
+        payload: {
+          payoutPeriodId: period.id,
+          payoutCount: insertable.length,
+          grandTotalMinor: grandTotal,
+          byCurrency,
+        },
+      })
 
-  await db.insert(events).values({
-    type: 'payout_period.closed',
-    workspaceId: parsed.workspaceId,
-    actorId: actor.id,
-    payload: {
-      payoutPeriodId: periodRow.id,
-      payoutCount: insertable.length,
-      grandTotalMinor: grandTotal,
-      byCurrency,
+      return { insertable, grandTotal, byCurrency }
     },
-  })
+  )
 
   try {
     revalidatePath(`/workspaces/${parsed.workspaceId}/billing`)

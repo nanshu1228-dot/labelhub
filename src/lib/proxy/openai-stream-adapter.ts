@@ -63,7 +63,7 @@ export class OpenAIStreamAccumulator {
   private id?: string
   private model?: string
   private created?: number
-  private role: 'assistant' = 'assistant'
+  private role = 'assistant' as const
   private contentParts: string[] = []
   private reasoningParts: string[] = []
   /** Tool call slots keyed by `delta.tool_calls[].index`. */

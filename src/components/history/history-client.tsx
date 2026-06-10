@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { restoreAnnotationRevision } from '@/lib/actions/annotation-revisions'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 
 type RevisionRow = {
   id: string
@@ -17,8 +18,8 @@ type RevisionRow = {
 
 type AnnotationList = {
   annotationId: string
-  raterDisplayName: string | null
-  raterEmail: string | null
+  annotatorDisplayName: string | null
+  annotatorEmail: string | null
   revisions: RevisionRow[]
 }
 
@@ -52,9 +53,9 @@ function AnnotationCard({ list }: { list: AnnotationList }) {
   const [info, setInfo] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
 
-  const raterName =
-    list.raterDisplayName ??
-    list.raterEmail?.split('@')[0] ??
+  const annotatorName =
+    list.annotatorDisplayName ??
+    list.annotatorEmail?.split('@')[0] ??
     list.annotationId.slice(0, 8)
 
   function doRestore() {
@@ -72,13 +73,13 @@ function AnnotationCard({ list }: { list: AnnotationList }) {
           reason: reason.trim(),
         })
         setInfo(
-          `Restored. ${raterName} got a notification with your reason.`,
+          `Restored. ${annotatorName} got a notification with your reason.`,
         )
         setChosenRevId(null)
         setReason('')
         router.refresh()
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Restore failed.')
+        setError(getErrorMessage(e, 'Restore failed.'))
       }
     })
   }
@@ -96,7 +97,7 @@ function AnnotationCard({ list }: { list: AnnotationList }) {
           className="ts-16"
           style={{ color: 'var(--hi)', fontWeight: 500 }}
         >
-          {raterName}&apos;s annotation
+          {annotatorName}&apos;s annotation
         </h2>
         <span
           className="ts-11 mono"

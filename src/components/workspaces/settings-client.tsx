@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { renameWorkspace } from '@/lib/actions/workspaces'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 
 /**
  * Settings page client component.
@@ -80,7 +81,7 @@ function IdentitySection({
         setInfo('Saved.')
         router.refresh()
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Save failed.')
+        setError(getErrorMessage(e, 'Save failed.'))
       }
     })
   }

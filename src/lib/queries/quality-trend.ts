@@ -1,5 +1,5 @@
 import 'server-only'
-import { and, eq, gte, inArray, lt } from 'drizzle-orm'
+import { and, eq, gte, inArray } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { events } from '@/lib/db/schema'
 

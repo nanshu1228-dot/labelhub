@@ -145,6 +145,40 @@ function setupScenario(opts: {
     ? []
     : [{ ...topic, status: 'awaiting_acceptance', version: topic.version + 1 }]
 
+  // Shared write handlers — reused for both the top-level db and the tx
+  // handle so `db.transaction(cb => cb(tx))` sees the same update/insert.
+  const insertHandler = () => ({
+    // For both `events` insert and `users` mirror upsert.
+    values: () => {
+      const thenable = {
+        then(onFulfilled: (v: unknown) => unknown) {
+          return Promise.resolve().then(onFulfilled)
+        },
+        onConflictDoNothing() {
+          return Promise.resolve()
+        },
+        onConflictDoUpdate() {
+          return Promise.resolve()
+        },
+      }
+      return thenable
+    },
+  })
+  const updateHandler = () => ({
+    set: () => ({
+      where: () => ({
+        returning: () => Promise.resolve(updateReturning),
+      }),
+    }),
+  })
+
+  // qcReviewAnnotation now commits the topic flip + audit event inside one
+  // db.transaction (atomicity parity with reviewAnnotation). The spy lets a
+  // test assert the verdict went through a transaction.
+  const transaction = vi.fn(async (cb: (tx: unknown) => unknown) =>
+    cb({ insert: insertHandler, update: updateHandler }),
+  )
+
   vi.mocked(getDb).mockReturnValue({
     select: () => ({
       from: () => ({
@@ -158,30 +192,12 @@ function setupScenario(opts: {
         }),
       }),
     }),
-    insert: () => ({
-      // For both `events` insert and `users` mirror upsert.
-      values: () => {
-        const thenable = {
-          then(onFulfilled: (v: unknown) => unknown) {
-            return Promise.resolve().then(onFulfilled)
-          },
-          onConflictDoNothing() {
-            return Promise.resolve()
-          },
-        }
-        return thenable
-      },
-    }),
-    update: () => ({
-      set: () => ({
-        where: () => ({
-          returning: () => Promise.resolve(updateReturning),
-        }),
-      }),
-    }),
+    insert: insertHandler,
+    update: updateHandler,
+    transaction,
   } as never)
 
-  return { topic, annotation }
+  return { topic, annotation, transaction }
 }
 
 beforeEach(() => {
@@ -346,6 +362,7 @@ describe('qcReviewAnnotation — resource resolution', () => {
       insert: () => ({
         values: () => ({
           onConflictDoNothing: () => Promise.resolve(),
+          onConflictDoUpdate: () => Promise.resolve(),
         }),
       }),
     } as never)
@@ -371,6 +388,23 @@ describe('qcReviewAnnotation — resource resolution', () => {
         decision: 'pass',
       }),
     ).rejects.toBeInstanceOf(ConflictError)
+  })
+
+  it('commits the topic flip + audit event inside one db.transaction', async () => {
+    // Atomicity parity with reviewAnnotation: no status flip without the
+    // audit trail, and no trail without the flip. A crash between the two
+    // writes must roll both back, so they go through one transaction.
+    const { transaction } = setupScenario({
+      reviewerId: REVIEWER,
+      reviewerRole: 'qc',
+      topicStatus: 'submitted',
+    })
+    const res = await qcReviewAnnotation({
+      annotationId: ANNOTATION.id,
+      decision: 'pass',
+    })
+    expect(res).toEqual({ ok: true, next: 'awaiting_acceptance' })
+    expect(transaction).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -417,6 +451,21 @@ describe('qcReviewAnnotation — input validation', () => {
       feedback: 'a'.repeat(2000),
     })
     expect(result.next).toBe('revising')
+  })
+
+  it('requires feedback when requesting a revision', async () => {
+    setupScenario({
+      reviewerId: REVIEWER,
+      reviewerRole: 'qc',
+      topicStatus: 'submitted',
+    })
+    await expect(
+      qcReviewAnnotation({
+        annotationId: ANNOTATION.id,
+        decision: 'request_revision',
+        feedback: '   ',
+      }),
+    ).rejects.toThrow(/feedback is required/i)
   })
 
   it('rejects feedback over length limit', async () => {

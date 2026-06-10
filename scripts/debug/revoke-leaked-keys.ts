@@ -26,7 +26,7 @@ const LEAKED = [
 
 const DATABASE_URL = process.env.DATABASE_URL
 if (!DATABASE_URL) {
-  // eslint-disable-next-line no-console
+   
   console.error('DATABASE_URL not set')
   process.exit(1)
 }
@@ -42,7 +42,7 @@ async function main() {
         WHERE key_hash = ${hash}
         RETURNING id, prefix, workspace_id, revoked_at
       `
-      // eslint-disable-next-line no-console
+       
       console.log(`[revoke] ${plain.slice(0, 14)}…`, result)
     }
   } finally {
@@ -51,7 +51,7 @@ async function main() {
 }
 
 main().catch((e) => {
-  // eslint-disable-next-line no-console
+   
   console.error('[revoke] failed:', e)
   process.exit(1)
 })

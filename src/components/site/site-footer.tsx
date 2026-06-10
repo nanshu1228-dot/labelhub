@@ -20,27 +20,27 @@ export function SiteFooter() {
               </svg>
               <span
                 className="lh-body font-medium"
-                style={{ color: 'oklch(0.92 0 0)', letterSpacing: '-0.01em' }}
+                style={{ color: 'var(--hi)', letterSpacing: '-0.01em' }}
               >
                 LabelHub
               </span>
             </div>
             <p
               className="lh-body-sm mt-3 max-w-[320px]"
-              style={{ color: 'oklch(0.55 0 0)' }}
+              style={{ color: 'var(--mute)' }}
             >
               {t('footer_tagline')}
             </p>
             <div
               className="lh-mono lh-caption mt-6 flex items-center gap-2"
-              style={{ color: 'oklch(0.42 0 0)' }}
+              style={{ color: 'var(--mute2)' }}
             >
               <span
                 className="inline-block w-1.5 h-1.5 rounded-full"
                 style={{ background: 'oklch(0.65 0.13 150)' }}
               />
               <span>{t('footer_status')}</span>
-              <span style={{ color: 'oklch(0.27 0 0)' }}>·</span>
+              <span style={{ color: 'var(--mute2)' }}>·</span>
               <span>v0.4.21</span>
             </div>
           </div>
@@ -49,40 +49,31 @@ export function SiteFooter() {
             heading="footer_product"
             links={[
               { key: 'footer_templates', href: '#templates' },
-              { key: 'footer_marketplace' },
-              { key: 'footer_pricing' },
-              { key: 'footer_changelog' },
-            ]}
-          />
-          <FooterColumn
-            heading="footer_company"
-            links={[
-              { key: 'footer_about' },
-              { key: 'footer_careers' },
-              { key: 'footer_blog' },
-              { key: 'footer_contact' },
-            ]}
-          />
-          <FooterColumn
-            heading="footer_legal"
-            wide
-            links={[
-              { key: 'footer_terms' },
-              { key: 'footer_privacy' },
-              { key: 'footer_security' },
-              { key: 'footer_docs' },
+              { key: 'footer_docs', href: '/docs' },
             ]}
           />
         </div>
 
         <div
-          className="flex flex-wrap items-center justify-between gap-3 pt-6"
-          style={{ borderTop: '1px solid oklch(0.22 0 0)' }}
+          className="grid grid-cols-1 md:grid-cols-3 items-center gap-3 pt-6 text-center md:text-left"
+          style={{ borderTop: '1px solid var(--line)' }}
         >
-          <span className="lh-mono lh-caption" style={{ color: 'oklch(0.42 0 0)' }}>
+          <span className="lh-mono lh-caption" style={{ color: 'var(--mute2)' }}>
             © 2026 LabelHub Labs, Inc.
           </span>
-          <span className="lh-mono lh-caption" style={{ color: 'oklch(0.42 0 0)' }}>
+          <a
+            className="lh-mono lh-caption md:text-center"
+            href="http://beian.miit.gov.cn/"
+            rel="noreferrer"
+            target="_blank"
+            style={{ color: 'var(--mute)' }}
+          >
+            京ICP备2026029587号
+          </a>
+          <span
+            className="lh-mono lh-caption md:text-right"
+            style={{ color: 'var(--mute2)' }}
+          >
             {t('footer_built')}
           </span>
         </div>
@@ -105,7 +96,7 @@ function FooterColumn({
     <div className={wide ? 'col-span-2 md:col-span-2' : 'col-span-1 md:col-span-2'}>
       <div
         className="lh-mono lh-caption mb-3"
-        style={{ color: 'oklch(0.42 0 0)', letterSpacing: '0.04em' }}
+        style={{ color: 'var(--mute2)', letterSpacing: '0.04em' }}
       >
         {t(heading)}
       </div>

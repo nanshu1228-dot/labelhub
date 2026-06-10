@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { createTopicsBatch } from '@/lib/actions/topics'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 
 /**
  * Admin bulk-topic upload.
@@ -51,7 +52,7 @@ export function BulkUploadForm({
     try {
       parsed = JSON.parse(json)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Invalid JSON.')
+      setError(getErrorMessage(e, 'Invalid JSON.'))
       return
     }
     if (!Array.isArray(parsed)) {
@@ -85,7 +86,7 @@ export function BulkUploadForm({
           router.refresh()
         }
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Bulk upload failed.')
+        setError(getErrorMessage(e, 'Bulk upload failed.'))
       }
     })
   }
@@ -97,6 +98,7 @@ export function BulkUploadForm({
         onClick={() => setOpen(true)}
         className="ts-12 mono"
         style={{
+          alignSelf: 'flex-start',
           background: 'transparent',
           color: 'var(--accent)',
           border: '1px solid oklch(0.6 0.18 280 / 0.4)',

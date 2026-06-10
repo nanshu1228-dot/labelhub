@@ -1,6 +1,7 @@
 'use client'
 import { useRef, useState, useTransition } from 'react'
 import { markStepInline } from '@/lib/actions/step-annotations-inline'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 
 /**
  * Per-step annotation widget.
@@ -88,7 +89,7 @@ export function StepMarkWidget({
         setSavedReasoning(reasoning)
         setEditing(false)
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Save failed.')
+        setError(getErrorMessage(e, 'Save failed.'))
       }
     })
   }

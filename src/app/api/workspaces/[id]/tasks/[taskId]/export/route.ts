@@ -1,9 +1,10 @@
 import { NextResponse, type NextRequest } from 'next/server'
-import { and, eq, inArray, isNotNull } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm'
 import { requireWorkspaceAdmin } from '@/lib/auth/guards'
 import { AppError } from '@/lib/errors'
 import { getDb } from '@/lib/db/client'
 import {
+  aiSubmissionVerdicts,
   annotations,
   events,
   stepAnnotations,
@@ -12,9 +13,69 @@ import {
   users,
 } from '@/lib/db/schema'
 import { extractRequestMeta, logApiRequest } from '@/lib/api/audit'
+import {
+  isExportFormat,
+  pickFormatterFor,
+  type ExportFormat,
+  type FieldMapping,
+  type FormatOptions,
+} from '@/lib/export/formatters'
+import { parseFieldMappingParam } from '@/lib/export/mapping-param'
+import {
+  REVIEW_EVENT_TYPES,
+  buildTaskReviewExportFields,
+  latestAiVerdictByAnnotation,
+  reviewEventsByAnnotation,
+} from '@/lib/export/task-review-fields'
+
+const DEFAULT_TASK_TABLE_MAPPING: FieldMapping[] = [
+  { source: 'annotation_id', target: 'annotation_id' },
+  { source: 'topic_id', target: 'topic_id' },
+  { source: 'task_id', target: 'task_id' },
+  { source: 'task_name', target: 'task_name' },
+  { source: 'template_mode', target: 'template_mode' },
+  { source: 'workspace_id', target: 'workspace_id' },
+  { source: 'submitter_user_id', target: 'submitter_user_id' },
+  { source: 'submitter_email', target: 'submitter_email' },
+  { source: 'submitter_display_name', target: 'submitter_display_name' },
+  { source: 'submitted_at', target: 'submitted_at' },
+  { source: 'topic_status', target: 'topic_status' },
+  {
+    source: 'topic_item_data',
+    target: 'topic_item_data_json',
+    transform: 'json_stringify',
+  },
+  { source: 'payload', target: 'payload_json', transform: 'json_stringify' },
+  { source: 'reasoning_text', target: 'reasoning_text' },
+  { source: 'delta_summary', target: 'delta_summary' },
+  {
+    source: 'step_annotations',
+    target: 'step_annotations_json',
+    transform: 'json_stringify',
+  },
+  { source: 'ai_review_status', target: 'ai_review_status' },
+  { source: 'ai_review_verdict', target: 'ai_review_verdict' },
+  { source: 'ai_review_score', target: 'ai_review_score' },
+  { source: 'ai_review_reasoning', target: 'ai_review_reasoning' },
+  { source: 'ai_review_attempts', target: 'ai_review_attempts' },
+  { source: 'ai_review_error', target: 'ai_review_error' },
+  { source: 'ai_review_started_at', target: 'ai_review_started_at' },
+  { source: 'ai_review_finished_at', target: 'ai_review_finished_at' },
+  { source: 'human_review_type', target: 'human_review_type' },
+  { source: 'human_review_decision', target: 'human_review_decision' },
+  { source: 'human_review_feedback', target: 'human_review_feedback' },
+  { source: 'human_review_role', target: 'human_review_role' },
+  { source: 'reviewed_at', target: 'reviewed_at' },
+  { source: 'review_event_count', target: 'review_event_count' },
+  {
+    source: 'review_events',
+    target: 'review_events_json',
+    transform: 'json_stringify',
+  },
+]
 
 /**
- * GET /api/workspaces/:id/tasks/:taskId/export?format=json|csv
+ * GET /api/workspaces/:id/tasks/:taskId/export?format=json|jsonl|csv|excel
  *
  * Task-scoped annotation export — admin only. Handles every templateMode
  * (trajectory + pair-rubric + arena-gsb) because the row shape is the
@@ -23,12 +84,14 @@ import { extractRequestMeta, logApiRequest } from '@/lib/api/audit'
  * For trajectory mode, the file also includes a nested `stepAnnotations`
  * array per row (the per-step marks that drive trajectory IAA).
  *
- * Two formats:
+ * Four formats:
  *
  *   - json: array of objects. Best for re-ingest, scripts, downstream
  *           ML pipelines. Default.
+ *   - jsonl: one row per line for streaming training pipelines.
  *   - csv:  flat table with payload JSON-stringified into one column.
  *           Best for spreadsheets / human eyeballing.
+ *   - excel: .xlsx workbook for reviewer-friendly handoff.
  *
  * Audit: writes an `export.created` event with the row count + bytes
  * so admins can see who pulled what when.
@@ -43,7 +106,8 @@ export async function GET(
 
   const url = new URL(request.url)
   const formatRaw = url.searchParams.get('format')?.toLowerCase() ?? 'json'
-  const format: 'json' | 'csv' = formatRaw === 'csv' ? 'csv' : 'json'
+  let format: ExportFormat = 'json'
+  let mapping: FieldMapping[] | undefined
 
   // Phase-6 security audit response: cap the export. Default + max are
   // 50k rows — generous for any realistic annotation workload, but
@@ -68,6 +132,16 @@ export async function GET(
   let responseBytes = 0
 
   try {
+    if (!isExportFormat(formatRaw)) {
+      throw new AppError(
+        'VALIDATION_ERROR',
+        `Unknown format "${formatRaw}". Use json, jsonl, csv, or excel.`,
+        400,
+      )
+    }
+    format = formatRaw
+    mapping = parseFieldMappingParam(url.searchParams.get('mapping'))
+
     const { user } = await requireWorkspaceAdmin(workspaceId)
     userId = user.id
 
@@ -116,7 +190,7 @@ export async function GET(
 
     // For trajectory mode, pull all step_annotations in one shot and
     // index them by annotationId. Skip for pair/arena (no step marks).
-    let stepsByAnnotationId = new Map<
+    const stepsByAnnotationId = new Map<
       string,
       Array<typeof stepAnnotations.$inferSelect>
     >()
@@ -132,6 +206,49 @@ export async function GET(
         stepsByAnnotationId.set(s.annotationId, arr)
       }
     }
+
+    const annIds = rows.map((r) => r.annotationId)
+    const aiVerdictsByAnnotationId =
+      annIds.length > 0
+        ? latestAiVerdictByAnnotation(
+            await db
+              .select({
+                annotationId: aiSubmissionVerdicts.annotationId,
+                status: aiSubmissionVerdicts.status,
+                verdict: aiSubmissionVerdicts.verdict,
+                scores: aiSubmissionVerdicts.scores,
+                reasoning: aiSubmissionVerdicts.reasoning,
+                attempts: aiSubmissionVerdicts.attempts,
+                errorText: aiSubmissionVerdicts.errorText,
+                startedAt: aiSubmissionVerdicts.startedAt,
+                finishedAt: aiSubmissionVerdicts.finishedAt,
+              })
+              .from(aiSubmissionVerdicts)
+              .where(inArray(aiSubmissionVerdicts.annotationId, annIds))
+              .orderBy(desc(aiSubmissionVerdicts.startedAt)),
+          )
+        : new Map()
+    const reviewEventsByAnnotationId =
+      annIds.length > 0
+        ? reviewEventsByAnnotation(
+            await db
+              .select({
+                type: events.type,
+                actorId: events.actorId,
+                payload: events.payload,
+                ts: events.ts,
+              })
+              .from(events)
+              .where(
+                and(
+                  eq(events.workspaceId, workspaceId),
+                  inArray(events.type, REVIEW_EVENT_TYPES),
+                  sql`${events.payload} ->> 'annotationId' = ANY(${annIds})`,
+                ),
+              )
+              .orderBy(events.ts),
+          )
+        : new Map()
 
     const exportedAt = new Date().toISOString()
     const baseRows = rows.map((r) => ({
@@ -151,12 +268,17 @@ export async function GET(
       reasoning_text: r.reasoningText ?? '',
       delta_summary: r.deltaSummary ?? '',
       step_annotations: stepsByAnnotationId.get(r.annotationId) ?? [],
+      ...buildTaskReviewExportFields({
+        annotationId: r.annotationId,
+        aiVerdict: aiVerdictsByAnnotationId.get(r.annotationId),
+        reviewEvents: reviewEventsByAnnotationId.get(r.annotationId),
+      }),
     }))
 
-    let body: string
+    let body: string | Uint8Array
     let mime: string
     let filename: string
-    if (format === 'json') {
+    if (format === 'json' && !mapping) {
       body = JSON.stringify(
         {
           exported_at: exportedAt,
@@ -173,53 +295,26 @@ export async function GET(
       mime = 'application/json'
       filename = safeFilename(`labelhub-${task.name}-${exportedAt.slice(0, 10)}.json`)
     } else {
-      // CSV — flatten payload + item_data + step_annotations into JSON strings.
-      const headers = [
-        'annotation_id',
-        'topic_id',
-        'task_id',
-        'task_name',
-        'template_mode',
-        'workspace_id',
-        'submitter_user_id',
-        'submitter_email',
-        'submitter_display_name',
-        'submitted_at',
-        'topic_status',
-        'topic_item_data_json',
-        'payload_json',
-        'reasoning_text',
-        'delta_summary',
-        'step_annotations_json',
-      ]
-      const lines = [headers.join(',')]
-      for (const r of baseRows) {
-        const cells = [
-          r.annotation_id,
-          r.topic_id,
-          r.task_id,
-          r.task_name,
-          r.template_mode,
-          r.workspace_id,
-          r.submitter_user_id,
-          r.submitter_email,
-          r.submitter_display_name,
-          r.submitted_at,
-          r.topic_status,
-          JSON.stringify(r.topic_item_data),
-          JSON.stringify(r.payload),
-          r.reasoning_text,
-          r.delta_summary,
-          JSON.stringify(r.step_annotations),
-        ]
-        lines.push(cells.map(csvCell).join(','))
+      const formatter = pickFormatterFor(format)
+      const formatOptions: FormatOptions = {
+        sheetName: 'Annotations',
+        ...(mapping
+          ? { mapping }
+          : format === 'csv' || format === 'excel'
+            ? { mapping: DEFAULT_TASK_TABLE_MAPPING }
+            : {}),
       }
-      body = lines.join('\n')
-      mime = 'text/csv'
-      filename = safeFilename(`labelhub-${task.name}-${exportedAt.slice(0, 10)}.csv`)
+      body = await collectChunks(formatter(rowIterator(baseRows), formatOptions))
+      mime = formatter.meta.contentType
+      filename = safeFilename(
+        `labelhub-${task.name}-${exportedAt.slice(0, 10)}.${formatter.meta.extension}`,
+      )
     }
 
-    responseBytes = Buffer.byteLength(body, 'utf8')
+    responseBytes =
+      typeof body === 'string'
+        ? Buffer.byteLength(body, 'utf8')
+        : body.byteLength
 
     // Audit event so admins can see who pulled what.
     await db.insert(events).values({
@@ -231,15 +326,24 @@ export async function GET(
         format,
         count: baseRows.length,
         bytes: responseBytes,
+        mappingCount: mapping?.length ?? 0,
       },
     })
 
-    response = new Response(body, {
+    let responseBody: string | ArrayBuffer
+    if (typeof body === 'string') {
+      responseBody = body
+    } else {
+      responseBody = new ArrayBuffer(body.byteLength)
+      new Uint8Array(responseBody).set(body)
+    }
+    response = new Response(responseBody, {
       status: 200,
       headers: {
-        'content-type': mime + '; charset=utf-8',
+        'content-type': mime,
         'content-disposition': `attachment; filename="${filename}"`,
         'x-export-count': String(baseRows.length),
+        'x-format': format,
       },
     })
   } catch (e: unknown) {
@@ -281,13 +385,26 @@ export async function GET(
   return response!
 }
 
-/**
- * RFC-4180 cell quoting. We always quote — simpler than detecting needs-
- * quoting, and Excel handles it correctly. Doubles internal quotes per spec.
- */
-function csvCell(v: unknown): string {
-  const s = v == null ? '' : String(v)
-  return `"${s.replace(/"/g, '""')}"`
+async function* rowIterator(rows: Record<string, unknown>[]) {
+  for (const row of rows) yield row
+}
+
+async function collectChunks(
+  chunks: AsyncIterable<Uint8Array>,
+): Promise<Uint8Array> {
+  const parts: Uint8Array[] = []
+  let total = 0
+  for await (const chunk of chunks) {
+    parts.push(chunk)
+    total += chunk.length
+  }
+  const out = new Uint8Array(total)
+  let offset = 0
+  for (const part of parts) {
+    out.set(part, offset)
+    offset += part.length
+  }
+  return out
 }
 
 /**

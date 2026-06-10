@@ -31,9 +31,9 @@ export function NavAuthControls({ userEmail }: { userEmail: string | null }) {
           className="hidden sm:inline mono"
           style={{
             fontSize: 12,
-            color: 'oklch(0.78 0 0)',
+            color: 'var(--text)',
             padding: '4px 10px',
-            border: '1px solid oklch(0.27 0 0)',
+            border: '1px solid var(--line)',
             borderRadius: 6,
             maxWidth: 220,
             overflow: 'hidden',

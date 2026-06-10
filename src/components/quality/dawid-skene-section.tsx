@@ -8,6 +8,7 @@ import {
   formatInferredClass,
   type DsRunReport,
 } from '@/lib/quality/dawid-skene-display'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 
 /**
  * Dawid-Skene EM panel for the admin /quality page (Phase-11).
@@ -35,7 +36,7 @@ export function DawidSkeneSection({
    *  "stale" hint that prompts the admin to rerun. */
   newSubmissionsSince?: number
 }) {
-  const [report, setReport] = useState<DsRunReport | null>(initial)
+  const [report] = useState<DsRunReport | null>(initial)
   const [error, setError] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
 
@@ -52,7 +53,7 @@ export function DawidSkeneSection({
         window.location.reload()
       } catch (e) {
         setError(
-          e instanceof Error ? e.message : 'Dawid-Skene run failed.',
+          getErrorMessage(e, 'Dawid-Skene run failed.'),
         )
       }
     })
@@ -151,7 +152,7 @@ function RunHeader({
         <Stat label="mode" value={run.templateMode} />
         <Stat label="classes" value={String(run.numClasses)} />
         <Stat label="cells" value={String(run.cellCount)} />
-        <Stat label="raters" value={String(run.raterCount)} />
+        <Stat label="raters" value={String(run.annotatorCount)} />
         <Stat
           label="iters"
           value={`${run.iterations}${run.converged ? ' ✓' : ' (cap)'}`}
@@ -197,7 +198,7 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 function RaterConfusionTable({ report }: { report: DsRunReport }) {
-  if (report.raters.length === 0) return null
+  if (report.annotators.length === 0) return null
   return (
     <div>
       <div className="lbl mb-2" style={{ color: 'var(--mute)' }}>
@@ -245,7 +246,7 @@ function RaterConfusionTable({ report }: { report: DsRunReport }) {
             </tr>
           </thead>
           <tbody>
-            {report.raters.map((r, i) => (
+            {report.annotators.map((r, i) => (
               <tr
                 key={r.userId}
                 style={{

@@ -1,7 +1,7 @@
 'use server'
 import { z } from 'zod'
 import { revalidatePath } from 'next/cache'
-import { and, eq, isNull } from 'drizzle-orm'
+import { and, eq, inArray, isNull } from 'drizzle-orm'
 import { getDb } from '@/lib/db/client'
 import { tasks, topics, events } from '@/lib/db/schema'
 import { requireUser, requireWorkspaceAdmin } from '@/lib/auth/guards'
@@ -18,6 +18,12 @@ import type { TemplateMode } from '@/lib/templates/types'
 import { uuidLike } from '@/lib/validators/uuid'
 import { estimateDifficulty } from '@/lib/ai/difficulty-estimator'
 import { logAICall } from '@/lib/ai/quota'
+import { assertWithinClaimQuota } from '@/lib/tasks/quota'
+import {
+  applyTopicItemMergePatch,
+  summarizeTopicPatchKeys,
+  type JsonRecord,
+} from '@/lib/topics/item-data-patch'
 
 /**
  * Topic Server Actions.
@@ -64,15 +70,37 @@ const createTopicsBatchSchema = z.object({
   taskId: uuidLike,
   /** Up to 100 items per call. Each is validated against template.itemSchema. */
   items: z.array(itemDataShape).min(1).max(100),
+  /**
+   * Finals D21-C — optional per-row assignment. Length MUST match
+   * items.length when present; each element is the user-id the
+   * matching topic should be assignedTo (null = unassigned / open
+   * queue). The import UI computes this via
+   * `src/lib/import/distribution.ts` after the parser yields rows.
+   */
+  assignments: z
+    .array(uuidLike.nullable())
+    .optional(),
   /** Same semantics as createTopicSchema.autoEstimateDifficulty, but
    *  applied to EVERY row in the batch. For large batches admins may
    *  want to skip and run estimation later via a separate action. */
   autoEstimateDifficulty: z.boolean().optional(),
 })
 
+const batchPatchTopicItemDataSchema = z.object({
+  taskId: uuidLike,
+  topicIds: z.array(uuidLike).min(1).max(200),
+  patch: itemDataShape,
+})
+
 export interface CreateTopicsBatchResult {
   created: number
   failed: Array<{ index: number; error: string }>
+}
+
+export interface BatchPatchTopicItemDataResult {
+  updated: string[]
+  skipped: Array<{ topicId: string; reason: string }>
+  failed: Array<{ topicId: string; error: string }>
 }
 
 export async function createTopic(input: z.infer<typeof createTopicSchema>) {
@@ -215,7 +243,6 @@ async function tryEstimateDifficulty(opts: {
       reasoning: estimate.reasoning,
     }
   } catch (e) {
-    // eslint-disable-next-line no-console
     console.warn(
       '[topics] difficulty estimation skipped:',
       e instanceof Error ? e.message : e,
@@ -253,8 +280,23 @@ export async function createTopicsBatch(
   const template = getTemplate(task.templateMode as TemplateMode)
   if (!template) throw new ValidationError('Template not registered.')
 
+  // D21-C — when assignments are present they must match items.
+  if (
+    parsed.assignments &&
+    parsed.assignments.length !== parsed.items.length
+  ) {
+    throw new ValidationError(
+      `assignments.length (${parsed.assignments.length}) must equal items.length (${parsed.items.length}).`,
+    )
+  }
+
   const failed: Array<{ index: number; error: string }> = []
-  const toInsert: Array<{ taskId: string; itemData: unknown; status: 'drafting' }> = []
+  const toInsert: Array<{
+    taskId: string
+    itemData: unknown
+    status: 'drafting'
+    assignedTo: string | null
+  }> = []
 
   for (let i = 0; i < parsed.items.length; i++) {
     const item = parsed.items[i]
@@ -264,6 +306,7 @@ export async function createTopicsBatch(
         taskId: parsed.taskId,
         itemData: validated,
         status: 'drafting',
+        assignedTo: parsed.assignments?.[i] ?? null,
       })
     } catch (e) {
       const msg =
@@ -359,6 +402,134 @@ export async function createTopicsBatch(
   return { created: inserted.length, failed }
 }
 
+/**
+ * Batch-edit imported topic itemData with JSON Merge Patch semantics.
+ *
+ * This is intentionally conservative: only unassigned `drafting` rows
+ * are editable. Submitted/reviewed work remains immutable from this
+ * owner surface so annotations never drift away from the item the
+ * labeler actually judged.
+ */
+export async function batchPatchTopicItemData(
+  input: z.infer<typeof batchPatchTopicItemDataSchema>,
+): Promise<BatchPatchTopicItemDataResult> {
+  const parsed = batchPatchTopicItemDataSchema.parse(input)
+  const db = getDb()
+
+  const [task] = await db
+    .select()
+    .from(tasks)
+    .where(eq(tasks.id, parsed.taskId))
+    .limit(1)
+  if (!task) throw new NotFoundError('Task')
+
+  const { user } = await requireWorkspaceAdmin(task.workspaceId)
+
+  const template = getTemplate(task.templateMode as TemplateMode)
+  if (!template) throw new ValidationError('Template not registered.')
+
+  const topicIds = Array.from(new Set(parsed.topicIds))
+  const rows = await db
+    .select()
+    .from(topics)
+    .where(and(eq(topics.taskId, parsed.taskId), inArray(topics.id, topicIds)))
+
+  const byId = new Map(rows.map((topic) => [topic.id, topic]))
+  const updated: string[] = []
+  const skipped: BatchPatchTopicItemDataResult['skipped'] = []
+  const failed: BatchPatchTopicItemDataResult['failed'] = []
+
+  for (const topicId of topicIds) {
+    const topic = byId.get(topicId)
+    if (!topic) {
+      skipped.push({ topicId, reason: 'Topic is not in this task.' })
+      continue
+    }
+    if (topic.status !== 'drafting') {
+      skipped.push({
+        topicId,
+        reason: `Topic is ${topic.status}; only drafting topics are editable.`,
+      })
+      continue
+    }
+    if (topic.assignedTo) {
+      skipped.push({
+        topicId,
+        reason: 'Topic is already assigned; release it before editing data.',
+      })
+      continue
+    }
+
+    let base: JsonRecord
+    try {
+      base = itemDataShape.parse(topic.itemData) as JsonRecord
+    } catch {
+      failed.push({
+        topicId,
+        error: 'Existing itemData is not an object.',
+      })
+      continue
+    }
+
+    const patched = applyTopicItemMergePatch(
+      base,
+      parsed.patch as JsonRecord,
+    )
+
+    let validated: unknown
+    try {
+      validated = template.itemSchema.parse(patched)
+    } catch (e) {
+      const error =
+        e instanceof z.ZodError
+          ? e.issues
+              .map((issue) => `${issue.path.join('.') || 'item'}: ${issue.message}`)
+              .join('; ')
+          : e instanceof Error
+            ? e.message
+            : 'unknown validation error'
+      failed.push({ topicId, error })
+      continue
+    }
+
+    const result = await db
+      .update(topics)
+      .set({
+        itemData: validated,
+        version: topic.version + 1,
+      })
+      .where(and(eq(topics.id, topic.id), eq(topics.version, topic.version)))
+      .returning({ id: topics.id })
+
+    if (result.length === 0) {
+      failed.push({
+        topicId,
+        error: 'Topic changed while editing; refresh and try again.',
+      })
+      continue
+    }
+    updated.push(topicId)
+  }
+
+  if (updated.length > 0) {
+    await db.insert(events).values({
+      type: 'topic.batch_updated',
+      workspaceId: task.workspaceId,
+      actorId: user.id,
+      payload: {
+        taskId: task.id,
+        topicIds: updated,
+        patchKeys: summarizeTopicPatchKeys(parsed.patch as JsonRecord),
+        skipped,
+        failedCount: failed.length,
+      },
+    })
+    revalidatePath(`/workspaces/${task.workspaceId}/tasks/${task.id}`)
+  }
+
+  return { updated, skipped, failed }
+}
+
 const topicIdSchema = z.object({ topicId: uuidLike })
 
 /**
@@ -392,6 +563,11 @@ export async function claimTopic(input: z.infer<typeof topicIdSchema>) {
     )
   }
 
+  // Quota-pool distribution (spec §4.1 配额抢单): cap how many topics one
+  // annotator may hold in this task. No-op for open-queue / round-robin /
+  // random, or when no quota is configured.
+  await assertWithinClaimQuota(task.id, task.templateConfig, user.id)
+
   const updated = await db
     .update(topics)
     .set({ assignedTo: user.id, version: topic.version + 1 })
@@ -415,6 +591,146 @@ export async function claimTopic(input: z.infer<typeof topicIdSchema>) {
   revalidatePath(`/my/tasks/${task.id}`)
   revalidatePath(`/workspaces/${task.workspaceId}/tasks/${task.id}`)
   return updated[0]
+}
+
+const claimTopicsSchema = z.object({
+  /** De-duped + capped at 50 — a labeler grabbing a screenful of the
+   *  queue at once. Each id is claimed independently. */
+  topicIds: z.array(uuidLike).min(1).max(50),
+})
+
+export interface ClaimTopicsResult {
+  /** Topic ids successfully claimed by the caller in this batch. */
+  claimed: string[]
+  /** Topics we deliberately left alone (already claimed, over quota,
+   *  task not open, not found) — each with a human-readable reason so
+   *  the UI can explain the partial result. */
+  skipped: Array<{ topicId: string; reason: string }>
+}
+
+/**
+ * Bulk-claim several open topics in one call (spec §4.3 任务广场 —
+ * labelers grabbing a batch of work from the queue instead of clicking
+ * one card at a time).
+ *
+ * Reuses the EXACT same per-topic safety primitives as `claimTopic`:
+ *   - the task.status === 'open' gate,
+ *   - the per-annotator quota check (`assertWithinClaimQuota`),
+ *   - the atomic `assignedTo IS NULL` + version CAS claim.
+ *
+ * Crucially this is skip-and-continue, NOT all-or-nothing: a topic that
+ * was claimed by someone else a moment ago (lost the CAS race), or that
+ * pushes the caller over quota, or whose task got paused, is recorded in
+ * `skipped` and the rest of the batch still proceeds. The quota check is
+ * re-run before EACH claim so a 50-id batch can't blow past the cap — it
+ * stops claiming the instant the caller's held count reaches the limit.
+ *
+ * Auth: `requireUser` (any signed-in annotator), same as `claimTopic`.
+ * Cross-task is fine — each topic resolves its own task + workspace.
+ */
+export async function claimTopics(
+  input: z.infer<typeof claimTopicsSchema>,
+): Promise<ClaimTopicsResult> {
+  const parsed = claimTopicsSchema.parse(input)
+  const user = await requireUser()
+  const db = getDb()
+
+  // De-dup so a doubled id in the selection can't double-count toward
+  // quota or produce two result rows.
+  const topicIds = Array.from(new Set(parsed.topicIds))
+
+  const claimed: string[] = []
+  const skipped: ClaimTopicsResult['skipped'] = []
+  // (workspaceId, taskId) pairs we actually claimed in — revalidated once
+  // at the end so a 20-topic batch doesn't fire 20 redundant cache busts
+  // per path. Keyed `${workspaceId} ${taskId}` for cheap de-dup.
+  const touchedTasks = new Set<string>()
+
+  for (const topicId of topicIds) {
+    const [topic] = await db
+      .select()
+      .from(topics)
+      .where(eq(topics.id, topicId))
+      .limit(1)
+    if (!topic) {
+      skipped.push({ topicId, reason: 'Topic no longer exists.' })
+      continue
+    }
+
+    const [task] = await db
+      .select()
+      .from(tasks)
+      .where(eq(tasks.id, topic.taskId))
+      .limit(1)
+    if (!task) {
+      skipped.push({ topicId, reason: 'Task no longer exists.' })
+      continue
+    }
+
+    if (task.status !== 'open') {
+      skipped.push({
+        topicId,
+        reason: `Task is ${task.status} — topics cannot be claimed.`,
+      })
+      continue
+    }
+
+    // Same per-annotator quota gate as claimTopic. Re-checked per topic so
+    // the batch stops at the cap rather than over-claiming. A ConflictError
+    // here means "at quota" — record it and skip; any other error also
+    // skips so one bad row never aborts the whole batch.
+    try {
+      await assertWithinClaimQuota(task.id, task.templateConfig, user.id)
+    } catch (e) {
+      skipped.push({
+        topicId,
+        reason:
+          e instanceof ConflictError
+            ? e.message
+            : e instanceof Error
+              ? e.message
+              : 'Quota check failed.',
+      })
+      continue
+    }
+
+    const updated = await db
+      .update(topics)
+      .set({ assignedTo: user.id, version: topic.version + 1 })
+      .where(and(eq(topics.id, topicId), isNull(topics.assignedTo)))
+      .returning()
+
+    if (updated.length === 0) {
+      skipped.push({
+        topicId,
+        reason: 'Already claimed by another annotator.',
+      })
+      continue
+    }
+
+    await db.insert(events).values({
+      type: 'topic.claimed',
+      workspaceId: task.workspaceId,
+      actorId: user.id,
+      payload: { topicId: topic.id, taskId: task.id, viaBatch: true },
+    })
+
+    claimed.push(topicId)
+    touchedTasks.add(`${task.workspaceId} ${task.id}`)
+  }
+
+  // Repaint the same surfaces claimTopic touches, but de-duped across the
+  // batch (one revalidate per affected task).
+  if (claimed.length > 0) {
+    revalidatePath('/my/queue')
+    for (const key of touchedTasks) {
+      const [workspaceId, taskId] = key.split(' ')
+      revalidatePath(`/my/tasks/${taskId}`)
+      revalidatePath(`/workspaces/${workspaceId}/tasks/${taskId}`)
+    }
+  }
+
+  return { claimed, skipped }
 }
 
 /**

@@ -200,74 +200,80 @@ export async function approveAnnotation(
   // ── 5. Resolve active payout-period (lazy create) ─────────────────
   const period = await ensureActivePeriod(taskRow.workspaceId)
 
-  // ── 6. Upsert by annotation_id ───────────────────────────────────
-  const [existing] = await db
-    .select({ id: payoutLineItems.id })
-    .from(payoutLineItems)
-    .where(eq(payoutLineItems.annotationId, parsed.annotationId))
-    .limit(1)
+  // ── 6–7. Upsert the line item + emit the audit event, ATOMICALLY ──
+  // One transaction so the payout line and its `payout_line_item.*` audit
+  // event always land together (or not at all): no money row without its
+  // audit trail, and no trail without the row.
+  const { lineItemId, created } = await db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select({ id: payoutLineItems.id })
+      .from(payoutLineItems)
+      .where(eq(payoutLineItems.annotationId, parsed.annotationId))
+      .limit(1)
 
-  let lineItemId: string
-  let created: boolean
-  if (existing) {
-    await db
-      .update(payoutLineItems)
-      .set({
+    let lineItemId: string
+    let created: boolean
+    if (existing) {
+      await tx
+        .update(payoutLineItems)
+        .set({
+          payoutPeriodId: period.id,
+          userId: annRow.userId,
+          economyType: pricing.economyType,
+          currency: pricing.currency,
+          baseAmountMinor: pricing.baseAmountMinor,
+          qualityMultiplierBp: pricing.qualityMultiplierBp,
+          bonusAmountMinor: pricing.bonusAmountMinor,
+          penaltyAmountMinor: pricing.penaltyAmountMinor,
+          totalAmountMinor: pricing.totalAmountMinor,
+          status: pricing.isBillable ? 'approved' : 'rejected',
+        })
+        .where(eq(payoutLineItems.id, existing.id))
+      lineItemId = existing.id
+      created = false
+    } else {
+      const [inserted] = await tx
+        .insert(payoutLineItems)
+        .values({
+          payoutPeriodId: period.id,
+          userId: annRow.userId,
+          annotationId: parsed.annotationId,
+          economyType: pricing.economyType,
+          currency: pricing.currency,
+          baseAmountMinor: pricing.baseAmountMinor,
+          qualityMultiplierBp: pricing.qualityMultiplierBp,
+          bonusAmountMinor: pricing.bonusAmountMinor,
+          penaltyAmountMinor: pricing.penaltyAmountMinor,
+          totalAmountMinor: pricing.totalAmountMinor,
+          status: pricing.isBillable ? 'approved' : 'rejected',
+        })
+        .returning({ id: payoutLineItems.id })
+      lineItemId = inserted.id
+      created = true
+    }
+
+    // Audit the full multiplier stack so the "why this amount" UI can
+    // reconstruct it without re-running the pricing engine: quality
+    // (trust-based) × difficulty (AI-estimated) × base.
+    await tx.insert(events).values({
+      type: created ? 'payout_line_item.created' : 'payout_line_item.updated',
+      workspaceId: taskRow.workspaceId,
+      actorId: actor.id,
+      payload: {
+        payoutLineItemId: lineItemId,
         payoutPeriodId: period.id,
-        userId: annRow.userId,
-        economyType: pricing.economyType,
-        currency: pricing.currency,
-        baseAmountMinor: pricing.baseAmountMinor,
-        qualityMultiplierBp: pricing.qualityMultiplierBp,
-        bonusAmountMinor: pricing.bonusAmountMinor,
-        penaltyAmountMinor: pricing.penaltyAmountMinor,
-        totalAmountMinor: pricing.totalAmountMinor,
-        status: pricing.isBillable ? 'approved' : 'rejected',
-      })
-      .where(eq(payoutLineItems.id, existing.id))
-    lineItemId = existing.id
-    created = false
-  } else {
-    const [inserted] = await db
-      .insert(payoutLineItems)
-      .values({
-        payoutPeriodId: period.id,
-        userId: annRow.userId,
         annotationId: parsed.annotationId,
-        economyType: pricing.economyType,
-        currency: pricing.currency,
-        baseAmountMinor: pricing.baseAmountMinor,
-        qualityMultiplierBp: pricing.qualityMultiplierBp,
-        bonusAmountMinor: pricing.bonusAmountMinor,
-        penaltyAmountMinor: pricing.penaltyAmountMinor,
+        userId: annRow.userId,
         totalAmountMinor: pricing.totalAmountMinor,
-        status: pricing.isBillable ? 'approved' : 'rejected',
-      })
-      .returning({ id: payoutLineItems.id })
-    lineItemId = inserted.id
-    created = true
-  }
+        currency: pricing.currency,
+        qualityMultiplierBp: pricing.qualityMultiplierBp,
+        difficultyMultiplierBp: pricing.difficultyMultiplierBp,
+        topicDifficulty: topicRow.difficulty ?? null,
+        isBillable: pricing.isBillable,
+      },
+    })
 
-  // ── 7. Emit event ─────────────────────────────────────────────────
-  // Audit the full multiplier stack so the "why this amount" UI can
-  // reconstruct it without re-running the pricing engine: quality
-  // (trust-based) × difficulty (AI-estimated) × base.
-  await db.insert(events).values({
-    type: created ? 'payout_line_item.created' : 'payout_line_item.updated',
-    workspaceId: taskRow.workspaceId,
-    actorId: actor.id,
-    payload: {
-      payoutLineItemId: lineItemId,
-      payoutPeriodId: period.id,
-      annotationId: parsed.annotationId,
-      userId: annRow.userId,
-      totalAmountMinor: pricing.totalAmountMinor,
-      currency: pricing.currency,
-      qualityMultiplierBp: pricing.qualityMultiplierBp,
-      difficultyMultiplierBp: pricing.difficultyMultiplierBp,
-      topicDifficulty: topicRow.difficulty ?? null,
-      isBillable: pricing.isBillable,
-    },
+    return { lineItemId, created }
   })
 
   try {

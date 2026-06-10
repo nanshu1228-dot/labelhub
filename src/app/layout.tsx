@@ -10,9 +10,9 @@ import './globals.css'
 // that the previous `next/font/google` setup did, so globals.css works unchanged.
 
 export const metadata: Metadata = {
-  title: 'LabelHub — The Annotation-Aware LLM Gateway',
+  title: 'LabelHub — Data Annotation Platform',
   description:
-    'Drop in as your OpenAI/Anthropic base URL. Every agent call gets captured, scope-guarded, and forkable for counterfactual teaching — no SDK changes.',
+    'Build annotation tasks with a drag-and-drop form designer, collect labels, run AI pre-review and human QC, and export training-ready datasets in JSON / JSONL / CSV / Excel.',
 }
 
 export default function RootLayout({

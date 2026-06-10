@@ -12,7 +12,7 @@ import {
 } from '@/lib/db/schema'
 import type {
   DsRunReport,
-  DsRaterRow,
+  DsAnnotatorRow,
   DsTopicCell,
   DsTopicSummary,
 } from '@/lib/quality/dawid-skene-display'
@@ -27,7 +27,7 @@ export {
 export type {
   DsRunReport,
   DsRunSummary,
-  DsRaterRow,
+  DsAnnotatorRow,
   DsTopicCell,
   DsTopicSummary,
 } from '@/lib/quality/dawid-skene-display'
@@ -103,7 +103,7 @@ export async function getLatestDsRunReport(
   }
   topicSummaries.sort((a, b) => a.minConfidence - b.minConfidence)
 
-  const raters: DsRaterRow[] = raterRows
+  const annotators: DsAnnotatorRow[] = raterRows
     .map((r) => ({
       userId: r.userId,
       displayName: r.displayName,
@@ -120,13 +120,13 @@ export async function getLatestDsRunReport(
       templateMode: run.templateMode,
       numClasses: run.numClasses,
       cellCount: run.cellCount,
-      raterCount: run.raterCount,
+      annotatorCount: run.raterCount,
       iterations: run.iterations,
       converged: run.converged,
       logLikelihood: run.logLikelihood,
       createdAt: run.createdAt,
     },
-    raters,
+    annotators,
     topics: topicSummaries,
   }
 }

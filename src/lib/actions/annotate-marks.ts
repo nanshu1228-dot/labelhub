@@ -30,10 +30,11 @@ import {
   annotations,
   events,
   stepAnnotations,
+  topics,
   trajectories,
   trajectorySteps,
 } from '@/lib/db/schema'
-import { ForbiddenError, NotFoundError } from '@/lib/errors'
+import { ConflictError, ForbiddenError, NotFoundError } from '@/lib/errors'
 import { uuidLike } from '@/lib/validators/uuid'
 import {
   optionalUser,
@@ -321,6 +322,179 @@ export async function commitTrajectoryMark(input: CommitTrajectoryMarkInput) {
   return { ok: true as const, annotationId: ann.id }
 }
 
+// ─── Submit / mark-reviewed ───────────────────────────────────────────────
+
+const submitTrajectoryAnnotationSchema = z.object({
+  workspaceId: uuidLike,
+  trajectoryId: uuidLike,
+})
+
+export type SubmitTrajectoryAnnotationInput = z.infer<
+  typeof submitTrajectoryAnnotationSchema
+>
+
+export interface SubmitTrajectoryAnnotationResult {
+  ok: true
+  annotationId: string
+  /** When the annotation was first stamped submitted (stable across retries). */
+  submittedAt: string
+  /** True when this call performed the transition; false when already submitted. */
+  alreadySubmitted: boolean
+}
+
+/**
+ * Explicitly submit THIS user's annotation of a trajectory for review.
+ *
+ * Autosave (commitStepMark / commitTrajectoryMark) only ever writes marks —
+ * it never finalizes. Without an explicit submit the annotation row keeps a
+ * null `submittedAt`, so `/my/queue` (which filters on `submittedAt`, see
+ * src/lib/queries/annotator-queue.ts) shows the trajectory forever as
+ * unfinished "resume" work.
+ *
+ * This action stamps `annotations.submittedAt`, transitions the bound Inbox
+ * topic drafting/revising → submitted, and emits `annotation.submitted` so
+ * the queue stats + QC review queue pick it up — the same signals the
+ * canonical `submitAnnotation` path emits.
+ *
+ * Why not call `submitAnnotation` (src/lib/actions/annotations.ts) directly:
+ * that path runs strict `template.responseSchema.parse(payload)`, but the
+ * Inbox annotation stores `{ rubricId → Mark }` in `payload` (the trajectory-
+ * level marks), which is intentionally NOT the agent-trace-eval response
+ * shape. Re-validating here would reject perfectly good trajectory marks. We
+ * reuse the same state-transition mechanics instead of the same function.
+ *
+ * Idempotent: a row that already carries `submittedAt` is returned unchanged
+ * (alreadySubmitted: true) without a second event or a redundant topic write.
+ * No optimistic-concurrency token is taken on the annotation here — out of
+ * scope; the topic transition still uses its own version CAS defensively.
+ */
+export async function submitTrajectoryAnnotation(
+  input: SubmitTrajectoryAnnotationInput,
+): Promise<SubmitTrajectoryAnnotationResult> {
+  const parsed = submitTrajectoryAnnotationSchema.parse(input)
+  const me = await requireAnnotator(parsed.workspaceId)
+  const db = getDb()
+
+  // Verify trajectory ↔ workspace (anti-spoof, mirrors commitTrajectoryMark).
+  const [traj] = await db
+    .select({
+      id: trajectories.id,
+      workspaceId: trajectories.workspaceId,
+    })
+    .from(trajectories)
+    .where(eq(trajectories.id, parsed.trajectoryId))
+    .limit(1)
+  if (!traj) throw new NotFoundError('Trajectory')
+  if (traj.workspaceId !== parsed.workspaceId) {
+    throw new ForbiddenError('Trajectory is not in the claimed workspace.')
+  }
+
+  // The inbox annotation row already exists once the user has touched any
+  // mark; find-or-create keeps submit working even for a "submit with no
+  // marks" edge (the row is materialized, just empty).
+  const binding = await openTrajectoryForAnnotation({
+    workspaceId: parsed.workspaceId,
+    trajectoryId: parsed.trajectoryId,
+    userId: me.id,
+  })
+
+  const [ann] = await db
+    .select({
+      id: annotations.id,
+      submittedAt: annotations.submittedAt,
+      startedAt: annotations.startedAt,
+    })
+    .from(annotations)
+    .where(eq(annotations.id, binding.annotationId))
+    .limit(1)
+  if (!ann) throw new NotFoundError('Annotation row')
+
+  // Idempotent fast-path — already submitted, nothing to do.
+  if (ann.submittedAt) {
+    return {
+      ok: true as const,
+      annotationId: ann.id,
+      submittedAt: ann.submittedAt.toISOString(),
+      alreadySubmitted: true,
+    }
+  }
+
+  const now = new Date()
+  await db
+    .update(annotations)
+    .set({
+      submittedAt: now,
+      // Anchor startedAt if the user never saved a draft first, so the
+      // /quality duration derivation has something sane to work from.
+      startedAt: ann.startedAt ?? now,
+    })
+    .where(eq(annotations.id, ann.id))
+
+  // Transition the bound Inbox topic drafting/revising → submitted, with an
+  // optimistic version CAS. Best-effort: a topic already past the drafting
+  // stage (e.g. submitted/reviewing/approved) is left untouched so a re-open
+  // + re-submit can't drag a reviewed item backwards. The annotation's
+  // submittedAt stamp above is the source of truth for queue removal.
+  const [topic] = await db
+    .select({ id: topics.id, status: topics.status, version: topics.version })
+    .from(topics)
+    .where(eq(topics.id, binding.topicId))
+    .limit(1)
+  if (topic && (topic.status === 'drafting' || topic.status === 'revising')) {
+    const moved = await db
+      .update(topics)
+      .set({ status: 'submitted', version: topic.version + 1 })
+      .where(and(eq(topics.id, topic.id), eq(topics.version, topic.version)))
+      .returning({ id: topics.id })
+    if (moved.length === 0) {
+      // Lost the race to a concurrent writer. The annotation is already
+      // stamped submitted; surfacing a conflict lets the client refresh
+      // rather than silently masking a divergent topic state.
+      throw new ConflictError(
+        'Topic was modified concurrently — refresh and try again.',
+      )
+    }
+  }
+
+  await db.insert(events).values({
+    type: 'annotation.submitted',
+    workspaceId: parsed.workspaceId,
+    actorId: me.id,
+    payload: {
+      topicId: binding.topicId,
+      annotationId: ann.id,
+      trajectoryId: parsed.trajectoryId,
+      // Mark this as the trajectory annotator's submit so downstream
+      // projections can distinguish it from the form-based submit path.
+      source: 'trajectory-annotator',
+    },
+  })
+
+  // Bust caches so the trajectory drops off /my/queue immediately and the
+  // detail/list/dashboard surfaces reflect the submitted state.
+  try {
+    revalidatePath(
+      `/workspaces/${parsed.workspaceId}/trajectories/${parsed.trajectoryId}/annotate`,
+    )
+    revalidatePath(
+      `/workspaces/${parsed.workspaceId}/trajectories/${parsed.trajectoryId}`,
+    )
+    revalidatePath(`/workspaces/${parsed.workspaceId}/trajectories`)
+    revalidatePath(`/workspaces/${parsed.workspaceId}`)
+    revalidatePath('/my/queue')
+    revalidatePath('/my/submissions')
+  } catch {
+    /* outside request context (scripts) — DB write already committed */
+  }
+
+  return {
+    ok: true as const,
+    annotationId: ann.id,
+    submittedAt: now.toISOString(),
+    alreadySubmitted: false,
+  }
+}
+
 // ─── Read API ─────────────────────────────────────────────────────────────
 
 /**
@@ -338,6 +512,13 @@ export async function commitTrajectoryMark(input: CommitTrajectoryMarkInput) {
 export interface AnnotatorMarks {
   stepMarks: Record<string, Record<string, MarkLike>>
   trajectoryMarks: Record<string, MarkLike>
+  /**
+   * ISO timestamp of when THIS user's annotation of the trajectory was
+   * submitted for review, or null if it's still a draft. Drives the
+   * annotator's Submit button initial state (so a reopened-after-submit
+   * trajectory shows "Submitted" rather than an active Submit CTA).
+   */
+  submittedAt: string | null
 }
 
 export async function readMyAnnotatorMarks(opts: {
@@ -350,7 +531,7 @@ export async function readMyAnnotatorMarks(opts: {
   // Returning empty (instead of throwing) lets /annotate render for
   // read-only browsing — judges tour without signing in.
   const me = await optionalUser()
-  if (!me) return { stepMarks: {}, trajectoryMarks: {} }
+  if (!me) return { stepMarks: {}, trajectoryMarks: {}, submittedAt: null }
 
   // Trajectory ↔ workspace check (silently empty on mismatch — readers
   // shouldn't leak the existence of a mis-scoped trajectory).
@@ -360,16 +541,21 @@ export async function readMyAnnotatorMarks(opts: {
     .where(eq(trajectories.id, opts.trajectoryId))
     .limit(1)
   if (!traj || traj.workspaceId !== opts.workspaceId) {
-    return { stepMarks: {}, trajectoryMarks: {} }
+    return { stepMarks: {}, trajectoryMarks: {}, submittedAt: null }
   }
 
   // Pull THIS user's annotation rows across all topics. Small fan-out;
   // narrowing by topic_id would require an extra join.
   const myAnns = await db
-    .select({ id: annotations.id, payload: annotations.payload })
+    .select({
+      id: annotations.id,
+      payload: annotations.payload,
+      submittedAt: annotations.submittedAt,
+    })
     .from(annotations)
     .where(eq(annotations.userId, me.id))
-  if (myAnns.length === 0) return { stepMarks: {}, trajectoryMarks: {} }
+  if (myAnns.length === 0)
+    return { stepMarks: {}, trajectoryMarks: {}, submittedAt: null }
   const annIds = myAnns.map((a) => a.id)
 
   // Steps in this trajectory.
@@ -377,7 +563,8 @@ export async function readMyAnnotatorMarks(opts: {
     .select({ id: trajectorySteps.id })
     .from(trajectorySteps)
     .where(eq(trajectorySteps.trajectoryId, opts.trajectoryId))
-  if (stepRows.length === 0) return { stepMarks: {}, trajectoryMarks: {} }
+  if (stepRows.length === 0)
+    return { stepMarks: {}, trajectoryMarks: {}, submittedAt: null }
   const stepIds = stepRows.map((s) => s.id)
 
   // Pull every step_annotation matching our annotations + these step ids.
@@ -404,20 +591,28 @@ export async function readMyAnnotatorMarks(opts: {
   }
 
   // Trajectory-level marks live on annotations.payload of the active row.
-  let trajectoryMarks: Record<string, MarkLike> = {}
+  // The active row's submittedAt also tells us whether this trajectory was
+  // already submitted for review (drives the Submit button's initial state).
+  const trajectoryMarks: Record<string, MarkLike> = {}
+  let submittedAt: string | null = null
   if (activeAnnIdForTraj) {
     const active = myAnns.find((a) => a.id === activeAnnIdForTraj)
-    if (active && active.payload && typeof active.payload === 'object') {
-      const payload = active.payload as Record<string, unknown>
-      for (const [k, v] of Object.entries(payload)) {
-        if (v && typeof v === 'object' && 'scale' in (v as object)) {
-          trajectoryMarks[k] = v as MarkLike
+    if (active) {
+      submittedAt = active.submittedAt
+        ? active.submittedAt.toISOString()
+        : null
+      if (active.payload && typeof active.payload === 'object') {
+        const payload = active.payload as Record<string, unknown>
+        for (const [k, v] of Object.entries(payload)) {
+          if (v && typeof v === 'object' && 'scale' in (v as object)) {
+            trajectoryMarks[k] = v as MarkLike
+          }
         }
       }
     }
   }
 
-  return { stepMarks, trajectoryMarks }
+  return { stepMarks, trajectoryMarks, submittedAt }
 }
 
 function decodeMark(

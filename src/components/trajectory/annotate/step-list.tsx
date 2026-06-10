@@ -41,6 +41,11 @@ export function StepList({
 }: StepListProps) {
   const parentRef = useRef<HTMLDivElement>(null)
 
+  // TanStack Virtual's useVirtualizer returns non-memoizable functions, so
+  // the React Compiler skips memoizing this component (informational note).
+  // Virtualization is required to render large trajectory step lists; this
+  // is an accepted, library-inherent trade-off.
+  // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
     count: steps.length,
     getScrollElement: () => parentRef.current,

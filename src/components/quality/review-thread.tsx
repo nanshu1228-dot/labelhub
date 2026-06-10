@@ -4,6 +4,7 @@ import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { respondToReview } from '@/lib/actions/annotations'
 import type { ReviewThreadMessage } from '@/lib/queries/review-thread'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 
 /**
  * Bidirectional review thread — reviewer's verdict + free-form notes
@@ -44,7 +45,7 @@ export function ReviewThread({
 
   return (
     <section>
-      <div className="lbl mb-3">§ REVIEW THREAD</div>
+      <div className="lbl mb-3">REVIEW THREAD</div>
       <div
         className="rounded-xl"
         style={{
@@ -88,27 +89,32 @@ function MessageBlock({ message }: { message: ReviewThreadMessage }) {
   > = {
     qc_passed: {
       // Cyan tone matches the QC role badge palette.
-      label: '✓ QC passed',
+      label: 'QC passed',
       bg: 'oklch(0.94 0.04 200 / 0.5)',
       fg: 'oklch(0.45 0.15 200)',
     },
     approved: {
-      label: '✓ accepted',
+      label: 'accepted',
       bg: 'var(--success-soft)',
       fg: 'var(--success)',
     },
     rejected: {
-      label: '✗ rejected',
+      label: 'rejected',
       bg: 'var(--danger-soft)',
       fg: 'var(--danger)',
     },
     revised: {
-      label: '↻ 打回 (revision)',
+      label: '打回 (revision)',
       bg: 'oklch(0.7 0.14 75 / 0.08)',
       fg: 'var(--warn)',
     },
+    ai_sent_back: {
+      label: 'AI sent back',
+      bg: 'oklch(0.68 0.16 70 / 0.1)',
+      fg: 'oklch(0.62 0.15 70)',
+    },
     reply: {
-      label: '↳ reply',
+      label: 'reply',
       bg: 'var(--panel2)',
       fg: 'var(--mute)',
     },
@@ -120,7 +126,9 @@ function MessageBlock({ message }: { message: ReviewThreadMessage }) {
       ? 'submitter'
       : message.authorRole === 'qc'
         ? 'qc'
-        : 'admin'
+        : message.authorRole === 'ai'
+          ? 'AI'
+          : 'admin'
   return (
     <div>
       <div className="flex items-center gap-2 flex-wrap mb-1">
@@ -198,7 +206,7 @@ function ReplyForm({ annotationId }: { annotationId: string }) {
         setText('')
         router.refresh()
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Reply failed.')
+        setError(getErrorMessage(e, 'Reply failed.'))
       }
     })
   }

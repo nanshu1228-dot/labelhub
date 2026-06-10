@@ -119,6 +119,22 @@ describe('calculatePayoutLineItem — economy types', () => {
     expect(r.notBillableReason).toContain('baseAmountMinor')
   })
 
+  it('honors legacy amount rows as minor-unit base pay', () => {
+    const r = calculatePayoutLineItem({
+      economy: {
+        type: 'cash-per-item',
+        currency: 'CNY',
+        amount: 800,
+        qualityMultiplierMin: 1,
+        qualityMultiplierMax: 1,
+      },
+      trustScore: 0.5,
+    })
+    expect(r.isBillable).toBe(true)
+    expect(r.baseAmountMinor).toBe(800)
+    expect(r.totalAmountMinor).toBe(800)
+  })
+
   it('uses default multipliers when economy omits them', () => {
     const r = calculatePayoutLineItem({
       economy: {

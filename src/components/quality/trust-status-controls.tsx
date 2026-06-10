@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { setTrustStatus, type TrustStatus } from '@/lib/actions/trust-status'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 
 /**
  * Admin control for flipping a rater's trust lifecycle. Lives inside
@@ -64,7 +65,7 @@ export function TrustStatusControls({
         )
         router.refresh()
       } catch (e) {
-        setError(e instanceof Error ? e.message : 'Update failed.')
+        setError(getErrorMessage(e, 'Update failed.'))
       }
     })
   }

@@ -151,7 +151,7 @@ html[data-lang="zh"] .lh-h4 { letter-spacing: 0.005em; }
 
 /* Language segmented control */
 .lang-seg { display:inline-flex; align-items:center; gap: 0; height: 28px; padding: 2px; border: 1px solid oklch(0.22 0 0); border-radius: 6px; background: oklch(0.155 0 0); }
-.lang-btn { font-family: var(--font-geist-mono), monospace; font-size: 11px; font-weight: 600; letter-spacing: 0.03em; padding: 0 10px; height: 22px; border-radius: 4px; color: oklch(0.6 0 0); display:inline-flex; align-items:center; transition: color 120ms, background 120ms; cursor: pointer; }
+.lang-btn { font-family: var(--font-geist-sans), system-ui, sans-serif; font-size: 11.5px; font-weight: 600; letter-spacing: 0.02em; padding: 0 10px; height: 22px; border-radius: 4px; color: oklch(0.6 0 0); display:inline-flex; align-items:center; transition: color 120ms, background 120ms; cursor: pointer; }
 .lang-btn:hover { color: oklch(0.85 0 0); }
 .lang-btn.on { color: oklch(0.95 0 0); background: oklch(0.22 0 0); position: relative; }
 .lang-btn.on::after { content:""; position:absolute; left: 8px; right: 8px; bottom: -3px; height: 1px; background: oklch(0.6 0.18 280); }
@@ -165,7 +165,7 @@ html[data-lang="zh"] .lh-h4 { letter-spacing: 0.005em; }
 .vote-bar .a { background: oklch(0.6 0.18 280); }
 .vote-bar .b { background: oklch(0.42 0 0); }
 
-.mode-tag { font-family: var(--font-geist-mono), monospace; font-size: 11px; font-weight: 600; color: oklch(0.55 0 0); letter-spacing: 0.06em; text-transform: uppercase; }
+.mode-tag { font-family: var(--font-geist-sans), system-ui, sans-serif; font-size: 11px; font-weight: 600; color: oklch(0.55 0 0); letter-spacing: 0.06em; text-transform: uppercase; }
 .badge { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 500; font-family: var(--font-geist-mono), monospace; color: oklch(0.7 0 0); border: 1px solid oklch(0.27 0 0); padding: 2px 7px; border-radius: 5px; letter-spacing: 0.02em; }
 .badge .pulse { width: 6px; height: 6px; border-radius: 50%; background: oklch(0.6 0.18 280); box-shadow: 0 0 0 3px oklch(0.6 0.18 280 / 0.18); }
 
@@ -240,12 +240,18 @@ html[data-lang="zh"] .lh-h4 { letter-spacing: 0.005em; }
    Used by: /workspaces/[id]/eval-runs/new and future annotation pages.
 ═══════════════════════════════════════════════════════════════════════ */
 .app-light {
-  /* light surfaces (Anthropic / Linear-light / GitHub-light vibe) */
-  --bg: oklch(0.99 0 0);
-  --panel: oklch(0.985 0 0);
-  --panel2: oklch(0.975 0 0);
-  --line: oklch(0.92 0 0);
-  --line2: oklch(0.86 0 0);
+  /* light surfaces — SaaS depth: a whisper-cool canvas so the pure-white
+     cards lift off it, crisp hairlines, and a soft shadow scale. Still
+     reads as a clean white product; the canvas is barely-there gray. */
+  --bg: oklch(0.985 0.0015 264);
+  --panel: oklch(1 0 0);
+  --panel2: oklch(0.993 0.001 264);
+  --line: oklch(0.915 0.002 264);
+  --line2: oklch(0.86 0.003 264);
+  /* elevation scale — kept very soft so the UI stays calm, not heavy. */
+  --shadow-sm: 0 1px 2px oklch(0.2 0.02 264 / 0.04), 0 1px 3px oklch(0.2 0.02 264 / 0.05);
+  --shadow-md: 0 2px 6px oklch(0.2 0.02 264 / 0.05), 0 6px 16px oklch(0.2 0.02 264 / 0.06);
+  --shadow-lg: 0 10px 28px oklch(0.2 0.02 264 / 0.09), 0 2px 6px oklch(0.2 0.02 264 / 0.05);
   --mute: oklch(0.50 0 0);
   --mute2: oklch(0.62 0 0);
   --text: oklch(0.20 0 0);
@@ -296,16 +302,22 @@ html[data-lang="zh"] .lh-h4 { letter-spacing: 0.005em; }
 /* ── buttons (overrides Landing's .lh-btn-solid/ghost inside .app-light) ── */
 .app-light .lh-btn { display:inline-flex; align-items:center; gap:8px; height:36px; padding: 0 14px; border-radius: 8px; font-size: 13px; font-weight: 500; white-space: nowrap; transition: background 150ms, border-color 150ms, color 150ms, opacity 150ms; cursor: pointer; }
 .app-light .lh-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
-.app-light .lh-btn-solid { background: var(--hi); color: var(--bg); border: 1px solid var(--hi); }
-.app-light .lh-btn-solid:hover:not([disabled]) { background: oklch(0.25 0 0); }
-.app-light .lh-btn-accent { background: var(--accent); color: white; border: 1px solid var(--accent); }
-.app-light .lh-btn-accent:hover:not([disabled]) { background: oklch(0.65 0.18 280); }
+.app-light .lh-btn-solid { background: var(--hi); color: white; border: 1px solid var(--hi); box-shadow: var(--shadow-sm); }
+.app-light .lh-btn-solid:hover:not([disabled]) { background: oklch(0.25 0 0); box-shadow: var(--shadow-md); }
+.app-light .lh-btn-accent { background: var(--accent); color: white; border: 1px solid var(--accent); box-shadow: 0 1px 2px oklch(0.6 0.18 280 / 0.25), 0 2px 8px oklch(0.6 0.18 280 / 0.18); }
+.app-light .lh-btn-accent:hover:not([disabled]) { background: oklch(0.65 0.18 280); box-shadow: 0 2px 4px oklch(0.6 0.18 280 / 0.3), 0 4px 14px oklch(0.6 0.18 280 / 0.22); }
+.app-light .lh-btn-solid:active:not([disabled]), .app-light .lh-btn-accent:active:not([disabled]) { transform: translateY(0.5px); }
 .app-light .lh-btn-ghost { color: var(--text); border:1px solid var(--line); background: transparent; }
 .app-light .lh-btn-ghost:hover:not([disabled]) { border-color: var(--line2); color: var(--hi); }
 .app-light .lh-btn-sm { height: 26px; padding: 0 8px; font-size: 12px; border-radius: 6px; gap: 6px; }
 
 /* ── form primitives ─────────────────────────────────────────────────── */
-.app-light .lbl { font-family: var(--font-geist-mono), monospace; font-size: 11px; color: var(--mute2); letter-spacing: 0.04em; }
+/* Section eyebrow — sans + uppercase reads as an intentional SaaS label,
+   not raw terminal output (the old monospace look). */
+.app-light .lbl { font-family: var(--font-geist-sans), system-ui, sans-serif; font-size: 10.5px; font-weight: 600; text-transform: uppercase; color: var(--mute2); letter-spacing: 0.07em; }
+
+/* Elevated card utility — pure-white surface lifted off the canvas. */
+.app-light .lh-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow-sm); }
 
 .app-light .inp, .app-light .ta {
   width: 100%;
@@ -324,6 +336,88 @@ html[data-lang="zh"] .lh-h4 { letter-spacing: 0.005em; }
 .app-light .inp:focus, .app-light .ta:focus { border-color: var(--accent-line); box-shadow: 0 0 0 2px var(--accent-soft); }
 .app-light .ta { font-family: var(--font-geist-mono), monospace; font-size: 12.5px; line-height: 1.55; resize: vertical; }
 
+.app-light .task-guidelines-preview {
+  padding: 14px 16px;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.65;
+  background: var(--bg);
+  overflow-wrap: anywhere;
+}
+.app-light .task-guidelines-preview > :first-child { margin-top: 0; }
+.app-light .task-guidelines-preview > :last-child { margin-bottom: 0; }
+.app-light .task-guidelines-preview h1,
+.app-light .task-guidelines-preview h2,
+.app-light .task-guidelines-preview h3 {
+  color: var(--hi);
+  font-weight: 650;
+  line-height: 1.25;
+  margin: 16px 0 8px;
+}
+.app-light .task-guidelines-preview h1 { font-size: 20px; }
+.app-light .task-guidelines-preview h2 { font-size: 17px; }
+.app-light .task-guidelines-preview h3 { font-size: 15px; }
+.app-light .task-guidelines-preview p,
+.app-light .task-guidelines-preview ul,
+.app-light .task-guidelines-preview ol,
+.app-light .task-guidelines-preview blockquote,
+.app-light .task-guidelines-preview pre,
+.app-light .task-guidelines-preview table {
+  margin: 10px 0;
+}
+.app-light .task-guidelines-preview ul,
+.app-light .task-guidelines-preview ol {
+  padding-left: 22px;
+}
+.app-light .task-guidelines-preview li { margin: 4px 0; }
+.app-light .task-guidelines-preview a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.app-light .task-guidelines-preview code {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--hi);
+  padding: 1px 4px;
+}
+.app-light .task-guidelines-preview pre {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--hi);
+  padding: 10px 12px;
+  overflow-x: auto;
+}
+.app-light .task-guidelines-preview pre code {
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+.app-light .task-guidelines-preview blockquote {
+  border-left: 3px solid var(--accent-line);
+  color: var(--mute);
+  padding-left: 12px;
+}
+.app-light .task-guidelines-preview img {
+  max-width: 100%;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+}
+.app-light .task-guidelines-preview table {
+  width: 100%;
+  border-collapse: collapse;
+  overflow: hidden;
+}
+.app-light .task-guidelines-preview th,
+.app-light .task-guidelines-preview td {
+  border: 1px solid var(--line);
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+.app-light .task-guidelines-preview th {
+  color: var(--hi);
+  background: var(--panel);
+}
+
 /* ── segmented (model select) ────────────────────────────────────────── */
 .app-light .seg { display:inline-flex; padding: 2px; background: var(--panel); border:1px solid var(--line); border-radius: 8px; }
 .app-light .seg-btn { font-size: 12.5px; padding: 0 12px; height: 28px; border-radius: 6px; color: var(--mute); display:inline-flex; align-items:center; gap: 6px; transition: color 120ms, background 120ms; cursor: pointer; white-space: nowrap; }
@@ -333,7 +427,7 @@ html[data-lang="zh"] .lh-h4 { letter-spacing: 0.005em; }
 .app-light .seg-btn.on .mono { color: var(--accent); }
 
 /* ── badges / pills (overrides Landing) ──────────────────────────────── */
-.app-light .badge { display:inline-flex; align-items:center; gap:6px; font-size:11px; font-family: var(--font-geist-mono), monospace; color: var(--mute); border:1px solid var(--line); padding: 2px 6px; border-radius: 4px; white-space: nowrap; }
+.app-light .badge { display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight: 500; font-family: var(--font-geist-sans), system-ui, sans-serif; color: var(--mute); border:1px solid var(--line); padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
 .app-light .badge.violet { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
 .app-light .badge.green  { color: var(--success); border-color: oklch(0.65 0.13 150 / 0.4); background: var(--success-soft); }
 .app-light .badge.red    { color: var(--danger); border-color: oklch(0.6 0.2 25 / 0.4); background: var(--danger-soft); }
@@ -496,55 +590,55 @@ html[data-lang="zh"] .lh-h4 { letter-spacing: 0.005em; }
 @keyframes app-rise { from { opacity: 0; transform: translateY(4px); } to { opacity:1; transform: none; } }
 
 /* ── auth pages (signin / signup) ───────────────────────────────────── */
-.auth-shell { min-height: 100vh; display: grid; grid-template-rows: auto 1fr; background: oklch(0.13 0 0); color: oklch(0.92 0 0); }
-.auth-header { padding: 18px 24px; border-bottom: 1px solid oklch(0.22 0 0); }
-.auth-logo { display: inline-flex; align-items: center; gap: 8px; text-decoration: none; color: oklch(0.92 0 0); font-weight: 500; letter-spacing: -0.01em; }
+.auth-shell { min-height: 100vh; display: grid; grid-template-rows: auto 1fr; background: oklch(0.99 0 0); color: oklch(0.22 0 0); }
+.auth-header { padding: 18px 24px; border-bottom: 1px solid oklch(0.92 0 0); }
+.auth-logo { display: inline-flex; align-items: center; gap: 8px; text-decoration: none; color: oklch(0.20 0 0); font-weight: 500; letter-spacing: -0.01em; }
 .auth-main { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 64px 24px; }
-.auth-card { width: 100%; max-width: 380px; padding: 32px; background: oklch(0.16 0 0); border: 1px solid oklch(0.22 0 0); border-radius: 12px; }
-.auth-h1 { font-size: 24px; line-height: 1.2; letter-spacing: -0.02em; font-weight: 500; margin: 0 0 6px; color: oklch(0.96 0 0); }
-.auth-sub { font-size: 13px; line-height: 1.5; color: oklch(0.65 0 0); margin: 0 0 24px; }
+.auth-card { width: 100%; max-width: 380px; padding: 32px; background: oklch(0.985 0 0); border: 1px solid oklch(0.92 0 0); border-radius: 12px; box-shadow: 0 1px 2px oklch(0 0 0 / 0.04), 0 8px 24px oklch(0 0 0 / 0.04); }
+.auth-h1 { font-size: 24px; line-height: 1.2; letter-spacing: -0.02em; font-weight: 500; margin: 0 0 6px; color: oklch(0.13 0 0); }
+.auth-sub { font-size: 13px; line-height: 1.5; color: oklch(0.50 0 0); margin: 0 0 24px; }
 .auth-form { display: flex; flex-direction: column; gap: 14px; }
 .auth-field { display: flex; flex-direction: column; gap: 6px; }
-.auth-label { font-size: 12px; color: oklch(0.75 0 0); font-weight: 500; }
+.auth-label { font-size: 12px; color: oklch(0.30 0 0); font-weight: 500; }
 .auth-input {
   height: 38px; padding: 0 12px;
-  background: oklch(0.18 0 0);
-  border: 1px solid oklch(0.27 0 0);
+  background: oklch(0.99 0 0);
+  border: 1px solid oklch(0.86 0 0);
   border-radius: 7px;
-  color: oklch(0.92 0 0);
+  color: oklch(0.20 0 0);
   font-size: 14px;
   outline: none;
   transition: border-color 120ms, box-shadow 120ms;
 }
 .auth-input:focus { border-color: oklch(0.6 0.18 280); box-shadow: 0 0 0 2px oklch(0.6 0.18 280 / 0.18); }
-.auth-input::placeholder { color: oklch(0.5 0 0); }
-.auth-error { font-size: 12.5px; padding: 8px 10px; background: oklch(0.55 0.2 25 / 0.1); border: 1px solid oklch(0.55 0.2 25 / 0.35); border-radius: 6px; color: oklch(0.78 0.16 25); }
-.auth-info  { font-size: 12.5px; padding: 8px 10px; background: oklch(0.5 0.13 150 / 0.1); border: 1px solid oklch(0.5 0.13 150 / 0.35); border-radius: 6px; color: oklch(0.78 0.13 150); }
+.auth-input::placeholder { color: oklch(0.60 0 0); }
+.auth-error { font-size: 12.5px; padding: 8px 10px; background: oklch(0.55 0.2 25 / 0.08); border: 1px solid oklch(0.55 0.2 25 / 0.30); border-radius: 6px; color: oklch(0.50 0.2 25); }
+.auth-info  { font-size: 12.5px; padding: 8px 10px; background: oklch(0.5 0.13 150 / 0.08); border: 1px solid oklch(0.5 0.13 150 / 0.30); border-radius: 6px; color: oklch(0.42 0.13 150); }
 .auth-submit { width: 100%; justify-content: center; height: 40px; font-size: 13.5px; margin-top: 4px; }
 .auth-alt { margin-top: 16px; text-align: center; font-size: 12.5px; }
 .auth-alt a { color: oklch(0.6 0.18 280); text-decoration: none; }
-.auth-alt a:hover { color: oklch(0.7 0.18 280); }
-.auth-skip { font-size: 12px; color: oklch(0.55 0 0); }
-.auth-skip a { color: oklch(0.78 0 0); text-decoration: none; border-bottom: 1px solid oklch(0.27 0 0); }
-.auth-skip a:hover { color: oklch(0.92 0 0); border-color: oklch(0.6 0.18 280); }
+.auth-alt a:hover { color: oklch(0.5 0.18 280); }
+.auth-skip { font-size: 12px; color: oklch(0.50 0 0); }
+.auth-skip a { color: oklch(0.30 0 0); text-decoration: none; border-bottom: 1px solid oklch(0.86 0 0); }
+.auth-skip a:hover { color: oklch(0.13 0 0); border-color: oklch(0.6 0.18 280); }
 
 /* ── /docs page ────────────────────────────────────────────────────── */
-.docs-shell { min-height: 100vh; background: oklch(0.13 0 0); color: oklch(0.82 0 0); display: grid; grid-template-rows: auto 1fr; }
-.docs-topnav { display: flex; align-items: center; justify-content: space-between; padding: 16px 32px; border-bottom: 1px solid oklch(0.22 0 0); background: oklch(0.13 0 0 / 0.78); backdrop-filter: blur(8px); position: sticky; top: 0; z-index: 10; }
-.docs-brand { display: inline-flex; align-items: center; gap: 8px; text-decoration: none; color: oklch(0.92 0 0); font-weight: 500; letter-spacing: -0.01em; }
-.docs-nav-link { color: oklch(0.62 0 0); font-size: 13px; text-decoration: none; transition: color 120ms; }
-.docs-nav-link:hover { color: oklch(0.92 0 0); }
+.docs-shell { min-height: 100vh; background: oklch(0.99 0 0); color: oklch(0.22 0 0); display: grid; grid-template-rows: auto 1fr; }
+.docs-topnav { display: flex; align-items: center; justify-content: space-between; padding: 16px 32px; border-bottom: 1px solid oklch(0.92 0 0); background: oklch(0.99 0 0 / 0.85); backdrop-filter: blur(8px); position: sticky; top: 0; z-index: 10; }
+.docs-brand { display: inline-flex; align-items: center; gap: 8px; text-decoration: none; color: oklch(0.20 0 0); font-weight: 500; letter-spacing: -0.01em; }
+.docs-nav-link { color: oklch(0.50 0 0); font-size: 13px; text-decoration: none; transition: color 120ms; }
+.docs-nav-link:hover { color: oklch(0.13 0 0); }
 .docs-main { max-width: 880px; margin: 0 auto; padding: 64px 32px 96px; width: 100%; }
 .docs-hero { margin-bottom: 64px; }
 .docs-eyebrow { font-family: var(--font-geist-mono), monospace; font-size: 11.5px; color: oklch(0.6 0.18 280); letter-spacing: 0.06em; text-transform: uppercase; }
-.docs-h1 { font-size: 48px; line-height: 1.05; letter-spacing: -0.02em; font-weight: 500; color: oklch(0.96 0 0); margin: 12px 0 0; }
-.docs-h2 { font-size: 28px; line-height: 1.2; letter-spacing: -0.015em; font-weight: 500; color: oklch(0.95 0 0); margin: 12px 0 0; }
-.docs-h3 { font-size: 16px; line-height: 1.3; font-weight: 500; color: oklch(0.92 0 0); margin: 24px 0 10px; }
-.docs-lede { font-size: 16px; line-height: 1.6; color: oklch(0.7 0 0); margin: 16px 0 0; max-width: 760px; }
-.docs-section-anchor { margin: 72px 0 16px; padding-top: 12px; border-top: 1px solid oklch(0.22 0 0); }
-.docs-body { font-size: 14.5px; line-height: 1.65; color: oklch(0.78 0 0); margin: 16px 0; }
-.docs-body code, .docs-list code { font-family: var(--font-geist-mono), monospace; font-size: 13px; padding: 1px 6px; background: oklch(0.18 0 0); border: 1px solid oklch(0.22 0 0); border-radius: 4px; color: oklch(0.85 0 0); }
-.docs-list { margin: 12px 0; padding-left: 24px; color: oklch(0.78 0 0); font-size: 14.5px; line-height: 1.7; }
+.docs-h1 { font-size: 48px; line-height: 1.05; letter-spacing: -0.02em; font-weight: 500; color: oklch(0.13 0 0); margin: 12px 0 0; }
+.docs-h2 { font-size: 28px; line-height: 1.2; letter-spacing: -0.015em; font-weight: 500; color: oklch(0.13 0 0); margin: 12px 0 0; }
+.docs-h3 { font-size: 16px; line-height: 1.3; font-weight: 500; color: oklch(0.18 0 0); margin: 24px 0 10px; }
+.docs-lede { font-size: 16px; line-height: 1.6; color: oklch(0.40 0 0); margin: 16px 0 0; max-width: 760px; }
+.docs-section-anchor { margin: 72px 0 16px; padding-top: 12px; border-top: 1px solid oklch(0.92 0 0); }
+.docs-body { font-size: 14.5px; line-height: 1.65; color: oklch(0.25 0 0); margin: 16px 0; }
+.docs-body code, .docs-list code { font-family: var(--font-geist-mono), monospace; font-size: 13px; padding: 1px 6px; background: oklch(0.96 0 0); border: 1px solid oklch(0.90 0 0); border-radius: 4px; color: oklch(0.22 0 0); }
+.docs-list { margin: 12px 0; padding-left: 24px; color: oklch(0.25 0 0); font-size: 14.5px; line-height: 1.7; }
 .docs-list li { margin-bottom: 6px; }
 .docs-code { margin: 16px 0; background: oklch(0.155 0 0); border: 1px solid oklch(0.22 0 0); border-radius: 8px; overflow: hidden; }
 .docs-code-head { padding: 8px 14px; background: oklch(0.18 0 0); border-bottom: 1px solid oklch(0.22 0 0); }
@@ -552,14 +646,14 @@ html[data-lang="zh"] .lh-h4 { letter-spacing: 0.005em; }
 .docs-code-body { padding: 14px 16px; font-family: var(--font-geist-mono), monospace; font-size: 13px; line-height: 1.55; color: oklch(0.85 0 0); margin: 0; white-space: pre; overflow-x: auto; }
 .docs-table-wrap { margin: 16px 0; overflow-x: auto; }
 .docs-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
-.docs-table th, .docs-table td { padding: 10px 14px; border-bottom: 1px solid oklch(0.22 0 0); text-align: left; }
-.docs-table th { font-family: var(--font-geist-mono), monospace; font-size: 11px; color: oklch(0.55 0 0); letter-spacing: 0.04em; text-transform: uppercase; font-weight: 500; }
-.docs-table td { color: oklch(0.82 0 0); }
+.docs-table th, .docs-table td { padding: 10px 14px; border-bottom: 1px solid oklch(0.92 0 0); text-align: left; }
+.docs-table th { font-family: var(--font-geist-mono), monospace; font-size: 11px; color: oklch(0.45 0 0); letter-spacing: 0.04em; text-transform: uppercase; font-weight: 500; }
+.docs-table td { color: oklch(0.25 0 0); }
 .docs-table td code { font-size: 12px; background: transparent; border: 0; padding: 0; }
-.family-openai { color: oklch(0.78 0.13 145); font-family: var(--font-geist-mono), monospace; font-size: 12px; }
-.family-anthropic { color: oklch(0.78 0.12 280); font-family: var(--font-geist-mono), monospace; font-size: 12px; }
-.docs-footer { margin: 96px 0 0; padding-top: 24px; border-top: 1px solid oklch(0.22 0 0); }
-.docs-foot-line { font-size: 14px; color: oklch(0.62 0 0); }
+.family-openai { color: oklch(0.55 0.13 145); font-family: var(--font-geist-mono), monospace; font-size: 12px; }
+.family-anthropic { color: oklch(0.55 0.12 280); font-family: var(--font-geist-mono), monospace; font-size: 12px; }
+.docs-footer { margin: 96px 0 0; padding-top: 24px; border-top: 1px solid oklch(0.92 0 0); }
+.docs-foot-line { font-size: 14px; color: oklch(0.50 0 0); }
 .docs-foot-link { color: oklch(0.6 0.18 280); text-decoration: none; }
 .docs-foot-link:hover { color: oklch(0.7 0.18 280); }
 
@@ -593,7 +687,7 @@ html[data-lang="zh"] .lh-h4 { letter-spacing: 0.005em; }
   align-items: center;
   gap: 12px;
   margin: 16px 0 12px;
-  color: oklch(0.55 0 0);
+  color: oklch(0.50 0 0);
   font-size: 11px;
   font-family: var(--font-geist-mono), monospace;
   letter-spacing: 0.06em;
@@ -603,5 +697,41 @@ html[data-lang="zh"] .lh-h4 { letter-spacing: 0.005em; }
   content: '';
   flex: 1;
   height: 1px;
-  background: oklch(0.27 0 0);
+  background: oklch(0.88 0 0);
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Landing on light — overrides for the marketing-only utility classes that
+   were dark-first and had no .app-light variant. The landing page now
+   renders inside `.app-light` (see src/app/page.tsx), so these flip the
+   remaining class-driven greys (nav links, mode tags, language switch,
+   vote bar, dot grid, chart axes) to the light palette. Semantic accent
+   colours (violet curve/dots, A/B hues) are left untouched.
+═══════════════════════════════════════════════════════════════════════ */
+.app-light .nav-link { color: var(--mute); }
+.app-light .nav-link:hover { color: var(--hi); }
+
+.app-light .mode-tag { color: var(--mute); }
+
+.app-light .bg-dot {
+  background-image: radial-gradient(circle, oklch(0.86 0 0) 1px, transparent 1px);
+}
+
+.app-light .lang-seg { border-color: var(--line); background: var(--panel); }
+.app-light .lang-btn { color: var(--mute); }
+.app-light .lang-btn:hover { color: var(--hi); }
+.app-light .lang-btn.on { color: var(--hi); background: oklch(0.94 0 0); }
+
+.app-light .vote-bar { background: var(--line); }
+.app-light .vote-bar .b { background: var(--mute2); }
+
+.app-light .chart-grid line { stroke: var(--line); }
+.app-light .chart-axis { fill: var(--mute2); }
+.app-light .chart-pill {
+  border-color: var(--line);
+  background: oklch(0.99 0 0 / 0.95);
+  color: var(--text);
+}
+.app-light .chart-pill::before { background: var(--line2); }
+.app-light .kbd { background: var(--panel); border-color: var(--line); color: var(--text); }
+.app-light .badge { color: var(--mute); border-color: var(--line); }

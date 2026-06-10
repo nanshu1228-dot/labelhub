@@ -6,6 +6,7 @@ import type {
   InviteFunnel,
   ManualReviewRow,
 } from '@/lib/queries/invite-rewards'
+import { getErrorMessage } from '@/lib/errors/client-utils'
 
 /**
  * Admin-only invite-reward dashboard panel for /workspaces/[id]/members
@@ -175,7 +176,7 @@ function ManualReviewRow({ row }: { row: ManualReviewRow }) {
         setTimeout(() => window.location.reload(), 600)
       } catch (e) {
         setError(
-          e instanceof Error ? e.message : 'Review failed.',
+          getErrorMessage(e, 'Review failed.'),
         )
       }
     })

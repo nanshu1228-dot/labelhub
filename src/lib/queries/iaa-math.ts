@@ -22,6 +22,50 @@ export function isDispute(ratings: number[]): boolean {
 }
 
 /**
+ * Median of a list of numbers. Even-length lists average the two middle
+ * values. Empty input → 0 (callers guard length before relying on it).
+ *
+ * Canonical so trust-consensus / topic-peer-consensus stop each carrying
+ * their own private copy.
+ */
+export function median(values: number[]): number {
+  if (values.length === 0) return 0
+  const s = [...values].sort((a, b) => a - b)
+  const mid = Math.floor(s.length / 2)
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2
+}
+
+/**
+ * Pairwise agreement primitive: is `value` aligned with `reference`?
+ * Aligned ⇔ they differ by at most `tolerance`. Mirrors `isDispute`'s
+ * spread/tolerance rule for the two-point case (agreement = NOT dispute),
+ * so peer-alignment uses the SAME definition of "agreement" as IAA.
+ */
+export function withinTolerance(
+  value: number,
+  reference: number,
+  tolerance: number = IAA_TOLERANCE,
+): boolean {
+  return Math.abs(value - reference) <= tolerance
+}
+
+/**
+ * Boolean-consensus primitive: given the count of `true` votes and `false`
+ * votes among a set of raters, what's the majority?  Returns `true` /
+ * `false` for a clear majority, or `null` on a tie (no clean consensus).
+ *
+ * One canonical definition shared by topic-peer-consensus (per-cell majority
+ * display) and trust-consensus (pair-rubric alignment).
+ */
+export function majorityBoolean(
+  trueVotes: number,
+  falseVotes: number,
+): boolean | null {
+  if (trueVotes === falseVotes) return null
+  return trueVotes > falseVotes
+}
+
+/**
  * Workspace-level agreement rate: of all steps with ≥2 raters, what
  * fraction agreed?  Returns null when no multi-rater step exists.
  */
@@ -34,6 +78,23 @@ export function agreementRate(stepsByRatings: number[][]): number | null {
     if (!isDispute(arr)) agreed++
   }
   return multi === 0 ? null : agreed / multi
+}
+
+/**
+ * Mean of a Beta posterior given `positives` / `negatives` observations and
+ * a Beta(alpha, beta) prior. This is THE Bayesian-smoothing formula — both
+ * the alignment-based and verdict-based trust scores route through it so the
+ * smoothing lives in one place.
+ */
+export function betaPosteriorMean(
+  positives: number,
+  negatives: number,
+  prior: { alpha: number; beta: number } = { alpha: 2.5, beta: 2.5 },
+): number {
+  return (
+    (positives + prior.alpha) /
+    (positives + negatives + prior.alpha + prior.beta)
+  )
 }
 
 /**
@@ -52,5 +113,5 @@ export function trustScoreFromAlignments(
     if (x.aligned) a++
     else d++
   }
-  return (a + prior.alpha) / (a + d + prior.alpha + prior.beta)
+  return betaPosteriorMean(a, d, prior)
 }
