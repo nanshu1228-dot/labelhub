@@ -701,6 +701,25 @@ describe('useAutosaveDraft — restoreLocal (merge over server payload)', () => 
     const restored = await h.current.restoreLocal()
     expect(restored).toBeNull()
   })
+
+  it('returns null once the user has interacted — stale draft must not clobber live input', async () => {
+    // Regression: the mount-time restore is async; if the user clicks a
+    // radio before the IndexedDB read resolves, merging the stale draft
+    // over live state silently reverts their pick. markDirty marks the
+    // session as interacted and restoreLocal then steps aside.
+    fakeDb.store.set('topic-1', {
+      id: 'topic-1',
+      topicId: 'topic-1',
+      taskId: 'task-1',
+      payload: { answer: 'stale-from-last-session' },
+      dirtyAt: 1000,
+      syncedAt: null,
+    })
+    const h = mountHook()
+    h.current.markDirty({ answer: 'live-click' })
+    const restored = await h.current.restoreLocal()
+    expect(restored).toBeNull()
+  })
 })
 
 // =============================================================================

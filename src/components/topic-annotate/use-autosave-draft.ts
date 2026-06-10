@@ -87,6 +87,16 @@ export function useAutosaveDraft(
    *  hidden; resume on visibilitychange. Background tabs shouldn't
    *  spend server resources. */
   const visibilityPausedRef = useRef(false)
+  /**
+   * Set the moment the user first edits (markDirty/flush). Once true,
+   * restoreLocal() returns null: the mount-time IndexedDB read is
+   * async, and merging a STALE draft over live user input silently
+   * reverts whatever they just clicked (radio picks "disappearing" —
+   * found on the prod demo where the read resolves slower than the
+   * first click). The live state is already being autosaved, so
+   * skipping the restore loses nothing.
+   */
+  const interactedRef = useRef(false)
 
   const writeLocal = useCallback(
     async (payload: Record<string, unknown>) => {
@@ -204,6 +214,7 @@ export function useAutosaveDraft(
   const markDirty = useCallback(
     (payload: Record<string, unknown>) => {
       if (opts.readOnly) return
+      interactedRef.current = true
       latestPayloadRef.current = payload
       setStatus('dirty')
       // Always write local IMMEDIATELY so a crash before the debounce
@@ -244,6 +255,7 @@ export function useAutosaveDraft(
   const flush = useCallback(
     async (payload: Record<string, unknown>) => {
       if (opts.readOnly) return
+      interactedRef.current = true
       latestPayloadRef.current = payload
       if (timerRef.current) {
         clearTimeout(timerRef.current)
@@ -259,8 +271,12 @@ export function useAutosaveDraft(
     Record<string, unknown> | null
   > => {
     try {
+      if (interactedRef.current) return null
       const db = getLocalDb()
       const row = await db.drafts.get(opts.topicId)
+      // Re-check after the await — the user may have clicked while the
+      // IndexedDB read was in flight; their live input wins.
+      if (interactedRef.current) return null
       if (!row) return null
       // Only return if local is fresher than server (i.e. dirtyAt is
       // set AND syncedAt is null or older than dirtyAt). Otherwise

@@ -25,7 +25,11 @@ export async function navigateAfterSubmit(
       excludeTopicId: opts.topicId,
     })
     if (next) {
-      router.push(`/workspaces/${next.workspaceId}/topics/${next.topicId}/annotate`)
+      // `?submitted=1` lets the next topic's page show a "上一题已提交"
+      // banner — without it, auto-advance reads as "my work vanished".
+      router.push(
+        `/workspaces/${next.workspaceId}/topics/${next.topicId}/annotate?submitted=1`,
+      )
       return
     }
   } catch {

@@ -81,12 +81,16 @@ export const metadata: Metadata = {
  */
 export default async function TopicAnnotatePage(props: {
   params: Promise<{ id: string; topicId: string }>;
-  searchParams?: Promise<{ annotationId?: string }>;
+  searchParams?: Promise<{ annotationId?: string; submitted?: string }>;
 }) {
   const { id: workspaceId, topicId } = await props.params;
   const search = (await props.searchParams) ?? {};
   const reviewAnnotationIdFromUrl =
     typeof search.annotationId === "string" ? search.annotationId : null;
+  // Set by after-submit-nav when auto-advancing: the PREVIOUS topic was
+  // just submitted, this is a fresh one. Without the banner the jump
+  // reads as "everything I filled in disappeared".
+  const justSubmittedPrev = search.submitted === "1";
 
   const me = await optionalUser();
   if (!me) {
@@ -367,6 +371,19 @@ export default async function TopicAnnotatePage(props: {
                   <History size={13} />
                   history
                 </Link>
+              </div>
+            )}
+
+            {justSubmittedPrev && !reviewContext && (
+              <div
+                className="mb-4 rounded-md p-3 ts-13 flex items-center gap-2"
+                style={{
+                  background: "var(--success-soft)",
+                  border: "1px solid oklch(0.5 0.13 150 / 0.4)",
+                  color: "var(--success)",
+                }}
+              >
+                ✓ 上一题已提交,进入 AI 预审与人工审核流程 — 这是下一道待标注的题目。
               </div>
             )}
 
