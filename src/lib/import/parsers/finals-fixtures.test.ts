@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { parseJSONL } from './jsonl'
@@ -35,6 +36,16 @@ const DATASET_BASE = resolve(
   'datasets',
 )
 
+// The official datasets are competition material and stay out of git
+// (extracted locally from test-data.zip). Skip this integration suite
+// when they are absent (e.g. CI) instead of failing on ENOENT.
+const DATASETS_PRESENT =
+  existsSync(resolve(DATASET_BASE, 'qa_quality/jsonl/qa_quality.jsonl')) &&
+  existsSync(
+    resolve(DATASET_BASE, 'preference_compare/jsonl/preference_compare.jsonl'),
+  )
+const describeWithDatasets = describe.skipIf(!DATASETS_PRESENT)
+
 async function loadDataset(path: string): Promise<Array<Record<string, unknown>>> {
   const buf = await readFile(resolve(DATASET_BASE, path))
   const out: Record<string, unknown>[] = []
@@ -46,7 +57,7 @@ async function loadDataset(path: string): Promise<Array<Record<string, unknown>>
   return out
 }
 
-describe('Finals demo dataset · qa_quality', () => {
+describeWithDatasets('Finals demo dataset · qa_quality', () => {
   it('JSONL parses exactly 30 rows', async () => {
     const rows = await loadDataset('qa_quality/jsonl/qa_quality.jsonl')
     expect(rows).toHaveLength(30)
@@ -90,7 +101,7 @@ describe('Finals demo dataset · qa_quality', () => {
   })
 })
 
-describe('Finals demo dataset · preference_compare', () => {
+describeWithDatasets('Finals demo dataset · preference_compare', () => {
   it('JSONL parses exactly 12 rows', async () => {
     const rows = await loadDataset(
       'preference_compare/jsonl/preference_compare.jsonl',
@@ -138,7 +149,7 @@ describe('Finals demo dataset · preference_compare', () => {
   })
 })
 
-describe('Finals demo dataset · totals', () => {
+describeWithDatasets('Finals demo dataset · totals', () => {
   it('combined row count is 42 (30 + 12)', async () => {
     const qa = await loadDataset('qa_quality/jsonl/qa_quality.jsonl')
     const pref = await loadDataset(
