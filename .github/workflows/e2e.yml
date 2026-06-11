@@ -1,9 +1,11 @@
 name: e2e
 
+# Manual-trigger only: this suite needs repo secrets (Supabase URL/keys,
+# seeded e2e credentials) that aren't configured on this repository, so
+# running it on every push would just be a guaranteed red X. Configure
+# the secrets listed under `env:` below, then run it from the Actions
+# tab. Locally the same suite runs via `npm run test:e2e` (.env.e2e).
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
 
 jobs:

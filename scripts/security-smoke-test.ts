@@ -32,7 +32,7 @@ import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
 
-const BASE_URL = (process.env.BASE_URL ?? 'https://labelhub-gamma.vercel.app').replace(
+const BASE_URL = (process.env.BASE_URL ?? 'https://aipert.top').replace(
   /\/$/,
   '',
 )

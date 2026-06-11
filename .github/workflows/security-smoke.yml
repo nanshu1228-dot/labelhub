@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
   schedule:
     # Every 6 hours at minute 0. UTC. Light load — one full smoke takes
-    # ~30s + a 90s pre-wait when called on push.
+    # ~30s.
     - cron: '0 */6 * * *'
 
 env:
@@ -41,14 +41,10 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund --prefer-offline
 
-      - name: Wait for Vercel deploy to settle
-        # On push, the smoke test would otherwise hit the OLD deploy and
-        # report green for a state that may already have been broken by
-        # the just-pushed commit. 90s is the typical Hobby-tier build
-        # time; the retry loop below catches longer ones.
-        if: github.event_name == 'push'
-        run: sleep 90
-
+      # No deploy-settle wait: the production VPS (aipert.top) ships via
+      # a manual SSH deploy, not on push, so this probes whatever is
+      # currently live. A push that changes auth behavior stays red here
+      # until the matching deploy lands — that gap is the signal.
       - name: Run security smoke (with retry)
         # The smoke test is idempotent — every check is a GET or curl
         # probe with no side effects. Safe to retry. We give up to 3
@@ -66,4 +62,4 @@ jobs:
           echo "smoke failed after 3 attempts"
           exit 1
         env:
-          BASE_URL: https://labelhub-gamma.vercel.app
+          BASE_URL: https://aipert.top
